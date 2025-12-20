@@ -12,7 +12,7 @@ import { PaymentsHistory } from './views/PaymentsHistory';
 import { PaymentsProviders } from './views/PaymentsProviders'; 
 import { Login } from './views/Login';
 import { OrderAssemblyModal } from './components/OrderAssemblyModal';
-import { View, DetailedOrder, User, Trip, Provider, Transfer, OrderStatus, UserRole, ProviderAccount } from './types';
+import { View, DetailedOrder, User, Trip, Provider, Transfer, OrderStatus, UserRole, ProviderAccount, TripClient, TripExpense } from './types';
 import { supabase } from './supabase';
 import { 
     applyQuantityChange, 
@@ -21,7 +21,9 @@ import {
     advanceOrderStatus,
     addProductToOrder,
     updateProductPrice,
-    removeProductFromOrder
+    removeProductFromOrder,
+    getMissingProducts,
+    getReturnedProducts
 } from './logic';
 
 export default function App() {
@@ -77,6 +79,7 @@ export default function App() {
     try {
         setIsDataLoading(true);
 
+        // 1. Pedidos
         const { data: dbOrders } = await supabase.from('orders').select('*, order_items(*)');
         if (dbOrders) {
             const mappedOrders: DetailedOrder[] = dbOrders.map(o => ({
@@ -86,7 +89,7 @@ export default function App() {
                 zone: o.zone,
                 status: o.status as OrderStatus,
                 createdDate: new Date(o.created_at).toLocaleDateString('es-AR'),
-                total: parseFloat(o.total),
+                total: parseFloat(o.total || 0),
                 observations: o.observations,
                 paymentMethod: o.payment_method,
                 productCount: o.order_items?.length || 0,
@@ -96,8 +99,8 @@ export default function App() {
                     originalQuantity: item.original_quantity,
                     quantity: item.quantity,
                     shippedQuantity: item.shipped_quantity,
-                    unitPrice: parseFloat(item.unit_price),
-                    subtotal: parseFloat(item.subtotal),
+                    unitPrice: parseFloat(item.unit_price || 0),
+                    subtotal: parseFloat(item.subtotal || 0),
                     isChecked: item.is_checked
                 })),
                 history: []
@@ -105,12 +108,13 @@ export default function App() {
             setOrders(mappedOrders.sort((a, b) => b.id.localeCompare(a.id)));
         }
 
+        // 2. Proveedores
         const { data: dbProviders } = await supabase.from('providers').select('*, provider_accounts(*)');
         if (dbProviders) {
             const mappedProviders: Provider[] = dbProviders.map(p => ({
                 id: p.id,
                 name: p.name,
-                goalAmount: parseFloat(p.goal_amount),
+                goalAmount: parseFloat(p.goal_amount || 0),
                 priority: p.priority,
                 status: p.status,
                 accounts: (p.provider_accounts || []).map((a: any) => ({
@@ -120,21 +124,22 @@ export default function App() {
                     holder: a.holder,
                     identifierAlias: a.identifier_alias,
                     identifierCBU: a.identifier_cbu,
-                    metaAmount: parseFloat(a.meta_amount),
-                    currentAmount: parseFloat(a.current_amount),
-                    pendingAmount: parseFloat(a.pending_amount),
+                    metaAmount: parseFloat(a.meta_amount || 0),
+                    currentAmount: parseFloat(a.current_amount || 0),
+                    pendingAmount: parseFloat(a.pending_amount || 0),
                     status: a.status
                 }))
             }));
             setProviders(mappedProviders);
         }
 
+        // 3. Transferencias
         const { data: dbTransfers } = await supabase.from('transfers').select('*');
         if (dbTransfers) {
             const mappedTransfers: Transfer[] = dbTransfers.map(t => ({
                 id: t.id,
                 clientName: t.client_name,
-                amount: parseFloat(t.amount),
+                amount: parseFloat(t.amount || 0),
                 date: t.date_text,
                 providerId: t.provider_id,
                 accountId: t.account_id,
@@ -143,6 +148,39 @@ export default function App() {
                 isLoadedInSystem: t.is_loaded_in_system
             }));
             setTransfers(mappedTransfers.sort((a, b) => b.id.localeCompare(a.id)));
+        }
+
+        // 4. Viajes (Planillas)
+        const { data: dbTrips } = await supabase.from('trips').select('*, trip_clients(*), trip_expenses(*)');
+        if (dbTrips) {
+            const mappedTrips: Trip[] = dbTrips.map(t => ({
+                id: t.id,
+                displayId: t.display_id,
+                name: t.name,
+                status: t.status,
+                driverName: t.driver_name,
+                date: t.date_text,
+                route: t.route,
+                clients: (t.trip_clients || []).map((c: any) => ({
+                    id: c.id,
+                    name: c.name,
+                    address: c.address,
+                    previousBalance: parseFloat(c.previous_balance || 0),
+                    currentInvoiceAmount: parseFloat(c.current_invoice_amount || 0),
+                    paymentCash: parseFloat(c.payment_cash || 0),
+                    paymentTransfer: parseFloat(c.payment_transfer || 0),
+                    isTransferExpected: c.is_transfer_expected,
+                    status: c.status
+                })),
+                expenses: (t.trip_expenses || []).map((e: any) => ({
+                    id: e.id,
+                    type: e.type,
+                    amount: parseFloat(e.amount || 0),
+                    note: e.note,
+                    timestamp: new Date(e.timestamp)
+                }))
+            }));
+            setTrips(mappedTrips.sort((a, b) => b.id.localeCompare(a.id)));
         }
     } catch (err) {
         console.error("Error sincronizando datos:", err);
@@ -154,6 +192,91 @@ export default function App() {
   useEffect(() => {
     if (currentUser) fetchAllData();
   }, [currentUser]);
+
+  // --- MANEJADORES DE PERSISTENCIA: VIAJES (PLANILLAS) ---
+
+  const handleSaveTrip = async (trip: Trip) => {
+    try {
+        const isTemporaryId = !trip.id || trip.id.toString().startsWith('trip-');
+        
+        const tPayload: any = {
+            display_id: trip.displayId,
+            name: trip.name,
+            status: trip.status,
+            driver_name: trip.driverName,
+            date_text: trip.date,
+            route: trip.route
+        };
+
+        // Si ya tenemos un ID real (UUID), lo incluimos para que sea un UPDATE
+        if (!isTemporaryId) {
+            tPayload.id = trip.id;
+        }
+
+        // Usamos onConflict: 'display_id' por seguridad si el UUID no está sincronizado
+        const { data: tData, error: tError } = await supabase
+            .from('trips')
+            .upsert(tPayload, { onConflict: 'display_id' })
+            .select()
+            .single();
+
+        if (tError) throw tError;
+        const tripId = tData.id;
+
+        // Limpieza atómica de sub-tablas para evitar duplicados en actualizaciones
+        await supabase.from('trip_clients').delete().eq('trip_id', tripId);
+        await supabase.from('trip_expenses').delete().eq('trip_id', tripId);
+
+        // Re-inserción de Clientes
+        if (trip.clients && trip.clients.length > 0) {
+            const cPayload = trip.clients.map(c => ({
+                trip_id: tripId,
+                name: c.name,
+                address: c.address,
+                previous_balance: c.previousBalance,
+                current_invoice_amount: c.currentInvoiceAmount,
+                payment_cash: c.paymentCash,
+                payment_transfer: c.paymentTransfer,
+                is_transfer_expected: c.isTransferExpected,
+                status: c.status
+            }));
+            const { error: cError } = await supabase.from('trip_clients').insert(cPayload);
+            if (cError) throw cError;
+        }
+
+        // Re-inserción de Gastos
+        if (trip.expenses && trip.expenses.length > 0) {
+            const ePayload = trip.expenses.map(e => ({
+                trip_id: tripId,
+                type: e.type,
+                amount: e.amount,
+                note: e.note,
+                timestamp: e.timestamp.toISOString()
+            }));
+            const { error: eError } = await supabase.from('trip_expenses').insert(ePayload);
+            if (eError) throw eError;
+        }
+
+        await fetchAllData();
+    } catch (err) {
+        console.error("Error guardando viaje online:", err);
+        alert("No se pudo guardar la planilla online. Verifique su conexión o intente nuevamente.");
+    }
+  };
+
+  const handleDeleteTrip = async (tripId: string) => {
+    try {
+        if (tripId.startsWith('trip-')) {
+            setTrips(prev => prev.filter(t => t.id !== tripId));
+            return;
+        }
+        const { error } = await supabase.from('trips').delete().eq('id', tripId);
+        if (error) throw error;
+        await fetchAllData();
+    } catch (err) {
+        console.error("Error eliminando viaje:", err);
+    }
+  };
 
   // --- MANEJADORES DE PERSISTENCIA: PAGOS Y PROVEEDORES ---
   
@@ -173,16 +296,6 @@ export default function App() {
 
         const providerId = pData.id;
         
-        if (!isNewProvider) {
-            const { data: existingAccounts } = await supabase.from('provider_accounts').select('id').eq('provider_id', providerId);
-            const dbIds = (existingAccounts || []).map(a => a.id);
-            const uiIds = provider.accounts.filter(a => !a.id.startsWith('acc-')).map(a => a.id);
-            const idsToDelete = dbIds.filter(id => !uiIds.includes(id));
-            if (idsToDelete.length > 0) {
-                await supabase.from('provider_accounts').delete().in('id', idsToDelete);
-            }
-        }
-
         if (provider.accounts && provider.accounts.length > 0) {
             const accountsToSave = provider.accounts.map(acc => {
                 const accPayload: any = {
@@ -209,23 +322,16 @@ export default function App() {
 
   const handleDeleteProvider = async (providerId: string) => {
     try {
-        // Si el ID es temporal (comienza con p-), solo refrescamos la UI localmente
         if (providerId.startsWith('p-')) {
             await fetchAllData();
             return;
         }
         const { error } = await supabase.from('providers').delete().eq('id', providerId);
-        if (error) {
-            // Manejo legible de errores de Supabase
-            const msg = error.message || "Error desconocido";
-            const detail = error.details || "";
-            alert(`No se pudo eliminar: ${msg}. ${detail}`);
-            return;
-        }
+        if (error) throw error;
         await fetchAllData();
     } catch (err: any) {
         console.error("Error eliminando proveedor:", err);
-        alert("Ocurrió un error inesperado al intentar eliminar el proveedor.");
+        alert("No se pudo eliminar el proveedor. Verifique si tiene pagos asociados.");
     }
   };
 
@@ -243,7 +349,6 @@ export default function App() {
             is_loaded_in_system: transfer.isLoadedInSystem
         };
 
-        // Si NO es un ID temporal, incluimos el ID para que UPSERT actualice en lugar de insertar
         if (!isNewId) {
             payload.id = transfer.id;
         }
@@ -251,7 +356,6 @@ export default function App() {
         const { error: tError } = await supabase.from('transfers').upsert([payload]);
         if (tError) throw tError;
 
-        // Solo actualizar balances si es una creación nueva real (ID temporal)
         if (isNewId) {
             const account = providers.flatMap(p => p.accounts).find(a => a.id === transfer.accountId);
             if (account) {
@@ -284,7 +388,7 @@ export default function App() {
 
   const handleClearHistory = async () => {
     try {
-        // Borramos todos los registros. Usamos un filtro dummy que siempre se cumpla.
+        if(!confirm("¿Desea vaciar todo el historial de transferencias?")) return;
         const { error } = await supabase.from('transfers').delete().not('id', 'is', null);
         if (error) throw error;
         await fetchAllData();
@@ -379,7 +483,130 @@ export default function App() {
   const handlePrintOrder = (order: DetailedOrder) => {
       const printWindow = window.open('', '_blank');
       if (!printWindow) return;
-      const html = `<html><head><title>Comprobante</title><style>body{font-family:sans-serif;padding:40px;color:#333}table{width:100%;border-collapse:collapse;margin-top:20px}th{text-align:left;background:#f9f9f9;padding:10px;border-bottom:2px solid #eee}td{padding:10px;border-bottom:1px solid #eee}.total{text-align:right;font-size:20px;font-weight:bold;margin-top:30px}</style></head><body><h1>ALFONSA DISTRIBUIDORA</h1><p>${order.clientName} | ${order.displayId}</p><table><thead><tr><th>Cód.</th><th>Artículo</th><th>Cant.</th><th>Sub.</th></tr></thead><tbody>${order.products.map(p => `<tr><td>${p.code}</td><td>${p.name}</td><td>${p.quantity}</td><td>$${p.subtotal.toLocaleString()}</td></tr>`).join('')}</tbody></table><div class="total">TOTAL: $${order.total.toLocaleString()}</div></body></html>`;
+
+      const missing = getMissingProducts(order);
+      const returned = getReturnedProducts(order);
+
+      const html = `
+        <html>
+            <head>
+                <title>Factura - ${order.clientName}</title>
+                <style>
+                    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 40px; color: #1e293b; line-height: 1.5; }
+                    .header { border-bottom: 3px solid #e47c00; padding-bottom: 20px; margin-bottom: 30px; }
+                    .header h1 { margin: 0; font-size: 28px; color: #e47c00; font-weight: 900; }
+                    .info { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 20px; }
+                    .info b { color: #64748b; }
+                    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+                    th { text-align: left; background: #f8fafc; padding: 12px 10px; border-bottom: 2px solid #e2e8f0; color: #64748b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em; }
+                    td { padding: 12px 10px; border-bottom: 1px solid #f1f5f9; }
+                    .section-title { margin-top: 30px; font-size: 14px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em; display: flex; align-items: center; gap: 8px; }
+                    .section-missing { color: #ef4444; border-bottom: 1px solid #fee2e2; padding-bottom: 5px; }
+                    .section-returned { color: #3b82f6; border-bottom: 1px solid #dbeafe; padding-bottom: 5px; }
+                    .total-box { margin-top: 40px; border-top: 2px solid #e2e8f0; padding-top: 20px; text-align: right; }
+                    .total-row { display: flex; justify-content: flex-end; gap: 20px; align-items: center; margin-bottom: 5px; }
+                    .total-label { font-weight: bold; color: #64748b; font-size: 14px; }
+                    .total-value { font-size: 24px; font-weight: 900; color: #16a34a; }
+                    @media print { .no-print { display: none; } }
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h1>ALFONSA DISTRIBUIDORA</h1>
+                    <div class="info">
+                        <div>
+                            <p><b>Cliente:</b> ${order.clientName}</p>
+                            <p><b>ID Pedido:</b> ${order.displayId}</p>
+                        </div>
+                        <div style="text-align: right;">
+                            <p><b>Fecha:</b> ${order.createdDate}</p>
+                            <p><b>Zona:</b> ${order.zone || 'N/A'}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section-title">Productos Entregados</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Cód.</th>
+                            <th>Artículo</th>
+                            <th style="text-align: center;">Cant.</th>
+                            <th style="text-align: right;">P. Unit</th>
+                            <th style="text-align: right;">Subtotal</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${order.products.map(p => `
+                            <tr>
+                                <td>${p.code}</td>
+                                <td>${p.name}</td>
+                                <td style="text-align: center;">${p.quantity}</td>
+                                <td style="text-align: right;">$${p.unitPrice.toLocaleString('es-AR')}</td>
+                                <td style="text-align: right;">$${p.subtotal.toLocaleString('es-AR')}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+
+                ${missing.length > 0 ? `
+                    <div class="section-title section-missing">⚠️ Faltantes de Stock (No enviados)</div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Cód.</th>
+                                <th>Artículo</th>
+                                <th style="text-align: center;">Original</th>
+                                <th style="text-align: center;">Faltó</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${missing.map(p => `
+                                <tr>
+                                    <td>${p.code}</td>
+                                    <td>${p.name}</td>
+                                    <td style="text-align: center;">${p.originalQuantity}</td>
+                                    <td style="text-align: center; color: #ef4444; font-weight: bold;">${p.originalQuantity - (p.shippedQuantity ?? p.quantity)}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                ` : ''}
+
+                ${returned.length > 0 ? `
+                    <div class="section-title section-returned">🔄 Devoluciones Realizadas</div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Cód.</th>
+                                <th>Artículo</th>
+                                <th style="text-align: center;">Enviado</th>
+                                <th style="text-align: center;">Devuelto</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${returned.map(p => `
+                                <tr>
+                                    <td>${p.code}</td>
+                                    <td>${p.name}</td>
+                                    <td style="text-align: center;">${p.shippedQuantity}</td>
+                                    <td style="text-align: center; color: #3b82f6; font-weight: bold;">${p.returnedAmount}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                ` : ''}
+
+                <div class="total-box">
+                    <div class="total-row">
+                        <span class="total-label">TOTAL FINAL A PAGAR:</span>
+                        <span class="total-value">$${order.total.toLocaleString('es-AR')}</span>
+                    </div>
+                    <p style="font-size: 10px; color: #94a3b8; margin-top: 10px;">Comprobante de uso interno - Alfonsa Distribuidora</p>
+                </div>
+            </body>
+        </html>`;
+      
       printWindow.document.write(html);
       printWindow.document.close();
       printWindow.print();
@@ -413,11 +640,7 @@ export default function App() {
                     <OrderList onNavigate={setCurrentView} orders={orders} currentUser={currentUser} onOpenAssembly={setSelectedOrderForAssembly} onDeleteOrder={id => supabase.from('orders').delete().eq('id', id).then(() => fetchAllData())} onInvoiceOrder={handleInvoiceOrder} />
                 )}
                 {currentView === View.ORDER_SHEET && (
-                    <OrderSheet currentUser={currentUser} orders={orders} trips={trips} onSaveTrip={t => setTrips(prev => {
-                        const exists = prev.find(item => item.id === t.id);
-                        if (exists) return prev.map(item => item.id === t.id ? t : item);
-                        return [t, ...prev];
-                    })} onDeleteTrip={id => setTrips(prev => prev.filter(t => t.id !== id))} />
+                    <OrderSheet currentUser={currentUser} orders={orders} trips={trips} onSaveTrip={handleSaveTrip} onDeleteTrip={handleDeleteTrip} />
                 )}
                 {currentView === View.PAYMENTS_OVERVIEW && (
                     <PaymentsOverview providers={providers} onDeleteProvider={handleDeleteProvider} onUpdateProviders={handleSaveProvider} transfers={transfers} onUpdateTransfers={handleSaveTransfer} onConfirmTransfer={handleUpdateTransferStatus} />
@@ -435,7 +658,10 @@ export default function App() {
       </main>
 
       {selectedOrderForAssembly && (
-          <OrderAssemblyModal order={selectedOrderForAssembly} currentUser={currentUser} onClose={() => setSelectedOrderForAssembly(null)} 
+          <OrderAssemblyModal 
+            order={selectedOrderForAssembly} 
+            currentUser={currentUser} 
+            onClose={() => setSelectedOrderForAssembly(null)} 
             onSave={async (order, advance) => {
                 if (advance) await handleInvoiceOrder(order as DetailedOrder);
                 else {
@@ -452,7 +678,9 @@ export default function App() {
             onAddProduct={p => setSelectedOrderForAssembly(addProductToOrder(selectedOrderForAssembly, p) as DetailedOrder)}
             onUpdatePrice={(code, price) => setSelectedOrderForAssembly(updateProductPrice(selectedOrderForAssembly, code, price) as DetailedOrder)}
             onRemoveProduct={code => setSelectedOrderForAssembly(removeProductFromOrder(selectedOrderForAssembly, code) as DetailedOrder)}
-            onDeleteOrder={id => supabase.from('orders').delete().eq('id', id).then(() => fetchAllData())} onInvoice={handleInvoiceOrder} onReprint={() => handlePrintOrder(selectedOrderForAssembly)}
+            onDeleteOrder={id => supabase.from('orders').delete().eq('id', id).then(() => fetchAllData())} 
+            onInvoice={handleInvoiceOrder} 
+            onReprint={() => handlePrintOrder(selectedOrderForAssembly)}
           />
       )}
       {mobileMenuOpen && <Sidebar currentView={currentView} onNavigate={v => { setCurrentView(v); setMobileMenuOpen(false); }} isMobile onClose={() => setMobileMenuOpen(false)} />}
