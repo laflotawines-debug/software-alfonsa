@@ -1,55 +1,52 @@
+const CACHE_NAME = 'alfonsa-v3';
+const APP_SHELL = ['/index.html', '/manifest.json', '/index.css'];
 
-const CACHE_NAME = 'alfonsa-v2'; // Incrementamos la versión para forzar limpieza
-const ASSETS_TO_CACHE = [
-  './index.html',
-  './manifest.json'
-];
-
-// Instalación: Guardamos solo lo crítico
-self.addEventListener('install', (event) => {
+// INSTALL
+self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS_TO_CACHE);
-    })
+    caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL))
   );
   self.skipWaiting();
 });
 
-// Limpieza: Borramos cachés viejas que causaron el error del texto/código
-self.addEventListener('activate', (event) => {
+// ACTIVATE
+self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
+    caches.keys().then(keys =>
+      Promise.all(keys.map(k => k !== CACHE_NAME && caches.delete(k)))
+    )
   );
   self.clients.claim();
 });
 
-// Estrategia: Network First (Primero busca en internet, si falla usa caché)
-// Esto evita que el código JS se sirva como si fuera el HTML de la página
-self.addEventListener('fetch', (event) => {
-  // Solo interceptamos peticiones de navegación (páginas) o archivos locales
-  if (event.request.mode === 'navigate' || event.request.url.includes(self.location.origin)) {
+// FETCH
+self.addEventListener('fetch', event => {
+  const { request } = event;
+
+  // 1️⃣ Navegaciones → index.html
+  if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          // Si la respuesta es válida, la guardamos/actualizamos en caché
-          if (response.status === 200) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-          }
-          return response;
-        })
-        .catch(() => {
-          // Si no hay internet, intentamos servir desde caché
-          return caches.match(event.request);
-        })
+      fetch('/index.html').catch(() => caches.match('/index.html'))
     );
+    return;
   }
+
+  // 2️⃣ No tocar requests externos (esm.sh, fonts, etc)
+  if (!request.url.startsWith(self.location.origin)) {
+    return;
+  }
+
+  // 3️⃣ Assets locales → cache first
+  event.respondWith(
+    caches.match(request).then(cached =>
+      cached ||
+      fetch(request).then(response => {
+        if (response.status === 200) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
+        }
+        return response;
+      })
+    )
+  );
 });

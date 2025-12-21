@@ -6,7 +6,7 @@ import App from './App';
 // Registro del Service Worker con manejo de actualización
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js')
+    navigator.serviceWorker.register('/sw.js')
       .then(reg => {
         console.log('Service Worker registrado:', reg.scope);
         // Si hay una actualización, forzamos que tome el control
