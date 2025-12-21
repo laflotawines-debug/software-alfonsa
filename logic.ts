@@ -4,17 +4,16 @@ import {
     Product, 
     OrderStatus, 
     User, 
-    Provider,
-    Transfer,
     OrderZone,
     PaymentMethod,
+    HistoryEntry
 } from './types';
 
 // ==========================================
 // 1. PAYMENT UTILITIES
 // ==========================================
 
-export const getProviderProgress = (providerId: string, transfers: Transfer[]) => {
+export const getProviderProgress = (providerId: string, transfers: any[]) => {
     const providerTransfers = transfers.filter(t => t.providerId === providerId);
     const realized = providerTransfers
         .filter(t => t.status === 'Realizado')
@@ -47,8 +46,6 @@ export const ORDER_WORKFLOW: Record<OrderStatus, { label: string; next?: OrderSt
     [OrderStatus.ENTREGADO]: { label: 'Entregado', next: OrderStatus.PAGADO },
     [OrderStatus.PAGADO]: { label: 'Pagado' }
 };
-
-export const STATE_MACHINE = ORDER_WORKFLOW;
 
 export const getStatusColor = (status: OrderStatus): string => {
     switch (status) {
@@ -106,7 +103,6 @@ export const getZoneStyles = (zone?: OrderZone) => {
 
 export const getMissingProducts = (order: Order) => {
     return order.products.filter(p => {
-        // Uso de ?? para que si shippedQuantity es null, use quantity.
         const baseline = p.shippedQuantity ?? p.quantity;
         return baseline < p.originalQuantity;
     });
@@ -149,7 +145,10 @@ export const advanceOrderStatus = (order: Order, user: User): Order => {
     const nextStatus = ORDER_WORKFLOW[currentStatus]?.next || currentStatus;
     
     let assemblerId = order.assemblerId;
+    let assemblerName = order.assemblerName;
     let controllerId = order.controllerId;
+    let controllerName = order.controllerName;
+    let invoicerName = order.invoicerName;
     let products = order.products;
 
     if (nextStatus === OrderStatus.EN_TRANSITO) {
@@ -159,18 +158,23 @@ export const advanceOrderStatus = (order: Order, user: User): Order => {
         }));
     }
 
-    if (currentStatus === OrderStatus.EN_ARMADO) {
+    // Registro de quién hace cada paso basado en el cambio de estado
+    if (currentStatus === OrderStatus.EN_ARMADO && nextStatus === OrderStatus.ARMADO) {
         assemblerId = user.id;
-    } else if (currentStatus === OrderStatus.ARMADO) {
+        assemblerName = user.name;
+    } else if (currentStatus === OrderStatus.ARMADO && nextStatus === OrderStatus.ARMADO_CONTROLADO) {
         controllerId = user.id;
+        controllerName = user.name;
+    } else if (currentStatus === OrderStatus.ARMADO_CONTROLADO && nextStatus === OrderStatus.FACTURADO) {
+        invoicerName = user.name;
     }
 
-    const historyEntry = {
-        timestamp: new Date(),
+    const historyEntry: HistoryEntry = {
+        timestamp: new Date().toISOString(),
         userId: user.id,
         userName: user.name,
         action: 'STATUS_CHANGE',
-        details: `Estado cambiado de ${currentStatus} a ${nextStatus} por ${user.name}`,
+        details: `Pedido avanzado a ${ORDER_WORKFLOW[nextStatus].label} por ${user.name}`,
         previousState: currentStatus,
         newState: nextStatus
     };
@@ -180,13 +184,16 @@ export const advanceOrderStatus = (order: Order, user: User): Order => {
         status: nextStatus,
         products,
         assemblerId,
+        assemblerName,
         controllerId,
-        history: [historyEntry, ...order.history]
+        controllerName,
+        invoicerName,
+        history: [historyEntry, ...(order.history || [])]
     };
 };
 
 export const addProductToOrder = (order: Order, product: Product): Order => {
-    const products = [...order.products, product];
+    const products = [...(order.products || []), product];
     const total = products.reduce((sum, p) => sum + p.subtotal, 0);
     return { ...order, products, total };
 };
@@ -215,44 +222,25 @@ export const updatePaymentMethod = (order: Order, method: PaymentMethod): Order 
 export const parseOrderText = (text: string): Product[] => {
     const products: Product[] = [];
     const lines = text.split('\n');
-    
     const regex = /(\d+)\s*(?:\(x(\d+)\))?\s+(\d+)\s+(.*?)\s+\$\s*([\d.,]+)\s+\$\s*([\d.,]+)/i;
 
     lines.forEach(line => {
         const trimmed = line.trim();
         if (!trimmed) return;
-
         const match = trimmed.match(regex);
         if (match) {
             const baseQty = parseInt(match[1]);
             const multiplier = match[2] ? parseInt(match[2]) : 1;
             const quantity = baseQty * multiplier;
-            
             const code = match[3];
-            
             let rawName = match[4].trim();
             let name = rawName;
-            
-            if (rawName.includes(' - ')) {
-                name = rawName.split(' - ')[0].trim();
-            } else if (rawName.endsWith(' -')) {
-                name = rawName.slice(0, -2).trim();
-            }
-
+            if (rawName.includes(' - ')) name = rawName.split(' - ')[0].trim();
+            else if (rawName.endsWith(' -')) name = rawName.slice(0, -2).trim();
             const unitPrice = parseFloat(match[5].replace(/\./g, '').replace(',', '.'));
             const subtotal = parseFloat(match[6].replace(/\./g, '').replace(',', '.'));
-            
-            products.push({
-                code,
-                name,
-                originalQuantity: quantity,
-                quantity,
-                unitPrice,
-                subtotal,
-                isChecked: false
-            });
+            products.push({ code, name, originalQuantity: quantity, quantity, unitPrice, subtotal, isChecked: false });
         }
     });
-    
     return products;
 };

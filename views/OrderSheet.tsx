@@ -166,7 +166,7 @@ const TripListView: React.FC<{
                             </div>
                             <div className="mt-auto pt-4 border-t border-surfaceHighlight flex justify-between items-center">
                                 <span className="text-xs font-bold text-muted uppercase">{trip.clients.length} Clientes</span>
-                                <span className="font-black text-text">$ {trip.clients.reduce((acc, c) => acc + c.previousBalance + c.currentInvoiceAmount, 0).toLocaleString()}</span>
+                                <span className="font-black text-text">$ {trip.clients.reduce((acc, c) => acc + (c.previousBalance || 0) + (c.currentInvoiceAmount || 0), 0).toLocaleString()}</span>
                             </div>
                         </div>
                     ))}
@@ -269,9 +269,9 @@ const TripEditor: React.FC<{
                             {clients.map(c => (
                                 <tr key={c.id}>
                                     <td className="py-3 pl-2"><p className="font-bold text-sm text-text">{c.name}</p><p className="text-xs text-muted">{c.address}</p></td>
-                                    <td className="py-3 text-right font-bold text-muted">$ {c.previousBalance.toLocaleString()}</td>
-                                    <td className="py-3 text-right font-bold text-muted">$ {c.currentInvoiceAmount.toLocaleString()}</td>
-                                    <td className="py-3 text-right font-black text-text">$ {(c.previousBalance + c.currentInvoiceAmount).toLocaleString()}</td>
+                                    <td className="py-3 text-right font-bold text-muted">$ {(c.previousBalance || 0).toLocaleString()}</td>
+                                    <td className="py-3 text-right font-bold text-muted">$ {(c.currentInvoiceAmount || 0).toLocaleString()}</td>
+                                    <td className="py-3 text-right font-black text-text">$ {((c.previousBalance || 0) + (c.currentInvoiceAmount || 0)).toLocaleString()}</td>
                                     <td className="py-3 text-center"><button onClick={() => removeClient(c.id)} className="p-2 text-muted hover:text-red-500 transition-colors"><Trash2 size={16} /></button></td>
                                 </tr>
                             ))}
@@ -325,13 +325,13 @@ const TripDetailView: React.FC<{
         let expectedTotal = 0; 
         let collectedCash = 0;
         let collectedTransfer = 0;
-        trip.clients.forEach(c => {
+        (trip.clients || []).forEach(c => {
             const { totalDebt } = getClientTotals(c);
             expectedTotal += totalDebt;
             collectedCash += (c.paymentCash || 0);
             collectedTransfer += (c.paymentTransfer || 0);
         });
-        const totalExpenses = trip.expenses.reduce((acc, e) => acc + e.amount, 0);
+        const totalExpenses = (trip.expenses || []).reduce((acc, e) => acc + (e.amount || 0), 0);
         return { expectedTotal, collectedCash, collectedTransfer, totalExpenses, cashToRender: collectedCash - totalExpenses };
     }, [trip]);
 
@@ -340,8 +340,8 @@ const TripDetailView: React.FC<{
             if (c.id !== clientId) return c;
             
             // If vale, they can overwrite balances
-            const bPrev = isVale && prevBalance !== undefined ? prevBalance : c.previousBalance;
-            const bCurr = isVale && currentInvoice !== undefined ? currentInvoice : c.currentInvoiceAmount;
+            const bPrev = isVale && prevBalance !== undefined ? prevBalance : (c.previousBalance || 0);
+            const bCurr = isVale && currentInvoice !== undefined ? currentInvoice : (c.currentInvoiceAmount || 0);
             
             const totalDebt = bPrev + bCurr;
             const totalPaid = cash + transfer;
@@ -366,7 +366,7 @@ const TripDetailView: React.FC<{
 
     const handleAddExpense = (expense: Omit<TripExpense, 'id' | 'timestamp'>) => {
         const newExpense: TripExpense = { ...expense, id: `exp-${Date.now()}`, timestamp: new Date() };
-        onUpdateTrip({ ...trip, expenses: [...trip.expenses, newExpense] });
+        onUpdateTrip({ ...trip, expenses: [...(trip.expenses || []), newExpense] });
         setIsExpenseModalOpen(false);
     };
 
@@ -410,7 +410,7 @@ const TripDetailView: React.FC<{
                 <SummaryCard label="Gastos" value={tripTotals.totalExpenses} color="text-red-500" />
                 <div className="col-span-2 lg:col-span-1 bg-blue-600 rounded-xl p-4 md:p-6 text-white shadow-lg shadow-blue-500/20">
                     <span className="text-[10px] font-bold uppercase opacity-80">Efectivo Neto</span>
-                    <p className="text-2xl md:text-3xl font-black mt-1">$ {tripTotals.cashToRender.toLocaleString()}</p>
+                    <p className="text-2xl md:text-3xl font-black mt-1">$ {(tripTotals.cashToRender || 0).toLocaleString()}</p>
                 </div>
             </div>
 
@@ -445,7 +445,7 @@ const TripDetailView: React.FC<{
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-surfaceHighlight">
-                            {trip.clients.map(c => {
+                            {(trip.clients || []).map(c => {
                                 const { totalDebt, totalPaid } = getClientTotals(c);
                                 const isPaid = c.status === 'PAID';
                                 return (
@@ -454,13 +454,13 @@ const TripDetailView: React.FC<{
                                             <p className="font-bold text-sm text-text">{c.name}</p>
                                             <p className="text-[10px] text-muted uppercase font-bold">{c.address}</p>
                                         </td>
-                                        <td className="p-4 text-right text-muted font-bold">$ {c.previousBalance.toLocaleString()}</td>
-                                        <td className="p-4 text-right text-muted font-bold">$ {c.currentInvoiceAmount.toLocaleString()}</td>
-                                        <td className="p-4 text-right font-black text-text">$ {totalDebt.toLocaleString()}</td>
+                                        <td className="p-4 text-right text-muted font-bold">$ {(c.previousBalance || 0).toLocaleString()}</td>
+                                        <td className="p-4 text-right text-muted font-bold">$ {(c.currentInvoiceAmount || 0).toLocaleString()}</td>
+                                        <td className="p-4 text-right font-black text-text">$ {(totalDebt || 0).toLocaleString()}</td>
                                         <td className="p-4 text-center">
                                             <StatusBadge status={c.status} />
                                         </td>
-                                        <td className="p-4 text-right font-bold text-green-500">$ {totalPaid.toLocaleString()}</td>
+                                        <td className="p-4 text-right font-bold text-green-500">$ {(totalPaid || 0).toLocaleString()}</td>
                                         <td className="p-4 text-center">
                                             <button 
                                                 onClick={() => setSelectedClient(c)} 
@@ -478,7 +478,7 @@ const TripDetailView: React.FC<{
 
                 {/* Mobile View Cards */}
                 <div className="flex flex-col gap-3 md:hidden">
-                    {trip.clients.map(c => {
+                    {(trip.clients || []).map(c => {
                         const { totalDebt, totalPaid, remaining } = getClientTotals(c);
                         const isPaid = c.status === 'PAID';
                         return (
@@ -493,16 +493,16 @@ const TripDetailView: React.FC<{
                                 <div className="grid grid-cols-2 gap-4 border-y border-surfaceHighlight py-3 my-1">
                                     <div>
                                         <p className="text-[10px] text-muted uppercase font-bold">Total Deuda</p>
-                                        <p className="text-lg font-black text-text">$ {totalDebt.toLocaleString()}</p>
+                                        <p className="text-lg font-black text-text">$ {(totalDebt || 0).toLocaleString()}</p>
                                     </div>
                                     <div className="text-right">
                                         <p className="text-[10px] text-muted uppercase font-bold">Saldo Pend.</p>
-                                        <p className={`text-lg font-black ${remaining <= 0 ? 'text-green-500' : 'text-blue-500'}`}>$ {remaining.toLocaleString()}</p>
+                                        <p className={`text-lg font-black ${remaining <= 0 ? 'text-green-500' : 'text-blue-500'}`}>$ {(remaining || 0).toLocaleString()}</p>
                                     </div>
                                 </div>
                                 <div className="flex justify-between items-center">
                                     <div className="flex flex-col">
-                                        <span className="text-[10px] text-muted font-bold">COBRADO: <span className="text-green-500 font-black">$ {totalPaid.toLocaleString()}</span></span>
+                                        <span className="text-[10px] text-muted font-bold">COBRADO: <span className="text-green-500 font-black">$ {(totalPaid || 0).toLocaleString()}</span></span>
                                     </div>
                                     <button 
                                         onClick={() => setSelectedClient(c)} 
@@ -561,7 +561,7 @@ const StatusBadge: React.FC<{ status: PaymentStatus }> = ({ status }) => (
 const SummaryCard: React.FC<{ label: string; value: number; color: string }> = ({ label, value, color }) => (
     <div className="bg-surface border border-surfaceHighlight rounded-xl p-4 md:p-6 shadow-sm flex flex-col justify-between">
         <span className="text-[10px] font-bold text-muted uppercase tracking-wider">{label}</span>
-        <p className={`text-xl md:text-2xl font-black mt-1 ${color}`}>$ {value.toLocaleString()}</p>
+        <p className={`text-xl md:text-2xl font-black mt-1 ${color}`}>$ {(value || 0).toLocaleString()}</p>
     </div>
 );
 
@@ -620,7 +620,7 @@ const ImportOrdersModal: React.FC<{ orders: DetailedOrder[]; selectedRoute?: str
                                 <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${selectedIds.has(o.id) ? 'bg-primary border-primary' : 'border-muted'}`}>{selectedIds.has(o.id) && <Check size={14} className="text-white"/>}</div>
                                 <div><p className="font-bold text-sm text-text">{o.clientName}</p><p className="text-[10px] text-muted font-bold uppercase">{o.displayId}</p></div>
                             </div>
-                            <p className="font-black text-text">$ {o.total.toLocaleString()}</p>
+                            <p className="font-black text-text">$ {(o.total || 0).toLocaleString()}</p>
                         </div>
                     ))}
                     {available.length === 0 && <p className="text-center py-20 text-muted italic">No hay pedidos disponibles para importar en esta zona.</p>}
@@ -640,8 +640,8 @@ const PaymentModal: React.FC<{ client: TripClient; totals: any; onClose: () => v
     const [isExpected, setIsExpected] = useState(client.isTransferExpected);
     
     // Vale only fields
-    const [prevBal, setPrevBal] = useState(client.previousBalance.toString());
-    const [currInv, setCurrInv] = useState(client.currentInvoiceAmount.toString());
+    const [prevBal, setPrevBal] = useState((client.previousBalance || 0).toString());
+    const [currInv, setCurrInv] = useState((client.currentInvoiceAmount || 0).toString());
 
     const handleConfirm = () => {
         onSave(
@@ -690,7 +690,7 @@ const PaymentModal: React.FC<{ client: TripClient; totals: any; onClose: () => v
                     {!isVale && (
                         <div className="bg-surfaceHighlight/20 p-4 rounded-xl">
                             <span className="text-[10px] font-bold uppercase text-muted">Deuda Total</span>
-                            <p className="text-2xl font-black text-text">$ {totals.totalDebt.toLocaleString()}</p>
+                            <p className="text-2xl font-black text-text">$ {(totals.totalDebt || 0).toLocaleString()}</p>
                         </div>
                     )}
                     
@@ -757,9 +757,9 @@ const ExpenseModal: React.FC<{ onClose: () => void; onSave: any }> = ({ onClose,
 };
 
 const TripReportModal: React.FC<{ trip: Trip; onClose: () => void }> = ({ trip, onClose }) => {
-    const cash = trip.clients.reduce((acc, c) => acc + (c.paymentCash || 0), 0);
-    const trans = trip.clients.reduce((acc, c) => acc + (c.paymentTransfer || 0), 0);
-    const exp = trip.expenses.reduce((acc, e) => acc + e.amount, 0);
+    const cash = (trip.clients || []).reduce((acc, c) => acc + (c.paymentCash || 0), 0);
+    const trans = (trip.clients || []).reduce((acc, c) => acc + (c.paymentTransfer || 0), 0);
+    const exp = (trip.expenses || []).reduce((acc, e) => acc + (e.amount || 0), 0);
     const net = cash - exp;
 
     return (
@@ -773,21 +773,21 @@ const TripReportModal: React.FC<{ trip: Trip; onClose: () => void }> = ({ trip, 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                         <div className="bg-surface p-4 rounded-xl border border-surfaceHighlight text-center shadow-sm">
                             <span className="text-[10px] font-bold text-muted uppercase">Efectivo</span>
-                            <p className="text-xl font-black text-text mt-1">$ {cash.toLocaleString()}</p>
+                            <p className="text-xl font-black text-text mt-1">$ {(cash || 0).toLocaleString()}</p>
                         </div>
                         <div className="bg-surface p-4 rounded-xl border border-surfaceHighlight text-center shadow-sm">
                             <span className="text-[10px] font-bold text-muted uppercase">Transf.</span>
-                            <p className="text-xl font-black text-blue-500 mt-1">$ {trans.toLocaleString()}</p>
+                            <p className="text-xl font-black text-blue-500 mt-1">$ {(trans || 0).toLocaleString()}</p>
                         </div>
                         <div className="bg-surface p-4 rounded-xl border border-surfaceHighlight text-center shadow-sm">
                             <span className="text-[10px] font-bold text-muted uppercase">Gastos</span>
-                            <p className="text-xl font-black text-red-500 mt-1">$ {exp.toLocaleString()}</p>
+                            <p className="text-xl font-black text-red-500 mt-1">$ {(exp || 0).toLocaleString()}</p>
                         </div>
                     </div>
                     
                     <div className="bg-blue-600 p-8 rounded-2xl text-white text-center shadow-xl shadow-blue-500/20">
                         <span className="text-xs font-bold uppercase tracking-widest opacity-80">Saldo Neto a Entregar (Efectivo)</span>
-                        <p className="text-5xl font-black mt-2 leading-none">$ {net.toLocaleString()}</p>
+                        <p className="text-5xl font-black mt-2 leading-none">$ {(net || 0).toLocaleString()}</p>
                         <div className="h-px bg-white/20 my-6"></div>
                         <p className="text-xs font-medium opacity-80">Efectivo total menos gastos realizados en el camino.</p>
                     </div>
@@ -796,7 +796,7 @@ const TripReportModal: React.FC<{ trip: Trip; onClose: () => void }> = ({ trip, 
                         <h4 className="text-xs font-bold uppercase text-muted tracking-wider flex items-center gap-2">
                             <Fuel size={14} /> Detalle de Gastos Realizados
                         </h4>
-                        {trip.expenses.length === 0 ? (
+                        {(trip.expenses || []).length === 0 ? (
                             <p className="text-sm text-muted italic p-4 text-center border border-dashed border-surfaceHighlight rounded-xl">No hay gastos registrados en este viaje.</p>
                         ) : (
                             trip.expenses.map(e => (
@@ -805,7 +805,7 @@ const TripReportModal: React.FC<{ trip: Trip; onClose: () => void }> = ({ trip, 
                                         <div className="p-2 bg-red-500/10 text-red-500 rounded-lg"><Fuel size={16}/></div>
                                         <div><p className="font-bold text-sm text-text capitalize">{e.type}</p><p className="text-[10px] text-muted font-bold">{e.note || 'Sin observación'}</p></div>
                                     </div>
-                                    <p className="font-black text-red-500">$ {e.amount.toLocaleString()}</p>
+                                    <p className="font-black text-red-500">$ {(e.amount || 0).toLocaleString()}</p>
                                 </div>
                             ))
                         )}

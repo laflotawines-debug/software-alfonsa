@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
     X, 
     Check, 
@@ -18,17 +18,20 @@ import {
     FileText, 
     Loader2, 
     ClipboardCheck, 
-    FileCheck, 
     Truck, 
     RotateCcw, 
     MapPin, 
     Receipt, 
     Printer, 
-    CreditCard,
-    Lock
+    Lock,
+    Undo2,
+    CheckCircle2,
+    Activity,
+    LogOut
 } from 'lucide-react';
 import { Order, Product, User, OrderStatus, PaymentMethod } from '../types';
 import { updatePaymentMethod } from '../logic';
+import { jsPDF } from 'jspdf';
 
 interface OrderAssemblyModalProps {
     order: Order;
@@ -43,7 +46,6 @@ interface OrderAssemblyModalProps {
     onRemoveProduct?: (productCode: string) => void;
     onDeleteOrder?: (orderId: string) => void;
     onInvoice?: (order: any) => void; 
-    onReprint?: () => void; 
 }
 
 export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
@@ -58,8 +60,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     onUpdatePrice,
     onRemoveProduct,
     onDeleteOrder,
-    onInvoice,
-    onReprint
+    onInvoice
 }) => {
     const [editingProductCode, setEditingProductCode] = useState<string | null>(null);
     const [editingPriceCode, setEditingPriceCode] = useState<string | null>(null);
@@ -81,13 +82,18 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     const isTransitStep = order.status === OrderStatus.EN_TRANSITO; 
     const isFinishedStep = order.status === OrderStatus.ENTREGADO || order.status === OrderStatus.PAGADO;
 
-    const hasBeenInvoiced = isInvoiceControlStep || isReadyForTransit || isTransitStep || isFinishedStep;
+    const canPrint = isInvoiceControlStep || isReadyForTransit || isTransitStep || isFinishedStep;
 
     const isOriginalAssembler = order.assemblerId === currentUser.id;
     const isReadyForControl = order.status === OrderStatus.ARMADO;
     const selfControlBlocked = isOriginalAssembler && isReadyForControl && currentUser.role === 'armador';
 
-    const canEditProducts = !isFinishedStep && !selfControlBlocked && (
+    const occupiedByOther = (
+        (order.status === OrderStatus.EN_ARMADO && order.assemblerId && order.assemblerId !== currentUser.id) ||
+        (order.status === OrderStatus.ARMADO && order.controllerId && order.controllerId !== currentUser.id)
+    );
+
+    const canEditProducts = !isFinishedStep && !selfControlBlocked && !occupiedByOther && (
         isVale || 
         (currentUser.role === 'armador' && order.status === OrderStatus.EN_ARMADO) ||
         (currentUser.role === 'armador' && isControlStep) ||
@@ -96,14 +102,154 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         isReadyForTransit
     );
 
-    const canEditMetadata = isVale;
-    const showAdvanceButton = !isBillingStep && !isTransitStep && !isFinishedStep; 
-    const assemblerName = order.history.find(h => h.newState === OrderStatus.ARMADO)?.userName || order.assemblerId || '-';
+    const canEditMetadata = isVale && !occupiedByOther;
+    const showAdvanceButton = !isBillingStep && !isTransitStep && !isFinishedStep && !occupiedByOther; 
+    const assemblerName = order.history.find(h => h.newState === OrderStatus.ARMADO || h.details?.includes('Armado'))?.userName || order.assemblerName || '-';
     const showFinancials = isVale;
 
     const originalInvoiceTotal = order.products.reduce((acc, p) => acc + (p.originalQuantity * p.unitPrice), 0);
     const finalTotal = order.total;
     const refundTotal = originalInvoiceTotal - finalTotal;
+
+    const generateInvoicePDF = () => {
+        const doc = new jsPDF();
+        const primaryColor = [228, 124, 0]; // #e47c00 Alfonsa Orange
+        const textColor = [17, 24, 39]; // Gray-900
+        const mutedColor = [107, 114, 128]; // Gray-500
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(22);
+        doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+        doc.text('ALFONSA DISTRIBUIDORA', 20, 25);
+
+        doc.setFontSize(10);
+        doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+        doc.text(`Cliente: ${order.clientName}`, 20, 35);
+        doc.text(`ID Pedido: ${order.displayId}`, 20, 42);
+
+        doc.text(`Fecha: ${order.createdDate}`, 150, 35);
+        doc.text(`Zona: ${order.zone || 'N/A'}`, 150, 42);
+
+        doc.setDrawColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+        doc.setLineWidth(1);
+        doc.line(20, 50, 190, 50);
+
+        let currentY = 60;
+
+        const delivered = order.products.filter(p => p.quantity > 0);
+        if (delivered.length > 0) {
+            doc.setFontSize(11);
+            doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+            doc.text('PRODUCTOS ENTREGADOS', 20, currentY);
+            currentY += 8;
+
+            doc.setFontSize(9);
+            doc.setTextColor(mutedColor[0], mutedColor[1], mutedColor[2]);
+            doc.text('CÓD.', 20, currentY);
+            doc.text('ARTÍCULO', 35, currentY);
+            doc.text('CANT.', 130, currentY, { align: 'center' });
+            doc.text('P. UNIT', 160, currentY, { align: 'right' });
+            doc.text('SUBTOTAL', 190, currentY, { align: 'right' });
+            currentY += 3;
+            doc.setDrawColor(229, 231, 235);
+            doc.setLineWidth(0.1);
+            doc.line(20, currentY, 190, currentY);
+            currentY += 7;
+
+            doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+            delivered.forEach(p => {
+                doc.text(p.code, 20, currentY);
+                doc.text(p.name.substring(0, 45), 35, currentY);
+                doc.text(p.quantity.toString(), 130, currentY, { align: 'center' });
+                doc.text(`$ ${p.unitPrice.toLocaleString('es-AR')}`, 160, currentY, { align: 'right' });
+                doc.text(`$ ${p.subtotal.toLocaleString('es-AR')}`, 190, currentY, { align: 'right' });
+                currentY += 7;
+                if (currentY > 270) { doc.addPage(); currentY = 20; }
+            });
+            currentY += 5;
+        }
+
+        const shortages = order.products.filter(p => p.originalQuantity > (p.shippedQuantity ?? p.originalQuantity));
+        if (shortages.length > 0) {
+            currentY += 10;
+            doc.setFontSize(11);
+            doc.setTextColor(239, 68, 68);
+            doc.text('! FALTANTES DE STOCK (NO ENVIADOS)', 20, currentY);
+            currentY += 8;
+
+            doc.setFontSize(9);
+            doc.setTextColor(mutedColor[0], mutedColor[1], mutedColor[2]);
+            doc.text('CÓD.', 20, currentY);
+            doc.text('ARTÍCULO', 35, currentY);
+            doc.text('ORIGINAL', 150, currentY, { align: 'center' });
+            doc.text('FALTÓ', 180, currentY, { align: 'center' });
+            currentY += 3;
+            doc.line(20, currentY, 190, currentY);
+            currentY += 7;
+
+            doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+            shortages.forEach(p => {
+                const missing = p.originalQuantity - (p.shippedQuantity || p.quantity);
+                doc.text(p.code, 20, currentY);
+                doc.text(p.name.substring(0, 45), 35, currentY);
+                doc.text(p.originalQuantity.toString(), 150, currentY, { align: 'center' });
+                doc.setTextColor(239, 68, 68);
+                doc.text(missing.toString(), 180, currentY, { align: 'center' });
+                doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+                currentY += 7;
+                if (currentY > 270) { doc.addPage(); currentY = 20; }
+            });
+            currentY += 5;
+        }
+
+        const returns = order.products.filter(p => (p.shippedQuantity ?? p.quantity) > p.quantity);
+        if (returns.length > 0) {
+            currentY += 10;
+            doc.setFontSize(11);
+            doc.setTextColor(37, 99, 235);
+            doc.text('DEVOLUCIONES REALIZADAS', 20, currentY);
+            currentY += 8;
+
+            doc.setFontSize(9);
+            doc.setTextColor(mutedColor[0], mutedColor[1], mutedColor[2]);
+            doc.text('CÓD.', 20, currentY);
+            doc.text('ARTÍCULO', 35, currentY);
+            doc.text('ENVIADO', 150, currentY, { align: 'center' });
+            doc.text('DEVUELTO', 180, currentY, { align: 'center' });
+            currentY += 3;
+            doc.line(20, currentY, 190, currentY);
+            currentY += 7;
+
+            doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+            returns.forEach(p => {
+                const returned = (p.shippedQuantity || p.quantity) - p.quantity;
+                doc.text(p.code, 20, currentY);
+                doc.text(p.name.substring(0, 45), 35, currentY);
+                doc.text((p.shippedQuantity || p.quantity).toString(), 150, currentY, { align: 'center' });
+                doc.setTextColor(37, 99, 235);
+                doc.text(returned.toString(), 180, currentY, { align: 'center' });
+                doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+                currentY += 7;
+                if (currentY > 270) { doc.addPage(); currentY = 20; }
+            });
+            currentY += 5;
+        }
+
+        currentY = Math.max(currentY + 20, 260);
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+        doc.text('TOTAL FINAL A PAGAR:', 130, currentY, { align: 'right' });
+        doc.setFontSize(20);
+        doc.setTextColor(22, 163, 74);
+        doc.text(`$ ${order.total.toLocaleString('es-AR')}`, 190, currentY, { align: 'right' });
+
+        doc.setFontSize(8);
+        doc.setTextColor(mutedColor[0], mutedColor[1], mutedColor[2]);
+        doc.text('Comprobante de uso interno - Alfonsa Distribuidora', 105, currentY + 12, { align: 'center' });
+
+        doc.save(`factura-${order.clientName.replace(/\s+/g, '-').toLowerCase()}-${order.displayId}.pdf`);
+    };
 
     const handleEditQtyClick = (product: Product) => {
         if (!canEditProducts) return;
@@ -186,14 +332,9 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         }
     };
 
-    const handlePaperControlClick = () => {
-        onSave(order, true);
-    };
-
     const handlePaymentMethodChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         const newMethod = e.target.value as PaymentMethod;
         const updatedOrder = updatePaymentMethod(order, newMethod);
-        // Persistimos inmediatamente el cambio de método de pago si es el vale
         if (isVale) onSave(updatedOrder, false);
     };
 
@@ -210,7 +351,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         icon = <ShieldCheck size={16} />;
     } else if (isBillingStep) {
         titleText = "Facturación";
-        buttonLabel = "Generar Factura";
+        buttonLabel = "Confirmar Facturación";
         icon = <FileText size={16} />;
     } else if (isInvoiceControlStep) {
         titleText = "Control de Factura";
@@ -221,17 +362,25 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         buttonLabel = "Enviar a Reparto";
         icon = <Truck size={16} />;
     } else if (isTransitStep) {
-        titleText = "En Tránsito / Devoluciones";
+        titleText = "En Reparto / Devoluciones";
         buttonLabel = "Marcar Entregado";
         icon = <Truck size={16} />;
     } else if (isFinishedStep) {
-        titleText = "Pedido Entregado";
+        titleText = "Pedido Finalizado";
         buttonLabel = "Cerrar";
-        icon = <MapPin size={16} />;
+        icon = <CheckCircle2 size={16} />;
     }
 
     const ActionsBlock = () => (
         <div className="flex flex-col gap-3 w-full">
+             {occupiedByOther && (
+                 <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-xl flex flex-col items-center gap-2 text-center animate-pulse">
+                    <Activity size={20} className="text-red-500" />
+                    <p className="text-xs font-black text-red-600 dark:text-red-400 uppercase tracking-widest">Pedido en uso</p>
+                    <p className="text-[10px] text-muted font-bold leading-tight">Este pedido está siendo trabajado actualmente. Solo puedes visualizar.</p>
+                 </div>
+             )}
+
              {selfControlBlocked && (
                  <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-xl flex flex-col items-center gap-2 text-center">
                     <Lock size={20} className="text-red-500" />
@@ -242,9 +391,9 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
 
              {canEditProducts || isTransitStep || isReadyForTransit || isInvoiceControlStep ? (
                 <>
-                    {hasBeenInvoiced && isVale && onReprint && (
+                    {canPrint && isVale && (
                         <button 
-                            onClick={onReprint}
+                            onClick={generateInvoicePDF}
                             className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold transition-all text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 mb-2"
                         >
                             <Printer size={18} />
@@ -280,19 +429,26 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                             className="w-full py-4 rounded-xl font-bold text-white shadow-lg transition-all flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 shadow-purple-500/20 disabled:opacity-70 disabled:cursor-wait"
                         >
                             {isGeneratingInvoice ? <Loader2 size={20} className="animate-spin" /> : <FileText size={20} />}
-                            {isGeneratingInvoice ? "Generando Factura..." : "Confirmar y Facturar"}
+                            {isGeneratingInvoice ? "Facturando..." : "Confirmar Facturación"}
                         </button>
                     )}
 
-                    {/* Botón de Guardar y Salir siempre disponible si hay capacidad de edición o estamos en reparto */}
-                    <button 
-                        onClick={() => onSave(order, false)}
-                        className={`w-full py-3 rounded-xl border border-surfaceHighlight text-text font-bold hover:bg-surfaceHighlight transition-colors text-sm flex items-center justify-center gap-2 
-                        ${(!showAdvanceButton && !isBillingStep) ? 'bg-primary text-white border-primary hover:bg-primaryHover' : ''}`}
-                    >
-                        <Save size={16} />
-                        Guardar Cambios
-                    </button>
+                    <div className="grid grid-cols-2 gap-2">
+                        <button 
+                            onClick={() => onSave(order, false)}
+                            className="py-3 rounded-xl bg-primary/10 text-primary font-black border border-primary/20 hover:bg-primary hover:text-white transition-all text-[10px] uppercase flex items-center justify-center gap-2 shadow-sm"
+                        >
+                            <Save size={14} />
+                            Guardar y Salir
+                        </button>
+                        <button 
+                            onClick={onClose}
+                            className="py-3 rounded-xl bg-surfaceHighlight text-text font-black border border-surfaceHighlight hover:bg-red-500/10 hover:text-red-500 hover:border-red-500/20 transition-all text-[10px] uppercase flex items-center justify-center gap-2 shadow-sm"
+                        >
+                            <LogOut size={14} />
+                            Liberar Pedido
+                        </button>
+                    </div>
                     
                     {isVale && !isFinishedStep && onDeleteOrder && (
                         <button 
@@ -305,30 +461,28 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                 }`}
                         >
                             {isConfirmingDelete ? <XCircle size={16} /> : <Trash2 size={16} />}
-                            {isConfirmingDelete ? "¿Confirmar eliminación?" : "Eliminar Pedido"}
+                            {isConfirmingDelete ? "Confirmar Borrado" : "Eliminar Pedido"}
                         </button>
                     )}
                 </>
              ) : (
                  <>
-                    {isFinishedStep && isVale && onReprint && (
+                    {isFinishedStep && isVale && (
                         <button 
-                            onClick={onReprint}
+                            onClick={generateInvoicePDF}
                             className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition-all text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/20"
                         >
                             <Printer size={16} />
-                            Volver a Imprimir Factura
+                            Re-Imprimir Factura
                         </button>
                     )}
 
-                    {!selfControlBlocked && (
-                        <button 
-                            onClick={onClose}
-                            className="w-full py-3 rounded-xl bg-surfaceHighlight hover:bg-surfaceHighlight/80 text-text font-bold transition-colors text-sm"
-                        >
-                            Cerrar Detalle
-                        </button>
-                    )}
+                    <button 
+                        onClick={onClose}
+                        className="w-full py-3 rounded-xl bg-surfaceHighlight hover:bg-surfaceHighlight/80 text-text font-bold transition-colors text-sm"
+                    >
+                        Cerrar Resumen
+                    </button>
                  </>
              )}
         </div>
@@ -336,14 +490,14 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
 
     const InfoBlock = () => (
         <div className="bg-surface rounded-xl p-5 border border-surfaceHighlight shadow-sm">
-            <h4 className="text-sm font-bold text-muted uppercase tracking-wider mb-3">Información del Cliente</h4>
+            <h4 className="text-sm font-bold text-muted uppercase tracking-wider mb-3">Datos del Cliente</h4>
             <div className="space-y-3">
                 <p className="text-sm flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1">
                     <span className="text-muted">Nombre:</span> 
                     <span className="text-text font-bold text-base">{order.clientName}</span>
                 </p>
                 <p className="text-sm flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1">
-                    <span className="text-muted">Creado:</span> 
+                    <span className="text-muted">Fecha Creado:</span> 
                     <span className="text-text font-medium">{order.createdDate}</span>
                 </p>
                 {order.zone && (
@@ -354,7 +508,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                 )}
                 <div className="h-px bg-surfaceHighlight my-2"></div>
                 <p className="text-sm flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1">
-                    <span className="text-muted flex items-center gap-1"><UserCheck size={14}/> Armado por:</span> 
+                    <span className="text-muted flex items-center gap-1"><UserCheck size={14}/> Responsable Armado:</span> 
                     <span className="text-text font-bold">{assemblerName}</span>
                 </p>
             </div>
@@ -364,27 +518,27 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     const FinishedFinancialSummary = () => {
         if (!isFinishedStep || !showFinancials) return null;
         return (
-            <div className="bg-surface rounded-xl p-0 border border-surfaceHighlight shadow-sm overflow-hidden mb-4">
+            <div className="bg-surface rounded-xl p-0 border border-surfaceHighlight shadow-sm overflow-hidden mb-4 animate-in fade-in">
                  <div className="bg-surfaceHighlight/30 p-3 border-b border-surfaceHighlight">
                     <h4 className="text-sm font-bold text-text flex items-center gap-2">
                         <Receipt size={16} className="text-muted" />
-                        Resumen de Cierre
+                        Balance Final de Cobro
                     </h4>
                  </div>
                  <div className="p-4 space-y-3">
                      <div className="flex justify-between items-center text-sm">
-                         <span className="text-muted">Total Facturado (Original)</span>
+                         <span className="text-muted">Presupuesto Original</span>
                          <span className="font-medium text-text">$ {originalInvoiceTotal.toLocaleString('es-AR', {minimumFractionDigits: 2})}</span>
                      </div>
                      <div className="flex justify-between items-center text-sm">
-                         <span className="text-red-500 font-bold flex items-center gap-1"><RotateCcw size={12}/> Devoluciones (NC)</span>
+                         <span className="text-red-500 font-bold flex items-center gap-1"><RotateCcw size={12}/> Ajustes / Devoluciones</span>
                          <span className="font-bold text-red-500">
                              - $ {refundTotal.toLocaleString('es-AR', {minimumFractionDigits: 2})}
                          </span>
                      </div>
                      <div className="h-px bg-surfaceHighlight my-1"></div>
                      <div className="flex justify-between items-center">
-                         <span className="font-bold text-green-600 text-sm">Total Cobrado (Final)</span>
+                         <span className="font-bold text-green-600 text-sm">Total Neto Cobrado</span>
                          <span className="font-black text-green-600 text-lg">
                              $ {finalTotal.toLocaleString('es-AR', {minimumFractionDigits: 2})}
                          </span>
@@ -404,24 +558,25 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                             <div className="flex items-center gap-3 mb-1">
                                 <h2 className="text-lg md:text-2xl font-black text-text uppercase tracking-tight truncate max-w-[200px] md:max-w-md">{order.clientName}</h2>
                                 <span className={`px-2 md:px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 border
-                                    ${selfControlBlocked ? 'bg-red-500/10 text-red-500 border-red-500/20' : 
+                                    ${selfControlBlocked || occupiedByOther ? 'bg-red-500/10 text-red-500 border-red-500/20' : 
+                                      isFinishedStep ? 'bg-green-500/10 text-green-600 border-green-500/20' :
                                       canEditProducts ? 'bg-primary/10 text-primary border-primary/20' : 'bg-gray-500/10 text-gray-500 border-gray-500/20'}
                                 `}>
-                                    {selfControlBlocked ? <Lock size={14}/> : icon}
-                                    <span className="hidden md:inline">{selfControlBlocked ? 'Bloqueado' : titleText}</span>
-                                    <span className="md:hidden">{selfControlBlocked ? 'Bloqueado' : (canEditProducts ? 'Editando' : 'Solo Lectura')}</span>
+                                    {selfControlBlocked || occupiedByOther ? <Lock size={14}/> : icon}
+                                    <span className="hidden md:inline">{selfControlBlocked || occupiedByOther ? 'Bloqueado' : titleText}</span>
+                                    <span className="md:hidden">{selfControlBlocked || occupiedByOther ? 'Bloqueado' : (isFinishedStep ? 'Resumen' : (canEditProducts ? 'Editando' : 'Lectura'))}</span>
                                 </span>
                             </div>
-                            <p className="text-muted text-xs md:text-sm font-mono">ID: {order.displayId}</p>
+                            <p className="text-muted text-xs md:text-sm font-mono tracking-tight">PEDIDO: {order.displayId}</p>
                         </div>
                     </div>
                     
                     <div className="flex items-center gap-2 md:gap-4">
-                        {isVale && hasBeenInvoiced && onReprint && (
+                        {isVale && canPrint && (
                             <button 
-                                onClick={onReprint}
+                                onClick={generateInvoicePDF}
                                 className="p-2.5 rounded-full bg-blue-500/10 text-blue-600 hover:bg-blue-600 hover:text-white transition-all border border-blue-500/20 shadow-sm"
-                                title="Imprimir Factura (Acceso Rápido)"
+                                title="Imprimir"
                             >
                                 <Printer size={20} />
                             </button>
@@ -429,13 +584,13 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
 
                         {showFinancials && !isFinishedStep && (
                             <div className="hidden md:flex flex-col items-end mr-4">
-                                <span className="text-[10px] text-muted uppercase font-bold tracking-wider">Total</span>
+                                <span className="text-[10px] text-muted uppercase font-bold tracking-wider">Total Actual</span>
                                 <span className="text-2xl font-black text-green-600 tracking-tight leading-none">
                                     $ {finalTotal.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
                                 </span>
                             </div>
                         )}
-                        <button onClick={onClose} className="p-2 rounded-full hover:bg-surfaceHighlight text-muted hover:text-text transition-colors">
+                        <button onClick={onClose} className="p-2 rounded-full hover:bg-surfaceHighlight text-muted hover:text-text transition-colors" title="Liberar y Salir">
                             <X size={24} />
                         </button>
                     </div>
@@ -457,16 +612,16 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                 )}
                             </div>
 
-                            <div className={selfControlBlocked ? 'opacity-40 grayscale pointer-events-none' : ''}>
+                            <div className={selfControlBlocked || occupiedByOther ? 'opacity-40 grayscale pointer-events-none' : ''}>
                                 <div className="flex justify-between items-center mb-4">
-                                    <h3 className="text-lg font-bold text-text">Productos</h3>
-                                    {isVale && !isAddingProduct && !isBillingStep && !isInvoiceControlStep && !isReadyForTransit && !isTransitStep && !isFinishedStep && (
+                                    <h3 className="text-lg font-bold text-text">Detalle de Productos</h3>
+                                    {isVale && !isAddingProduct && !isFinishedStep && !isTransitStep && !isReadyForTransit && !isInvoiceControlStep && (
                                         <button 
                                             onClick={() => setIsAddingProduct(true)}
                                             className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surfaceHighlight border border-surfaceHighlight hover:border-primary/50 text-text text-xs font-bold transition-all"
                                         >
                                             <Plus size={14} />
-                                            Agregar Producto
+                                            Agregar Manual
                                         </button>
                                     )}
                                 </div>
@@ -474,13 +629,13 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                 {isAddingProduct && (
                                     <div className="mb-4 p-4 rounded-xl bg-surface border border-primary/30 shadow-lg animate-in fade-in slide-in-from-top-2">
                                         <div className="flex justify-between items-center mb-3">
-                                            <h4 className="text-xs font-bold uppercase text-primary tracking-wider">Nuevo Producto</h4>
+                                            <h4 className="text-xs font-bold uppercase text-primary tracking-wider">Nuevo Producto al Pedido</h4>
                                             <button onClick={() => setIsAddingProduct(false)} className="text-muted hover:text-text"><X size={16}/></button>
                                         </div>
                                         <div className="grid grid-cols-12 gap-2">
                                             <input 
                                                 className="col-span-3 p-2 rounded bg-surface border border-surfaceHighlight text-xs shadow-sm" 
-                                                placeholder="Código" 
+                                                placeholder="Cód" 
                                                 value={newProdCode}
                                                 onChange={e => setNewProdCode(e.target.value)}
                                             />
@@ -508,9 +663,9 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                             ) : <div className="col-span-2"></div>}
                                             <button 
                                                 onClick={handleSaveNewProduct}
-                                                className="col-span-12 mt-2 py-2 bg-primary text-white font-bold rounded text-xs hover:bg-primaryHover"
+                                                className="col-span-12 mt-2 py-2 bg-primary text-white font-bold rounded text-xs hover:bg-primaryHover transition-all"
                                             >
-                                                Confirmar Agregado
+                                                Insertar Producto
                                             </button>
                                         </div>
                                     </div>
@@ -547,7 +702,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                                 className={`flex items-start md:items-center gap-3 md:gap-4 p-4 rounded-xl border transition-all ${
                                                     product.isChecked && !isBillingStep && !isTransitStep && !isFinishedStep
                                                         ? 'bg-green-500/5 border-green-500/20' 
-                                                        : 'bg-surface border border-surfaceHighlight'
+                                                        : 'bg-surface border border-surfaceHighlight shadow-sm'
                                                 }`}
                                             >
                                                 {!isBillingStep && !isTransitStep && !isFinishedStep && (
@@ -631,7 +786,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                                                     <button 
                                                                         onClick={() => handleEditQtyClick(product)}
                                                                         className="p-1.5 text-muted hover:text-primary transition-colors rounded hover:bg-surfaceHighlight"
-                                                                        title="Editar Cantidad"
+                                                                        title="Ajustar Cantidad"
                                                                     >
                                                                         <Edit2 size={14} />
                                                                     </button>
@@ -684,7 +839,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                                             <button 
                                                                 onClick={() => onRemoveProduct(product.code)}
                                                                 className="p-2 text-muted hover:text-red-500 hover:bg-red-500/10 rounded transition-colors"
-                                                                title="Eliminar artículo"
+                                                                title="Quitar artículo"
                                                             >
                                                                 <Trash2 size={16} />
                                                             </button>
@@ -705,14 +860,14 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                         <FinishedFinancialSummary />
                         <div className="flex flex-col gap-2">
                             <label className="text-sm font-bold text-text flex items-center gap-2">
-                                <CreditCard size={16} />
+                                <DollarSign size={16} />
                                 Método de Pago
                             </label>
                             <select 
                                 value={order.paymentMethod || 'Pendiente'}
                                 onChange={handlePaymentMethodChange}
                                 disabled={!canEditMetadata}
-                                className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm text-text focus:border-primary outline-none disabled:opacity-50 shadow-sm"
+                                className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm text-text focus:border-primary outline-none disabled:opacity-50 shadow-sm font-bold"
                             >
                                 <option value="Pendiente">Pendiente</option>
                                 <option value="Efectivo">Efectivo</option>
@@ -728,7 +883,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                             </label>
                             <textarea 
                                 className="w-full h-32 bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm text-text focus:border-primary outline-none resize-none h-20 shadow-inner"
-                                placeholder={`Agregar observaciones...`}
+                                placeholder={`Agregar notas internas del pedido...`}
                                 value={order.observations || ''}
                                 onChange={(e) => onUpdateObservations(e.target.value)}
                                 disabled={!canEditMetadata}
@@ -736,18 +891,21 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                         </div>
                         <div className="mt-auto"><ActionsBlock /></div>
                         <div className="border-t border-surfaceHighlight pt-6">
-                             <h4 className="text-sm font-bold text-muted uppercase tracking-wider mb-4 flex items-center gap-2">
-                                <Clock size={14} /> Historial Reciente
+                             <h4 className="text-sm font-black text-muted uppercase tracking-widest mb-5 flex items-center gap-2">
+                                <Activity size={14} className="text-primary" /> Trazabilidad Completa
                              </h4>
-                             <div className="flex flex-col gap-4 relative pl-2">
+                             <div className="flex flex-col gap-5 relative pl-2">
                                 <div className="absolute left-[3px] top-2 bottom-2 w-0.5 bg-surfaceHighlight"></div>
-                                {order.history.slice(0, 3).map((entry, idx) => (
-                                    <div key={idx} className="relative pl-6">
+                                {order.history.map((entry, idx) => (
+                                    <div key={idx} className="relative pl-6 animate-in slide-in-from-left duration-300" style={{ animationDelay: `${idx * 50}ms` }}>
                                         <div className="absolute left-0 top-1.5 w-2 h-2 rounded-full bg-primary ring-4 ring-background"></div>
-                                        <p className="text-xs text-text font-medium leading-snug">{entry.details || entry.action}</p>
-                                        <p className="text-[10px] text-muted mt-0.5">
-                                            {new Date(entry.timestamp).toLocaleDateString()} por {entry.userName}
-                                        </p>
+                                        <p className="text-xs text-text font-black leading-tight mb-0.5">{entry.details || entry.action}</p>
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="text-[10px] text-muted font-bold uppercase">{entry.userName}</span>
+                                            <span className="text-[9px] text-muted font-mono bg-surfaceHighlight/50 px-1 rounded">
+                                                {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {new Date(entry.timestamp).toLocaleDateString()}
+                                            </span>
+                                        </div>
                                     </div>
                                 ))}
                              </div>

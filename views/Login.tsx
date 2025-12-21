@@ -4,26 +4,16 @@ import {
     Lock, 
     User as UserIcon, 
     LogIn, 
-    ShieldCheck, 
-    Users, 
     Sun, 
     Moon,
-    ArrowRight,
     Loader2
 } from 'lucide-react';
-import { UserRole } from '../types';
 import { supabase } from '../supabase';
 
 interface LoginProps {
     isDarkMode: boolean;
     onToggleTheme: () => void;
 }
-
-const MOCK_ACCOUNTS = [
-    { email: 'vale@alfonsa.com', name: 'Vale', role: 'vale' as UserRole },
-    { email: 'armador1@alfonsa.com', name: 'Juan (Armador)', role: 'armador' as UserRole },
-    { email: 'armador2@alfonsa.com', name: 'Pedro (Armador)', role: 'armador' as UserRole },
-];
 
 export const Login: React.FC<LoginProps> = ({ isDarkMode, onToggleTheme }) => {
     const [email, setEmail] = useState('');
@@ -45,12 +35,6 @@ export const Login: React.FC<LoginProps> = ({ isDarkMode, onToggleTheme }) => {
             setError(authError.message === 'Invalid login credentials' ? 'Credenciales incorrectas.' : authError.message);
             setIsLoading(false);
         }
-        // No es necesario llamar a onLogin, el listener en App.tsx lo detectará.
-    };
-
-    const handleQuickLogin = (acc: typeof MOCK_ACCOUNTS[0]) => {
-        setEmail(acc.email);
-        setPassword('admin123'); // Password por defecto para la demo
     };
 
     return (
@@ -120,30 +104,6 @@ export const Login: React.FC<LoginProps> = ({ isDarkMode, onToggleTheme }) => {
                             {isLoading ? 'Iniciando sesión...' : 'Ingresar'}
                         </button>
                     </form>
-
-                    <div className="mt-10 border-t border-surfaceHighlight pt-8">
-                        <p className="text-[10px] font-black uppercase text-muted text-center tracking-widest mb-6">Acceso Rápido (Demo)</p>
-                        <div className="grid grid-cols-1 gap-3">
-                            {MOCK_ACCOUNTS.map(acc => (
-                                <button 
-                                    key={acc.email}
-                                    onClick={() => handleQuickLogin(acc)}
-                                    className={`flex items-center justify-between p-4 rounded-2xl border border-surfaceHighlight hover:border-primary/50 hover:bg-primary/5 transition-all group ${email === acc.email ? 'border-primary bg-primary/10' : ''}`}
-                                >
-                                    <div className="flex items-center gap-3">
-                                        <div className={`p-2 rounded-xl ${acc.role === 'vale' ? 'bg-orange-500/10 text-orange-500' : 'bg-blue-500/10 text-blue-500'}`}>
-                                            {acc.role === 'vale' ? <ShieldCheck size={20} /> : <Users size={20} />}
-                                        </div>
-                                        <div className="text-left">
-                                            <p className="text-sm font-black text-text leading-tight">{acc.name}</p>
-                                            <p className="text-[10px] text-muted font-bold uppercase">{acc.role === 'vale' ? 'Administrador' : 'Operativo'}</p>
-                                        </div>
-                                    </div>
-                                    <ArrowRight size={16} className="text-muted group-hover:text-primary transition-transform group-hover:translate-x-1" />
-                                </button>
-                            ))}
-                        </div>
-                    </div>
                 </div>
 
                 <div className="mt-8 text-center text-muted text-[10px] font-black uppercase tracking-[0.2em]">

@@ -61,12 +61,12 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
         setIsModalOpen(true);
     };
 
-    const filteredProviders = providers.filter(p => 
+    const filteredProviders = (providers || []).filter(p => 
         p.status !== 'Desactivado' &&
         p.name.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
-    const pendingConfirmations = transfers.filter(t => t.status === 'Pendiente');
+    const pendingConfirmations = (transfers || []).filter(t => t.status === 'Pendiente');
 
     return (
         <div className="flex flex-col gap-8 pb-20">
@@ -78,7 +78,7 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
                                 <div className="p-2 bg-orange-500 text-white rounded-full"><AlertCircle size={20} /></div>
                                 <div>
                                     <h4 className="text-orange-700 dark:text-orange-300 font-bold text-sm">Pago Pendiente: {t.clientName}</h4>
-                                    <p className="text-xs text-orange-600/80 dark:text-orange-300/60 font-medium">MONTO: $ {t.amount.toLocaleString('es-AR')} | DESTINO: {providers.find(p => p.id === t.providerId)?.name}</p>
+                                    <p className="text-xs text-orange-600/80 dark:text-orange-300/60 font-medium">MONTO: $ {(Number(t.amount) || 0).toLocaleString('es-AR')} | DESTINO: {providers.find(p => p.id === t.providerId)?.name}</p>
                                 </div>
                             </div>
                             <button onClick={() => onConfirmTransfer(t.id, 'Realizado')} className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-lg active:scale-95">Confirmar</button>
@@ -101,11 +101,14 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {filteredProviders.map((provider) => {
                     const isFrenado = provider.status === 'Frenado';
-                    const activeAccounts = provider.accounts.filter(acc => acc.status === 'Activa');
-                    const totalRealized = activeAccounts.reduce((sum, acc) => sum + acc.currentAmount, 0);
-                    const totalPending = activeAccounts.reduce((sum, acc) => sum + acc.pendingAmount, 0);
-                    const realizedPct = provider.goalAmount > 0 ? (totalRealized / provider.goalAmount) * 100 : 0;
-                    const pendingPct = provider.goalAmount > 0 ? (totalPending / provider.goalAmount) * 100 : 0;
+                    const activeAccounts = (provider.accounts || []).filter(acc => acc.status === 'Activa');
+                    
+                    const totalRealized = activeAccounts.reduce((sum, acc) => sum + (Number(acc.currentAmount) || 0), 0);
+                    const totalPending = activeAccounts.reduce((sum, acc) => sum + (Number(acc.pendingAmount) || 0), 0);
+                    const goal = Number(provider.goalAmount) || 0;
+                    
+                    const realizedPct = goal > 0 ? (totalRealized / goal) * 100 : 0;
+                    const pendingPct = goal > 0 ? (totalPending / goal) * 100 : 0;
 
                     return (
                         <div key={provider.id} className={`bg-surface border rounded-2xl flex flex-col shadow-sm transition-all duration-300 hover:border-primary/30 group/card relative ${isFrenado ? 'border-red-200 bg-red-50/10' : 'border-surfaceHighlight'}`}>
@@ -122,7 +125,7 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
                                     <div className="flex items-start gap-2">
                                         <div className="text-right">
                                             <span className="text-[10px] font-bold text-muted uppercase tracking-widest">Meta</span>
-                                            <p className="text-xl font-black text-text tracking-tighter">$ {provider.goalAmount.toLocaleString('es-AR')}</p>
+                                            <p className="text-xl font-black text-text tracking-tighter">$ {goal.toLocaleString('es-AR')}</p>
                                         </div>
                                         <button 
                                             onClick={(e) => { e.stopPropagation(); onDeleteProvider(provider.id); }} 
@@ -136,7 +139,7 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
                                 <div className="space-y-2 mb-4">
                                     <div className="flex justify-between text-[11px] font-bold">
                                         <span className="text-muted">Recolectado: <span className="text-green-500 font-black">$ {totalRealized.toLocaleString('es-AR')}</span> <span className="text-blue-500 font-black">(+ $ {totalPending.toLocaleString('es-AR')})</span></span>
-                                        <span className="text-muted">Falta: $ {Math.max(0, provider.goalAmount - totalRealized - totalPending).toLocaleString('es-AR')}</span>
+                                        <span className="text-muted">Falta: $ {Math.max(0, goal - totalRealized - totalPending).toLocaleString('es-AR')}</span>
                                     </div>
                                     <DualProgressBar realizedPct={realizedPct} pendingPct={pendingPct} />
                                 </div>
@@ -149,24 +152,27 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
                             {expandedProviders[provider.id] && (
                                 <div className="border-t border-surfaceHighlight bg-background/30 p-4 flex flex-col gap-4 animate-in slide-in-from-top-2">
                                     {activeAccounts.map(account => {
-                                        const hasMeta = (account.metaAmount || 0) > 0;
-                                        const isCompleted = hasMeta && account.currentAmount >= account.metaAmount;
-                                        const accountTransfers = transfers.filter(t => t.accountId === account.id);
+                                        const accMeta = Number(account.metaAmount) || 0;
+                                        const accCurrent = Number(account.currentAmount) || 0;
+                                        const accPending = Number(account.pendingAmount) || 0;
+                                        const hasMeta = accMeta > 0;
+                                        const isCompleted = hasMeta && accCurrent >= accMeta;
+                                        const accountTransfers = (transfers || []).filter(t => t.accountId === account.id);
                                         return (
                                             <div key={account.id} className={`bg-surface border rounded-2xl p-5 shadow-sm space-y-4 transition-all ${isCompleted ? 'border-green-500/50 shadow-green-500/5' : 'border-surfaceHighlight'}`}>
                                                 <div className="flex justify-between items-center">
                                                     <div>
                                                         <h4 className="text-sm font-black text-text flex items-center gap-2">{account.condition} {isCompleted && <Check size={14} className="text-green-500" />}</h4>
-                                                        <span className="text-[10px] text-muted font-bold uppercase">Meta: $ {(account.metaAmount || 0).toLocaleString('es-AR')}</span>
+                                                        <span className="text-[10px] text-muted font-bold uppercase">Meta: $ {accMeta.toLocaleString('es-AR')}</span>
                                                     </div>
                                                     <button onClick={() => openModal(provider.id, account.id)} className="flex items-center gap-2 bg-primary hover:bg-primaryHover text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all shadow-md active:scale-95"><Plus size={12}/> Agregar $</button>
                                                 </div>
                                                 <div className="space-y-1">
                                                     <div className="flex justify-between text-[10px] font-black">
-                                                        <span className="text-green-500">$ {account.currentAmount.toLocaleString('es-AR')} {account.pendingAmount > 0 && <span className="text-blue-500 ml-1">(+ $ {account.pendingAmount.toLocaleString('es-AR')})</span>}</span>
-                                                        {hasMeta && <span className="text-muted">{Math.min(100, (account.currentAmount / account.metaAmount) * 100).toFixed(0)}%</span>}
+                                                        <span className="text-green-500">$ {accCurrent.toLocaleString('es-AR')} {accPending > 0 && <span className="text-blue-500 ml-1">(+ $ {accPending.toLocaleString('es-AR')})</span>}</span>
+                                                        {hasMeta && <span className="text-muted">{Math.min(100, (accCurrent / accMeta) * 100).toFixed(0)}%</span>}
                                                     </div>
-                                                    {hasMeta && <DualProgressBar realizedPct={(account.currentAmount / account.metaAmount) * 100} pendingPct={(account.pendingAmount / account.metaAmount) * 100} height="h-2" />}
+                                                    {hasMeta && <DualProgressBar realizedPct={(accCurrent / accMeta) * 100} pendingPct={(accPending / accMeta) * 100} height="h-2" />}
                                                 </div>
                                                 <div className="bg-background/40 rounded-xl overflow-hidden border border-surfaceHighlight/50">
                                                     <button onClick={() => setExpandedAccHistory(prev => ({ ...prev, [account.id]: !prev[account.id] }))} className="w-full flex items-center justify-between p-3 hover:bg-background/60 transition-colors">
@@ -181,7 +187,7 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
                                                             {accountTransfers.length > 0 ? accountTransfers.map(tr => (
                                                                 <div key={tr.id} className="flex justify-between items-center text-[10px] font-bold py-1 border-t border-surfaceHighlight/30 first:border-none">
                                                                     <span className="text-text">{tr.clientName} ({tr.date})</span>
-                                                                    <span className={tr.status === 'Realizado' ? 'text-green-500' : 'text-blue-500'}>$ {tr.amount.toLocaleString('es-AR')}</span>
+                                                                    <span className={tr.status === 'Realizado' ? 'text-green-500' : 'text-blue-500'}>$ {(Number(tr.amount) || 0).toLocaleString('es-AR')}</span>
                                                                 </div>
                                                             )) : <p className="text-[9px] text-muted italic py-1">Sin movimientos.</p>}
                                                         </div>
@@ -220,12 +226,16 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
     );
 };
 
-const DualProgressBar: React.FC<{ realizedPct: number, pendingPct: number, height?: string, isProjected?: boolean }> = ({ realizedPct, pendingPct, height = "h-2.5", isProjected = false }) => (
-    <div className={`w-full ${height} bg-slate-200 dark:bg-slate-950 rounded-full overflow-hidden flex shadow-inner border border-surfaceHighlight`}>
-        <div className="h-full bg-green-500 transition-all duration-300" style={{ width: `${Math.min(100, realizedPct)}%` }} />
-        <div className={`h-full ${isProjected ? 'bg-blue-500' : 'bg-blue-400 opacity-40'} relative transition-all duration-300`} style={{ width: `${Math.min(100 - realizedPct, pendingPct)}%` }} />
-    </div>
-);
+const DualProgressBar: React.FC<{ realizedPct: number, pendingPct: number, height?: string, isProjected?: boolean }> = ({ realizedPct, pendingPct, height = "h-2.5", isProjected = false }) => {
+    const r = Number(realizedPct) || 0;
+    const p = Number(pendingPct) || 0;
+    return (
+        <div className={`w-full ${height} bg-slate-200 dark:bg-slate-950 rounded-full overflow-hidden flex shadow-inner border border-surfaceHighlight`}>
+            <div className="h-full bg-green-500 transition-all duration-300" style={{ width: `${Math.min(100, r)}%` }} />
+            <div className={`h-full ${isProjected ? 'bg-blue-500' : 'bg-blue-400 opacity-40'} relative transition-all duration-300`} style={{ width: `${Math.min(100 - r, p)}%` }} />
+        </div>
+    );
+};
 
 const NewTransferModal: React.FC<{ providers: Provider[], initialProviderId: string | null, initialAccountId: string | null, onClose: () => void, onSave: (t: Transfer) => void }> = ({ providers, initialProviderId, initialAccountId, onClose, onSave }) => {
     const [activeTab, setActiveTab] = useState<'Pendiente' | 'Realizado'>('Pendiente');
@@ -256,9 +266,9 @@ const NewTransferModal: React.FC<{ providers: Provider[], initialProviderId: str
         onClose();
     };
 
-    const providerMeta = selectedProvider?.goalAmount || 1;
-    const totalProviderRealized = selectedProvider?.accounts.reduce((sum, a) => sum + a.currentAmount, 0) || 0;
-    const existingProviderPending = selectedProvider?.accounts.reduce((sum, a) => sum + a.pendingAmount, 0) || 0;
+    const providerMeta = Number(selectedProvider?.goalAmount) || 1;
+    const totalProviderRealized = (selectedProvider?.accounts || []).reduce((sum, a) => sum + (Number(a.currentAmount) || 0), 0);
+    const existingProviderPending = (selectedProvider?.accounts || []).reduce((sum, a) => sum + (Number(a.pendingAmount) || 0), 0);
     
     const projectedAmount = amountVal;
     const totalAccumulated = totalProviderRealized + existingProviderPending + (activeTab === 'Pendiente' ? projectedAmount : 0);
@@ -300,7 +310,7 @@ const NewTransferModal: React.FC<{ providers: Provider[], initialProviderId: str
                             <div>
                                 <label className="text-[10px] font-black uppercase text-muted tracking-widest ml-1">Proveedor</label>
                                 <select value={selectedProviderId} onChange={e => { setSelectedProviderId(e.target.value); setSelectedAccountId(''); }} className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3 px-4 text-sm font-bold text-text outline-none cursor-pointer appearance-none focus:border-primary">
-                                    {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                    {(providers || []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                                 </select>
                             </div>
                         </div>
@@ -333,9 +343,19 @@ const NewTransferModal: React.FC<{ providers: Provider[], initialProviderId: str
                         <div className="space-y-3">
                             <label className="text-[10px] font-black uppercase text-muted tracking-widest ml-1">Cuenta de Destino</label>
                             <div className="flex flex-col gap-3">
-                                {selectedProvider?.accounts.filter(a => a.status === 'Activa').map(acc => {
+                                {(selectedProvider?.accounts || []).filter(a => a.status === 'Activa').map(acc => {
                                     const isSel = selectedAccountId === acc.id;
-                                    const accMeta = acc.metaAmount || 0;
+                                    const accMeta = Number(acc.metaAmount) || 0;
+                                    const accRealized = Number(acc.currentAmount) || 0;
+                                    const accPending = Number(acc.pendingAmount) || 0;
+                                    
+                                    // Proyección local por cuenta
+                                    const projRealized = accRealized + (isSel && activeTab === 'Realizado' ? amountVal : 0);
+                                    const projPending = accPending + (isSel && activeTab === 'Pendiente' ? amountVal : 0);
+                                    
+                                    const accRealizedPct = accMeta > 0 ? (projRealized / accMeta) * 100 : 0;
+                                    const accPendingPct = accMeta > 0 ? (projPending / accMeta) * 100 : 0;
+
                                     return (
                                         <button key={acc.id} onClick={() => setSelectedAccountId(acc.id)} className={`p-4 rounded-2xl border transition-all text-left flex flex-col gap-2 ${isSel ? 'border-primary bg-primary/10 ring-1 ring-primary' : 'bg-surface border-surfaceHighlight hover:border-surfaceHighlight/80 shadow-sm'}`}>
                                             <div className="flex justify-between items-center w-full">
@@ -345,8 +365,27 @@ const NewTransferModal: React.FC<{ providers: Provider[], initialProviderId: str
                                                     </div>
                                                     <span className={`text-sm font-black ${isSel ? 'text-primary' : 'text-text dark:text-slate-100'}`}>{acc.condition}</span>
                                                 </div>
-                                                <span className="text-[9px] font-black text-muted uppercase">$ {acc.currentAmount.toLocaleString('es-AR')}</span>
+                                                <span className="text-[9px] font-black text-muted uppercase">
+                                                    {accMeta > 0 ? `Meta: $ ${accMeta.toLocaleString('es-AR')}` : 'Sin Meta'}
+                                                </span>
                                             </div>
+                                            
+                                            <div className="flex justify-between items-center mt-1">
+                                                <span className="text-[10px] font-bold text-green-500">
+                                                    $ {projRealized.toLocaleString('es-AR')}
+                                                    {projPending > 0 && <span className="text-blue-500 ml-1">(+ $ {projPending.toLocaleString('es-AR')})</span>}
+                                                </span>
+                                                {accMeta > 0 && <span className="text-[9px] text-muted">{Math.min(100, accRealizedPct).toFixed(0)}%</span>}
+                                            </div>
+                                            
+                                            {accMeta > 0 && (
+                                                <DualProgressBar 
+                                                    realizedPct={accRealizedPct} 
+                                                    pendingPct={accPendingPct} 
+                                                    height="h-1.5" 
+                                                    isProjected={isSel} 
+                                                />
+                                            )}
                                         </button>
                                     );
                                 })}

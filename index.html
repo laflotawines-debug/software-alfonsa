@@ -3,8 +3,14 @@
 <html lang="es" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#e47c00" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Alfonsa" />
     <title>Alfonsa Software</title>
+    <link rel="manifest" href="manifest.json" />
+    <link rel="apple-touch-icon" href="https://img.icons8.com/color/192/000000/box--v1.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Spline+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -32,7 +38,6 @@
     </script>
     <style>
       :root {
-        /* Light Mode Variables */
         --background: #f3f4f6;
         --surface: #ffffff;
         --surface-highlight: #e5e7eb;
@@ -45,14 +50,13 @@
       }
 
       .dark {
-        /* Dark Mode Variables - Updated to Dark Blueish/Slate Theme */
-        --background: #0f172a; /* Slate 950 */
-        --surface: #1e293b;    /* Slate 800 */
-        --surface-highlight: #334155; /* Slate 700 */
+        --background: #0f172a;
+        --surface: #1e293b;
+        --surface-highlight: #334155;
         --primary: #e47c00;
         --primary-hover: #cc6f00;
-        --muted: #94a3b8;      /* Slate 400 */
-        --text: #f8fafc;       /* Slate 50 */
+        --muted: #94a3b8;
+        --text: #f8fafc;
         --scrollbar-track: #0f172a;
         --scrollbar-thumb: #334155;
       }
@@ -61,38 +65,31 @@
         background-color: var(--background);
         color: var(--text);
         transition: background-color 0.3s ease, color 0.3s ease;
+        /* Evita rebotes de scroll en móviles */
+        overscroll-behavior-y: none;
       }
       
-      /* Custom scrollbar for webkit */
-      ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
-      }
-      ::-webkit-scrollbar-track {
-        background: var(--scrollbar-track); 
-      }
-      ::-webkit-scrollbar-thumb {
-        background: var(--scrollbar-thumb); 
-        border-radius: 4px;
-      }
-      ::-webkit-scrollbar-thumb:hover {
-        background: var(--primary); 
-      }
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+      ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: var(--primary); }
     </style>
-  <script type="importmap">
+    <script type="importmap">
 {
   "imports": {
-    "recharts": "https://esm.sh/recharts@^3.5.1",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3",
-    "lucide-react": "https://esm.sh/lucide-react@^0.561.0",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react": "https://esm.sh/react@19.0.0",
+    "react-dom": "https://esm.sh/react-dom@19.0.0",
+    "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
+    "lucide-react": "https://esm.sh/lucide-react@0.460.0?external=react",
+    "recharts": "https://esm.sh/recharts@2.13.3?external=react",
     "jspdf": "https://esm.sh/jspdf@2.5.1",
-    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.39.7"
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.39.7",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/"
   }
 }
 </script>
-<link rel="stylesheet" href="/index.css">
+  <link rel="stylesheet" href="/index.css">
 </head>
   <body>
     <div id="root"></div>

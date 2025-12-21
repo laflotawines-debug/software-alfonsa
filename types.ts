@@ -28,6 +28,18 @@ export interface NavItem {
     subItems?: NavItem[];
 }
 
+// --- DOMAIN MODEL: EXPIRATIONS TOOL ---
+export type ExpirationStatus = 'CRÍTICO' | 'PRÓXIMO' | 'MODERADO' | 'NORMAL';
+
+export interface ProductExpiration {
+    id: string;
+    productName: string;
+    quantity: string;
+    expiryDate: Date;
+    daysRemaining: number;
+    status: ExpirationStatus;
+}
+
 // --- DOMAIN MODEL: PAYMENTS & PROVIDERS ---
 
 export type ProviderStatus = 'Activado' | 'Desactivado' | 'Frenado' | 'Completado' | 'Archivado';
@@ -45,7 +57,7 @@ export interface Provider {
 export interface ProviderAccount {
     id: string;
     providerId: string;
-    condition: string; // ej: "Factura A", "Sin Factura"
+    condition: string; 
     holder: string;
     identifierAlias: string;
     identifierCBU: string;
@@ -64,7 +76,7 @@ export interface Transfer {
     accountId: string;
     notes?: string;
     status: TransferStatus;
-    isLoadedInSystem?: boolean; // Propiedad añadida para seguimiento
+    isLoadedInSystem?: boolean; 
 }
 
 // --- DOMAIN MODEL: USERS & ROLES ---
@@ -99,7 +111,7 @@ export interface Product {
 }
 
 export interface HistoryEntry {
-    timestamp: Date;
+    timestamp: string;
     userId: string;
     userName: string;
     action: string;
@@ -120,7 +132,10 @@ export interface Order {
     createdDate: string;
     paymentMethod?: PaymentMethod;
     assemblerId?: string; 
+    assemblerName?: string;
     controllerId?: string; 
+    controllerName?: string;
+    invoicerName?: string;
     products: Product[];
     total: number;
     observations?: string; 
@@ -137,7 +152,6 @@ export interface DetailedOrder extends Order {
 export type TripStatus = 'PLANNING' | 'IN_PROGRESS' | 'CLOSED';
 export type PaymentStatus = 'PENDING' | 'PARTIAL' | 'PAID';
 
-// Added missing TripClient type
 export interface TripClient {
     id: string;
     name: string;
@@ -150,7 +164,6 @@ export interface TripClient {
     status: PaymentStatus;
 }
 
-// Added missing Expense types
 export type ExpenseType = 'viatico' | 'peaje' | 'combustible' | 'otro';
 
 export interface TripExpense {
@@ -173,7 +186,6 @@ export interface Trip {
     expenses: TripExpense[];
 }
 
-// Added missing ExpirationItem interface
 export interface ExpirationItem {
     id: string;
     title: string;

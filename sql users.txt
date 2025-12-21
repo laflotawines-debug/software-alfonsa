@@ -1,0 +1,11 @@
+UPDATE public.profiles 
+SET role = 'vale' 
+WHERE id = (
+  SELECT id FROM auth.users WHERE email = 'fernandoist98@gmail.com'
+);
+
+UPDATE public.profiles 
+SET role = 'armador' 
+WHERE id = (
+  SELECT id FROM auth.users WHERE email = 'fernandoist98@gmail.com'
+);

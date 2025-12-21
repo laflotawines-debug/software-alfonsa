@@ -77,7 +77,8 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
         createdDate: new Date().toLocaleDateString('es-AR'),
         products: products,
         history: [{
-            timestamp: new Date(),
+            // Fix: Convert Date to ISO string to match HistoryEntry type definition
+            timestamp: new Date().toISOString(),
             userId: currentUser.id, 
             userName: currentUser.name,
             action: 'CREATE_ORDER',
