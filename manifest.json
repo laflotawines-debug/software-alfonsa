@@ -1,25 +1,22 @@
-
 {
   "name": "Alfonsa Software - Gestión",
   "short_name": "Alfonsa",
   "description": "Software de Gestión Administrativa Interna para Alfonsa Distribuidora",
-  "start_url": "./",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#0f172a",
   "theme_color": "#e47c00",
-  "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "icon.png",
-      "type": "image/png",
+      "src": "/icon-192.png",
       "sizes": "192x192",
-      "purpose": "any maskable"
+      "type": "image/png"
     },
     {
-      "src": "icon.png",
-      "type": "image/png",
+      "src": "/icon-512.png",
       "sizes": "512x512",
-      "purpose": "any maskable"
+      "type": "image/png"
     }
   ]
 }

@@ -1,61 +1,56 @@
-
 /**
- * Alfonsa Software - Service Worker v3.0
- * Corregido para evitar "Cache Poisoning" y errores de origen.
+ * Alfonsa Software - Service Worker
+ * Versión estable PWA (root scope)
  */
 
-const CACHE_NAME = 'alfonsa-v3-final';
-const STATIC_ASSETS = [
-  './index.html',
-  './manifest.json'
+const CACHE_NAME = 'alfonsa-cache-v1';
+
+// App shell mínimo (solo navegación)
+const APP_SHELL = [
+  '/index.html'
 ];
 
-// 1. Instalación: Precarga el 'corazón' de la app
+// ============================
+// 1. INSTALL
+// ============================
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
   );
+
+  // Activación inmediata
   self.skipWaiting();
 });
 
-// 2. Activación: Limpia CUALQUIER caché previa para eliminar el error del texto/código
+// ============================
+// 2. ACTIVATE
+// ============================
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => {
-      return Promise.all(
-        keys.map((key) => {
-          if (key !== CACHE_NAME) return caches.delete(key);
-        })
-      );
-    })
+    caches.keys().then((keys) =>
+      Promise.all(
+        keys
+          .filter((key) => key !== CACHE_NAME)
+          .map((key) => caches.delete(key))
+      )
+    )
   );
-  return self.clients.claim();
+
+  // Tomamos control del sitio completo
+  self.clients.claim();
 });
 
-// 3. Estrategia de Red: SEGURIDAD ANTE TODO
+// ============================
+// 3. FETCH
+// ============================
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-  const url = new URL(request.url);
 
-  // A. PETICIONES DE NAVEGACIÓN (Cuando entras a la app)
-  // Solo devolvemos HTML. Esto evita que el JS se cargue como página principal.
+  // Navegación (recarga / deep links)
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).catch(() => {
-        return caches.match('./index.html');
-      })
-    );
-    return;
-  }
-
-  // B. ARCHIVOS ESTÁTICOS (JS, CSS, Imágenes, Manifiesto)
-  // Usamos "Network-First" pero NO guardamos el JS en caché dinámicamente 
-  // para evitar el error de origen cruzado en el entorno de previsualización.
-  if (STATIC_ASSETS.some(asset => request.url.includes(asset.replace('./', '')))) {
-    event.respondWith(
-      caches.match(request).then((response) => {
-        return response || fetch(request);
-      })
+      fetch(request).catch(() => caches.match('/index.html'))
     );
   }
+  // Todo lo demás va directo a red (sin cachear)
 });
