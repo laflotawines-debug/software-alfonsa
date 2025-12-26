@@ -1,10 +1,10 @@
+const CACHE_NAME = 'alfonsa-cache-v5';
 
-const CACHE_NAME = 'alfonsa-cache-v4';
 const ASSETS_TO_CACHE = [
-  './',
-  './index.html',
-  './manifest.json',
-  './icon.png'
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/icon.png'
 ];
 
 self.addEventListener('install', (event) => {
@@ -32,10 +32,7 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Estrategia: Network-first para asegurar datos actualizados pero fallar a caché si no hay red
   event.respondWith(
-    fetch(event.request).catch(() => {
-      return caches.match(event.request);
-    })
+    fetch(event.request).catch(() => caches.match(event.request))
   );
 });
