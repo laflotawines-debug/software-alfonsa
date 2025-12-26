@@ -56,6 +56,28 @@ export default function App() {
     const saved = localStorage.getItem('theme');
     return saved ? saved === 'dark' : true;
   });
+
+  // --- LÓGICA PWA ---
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  useEffect(() => {
+    const handler = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      console.log('Alfonsa PWA: Instalación disponible.');
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setDeferredPrompt(null);
+    }
+  };
   
   const [orders, setOrders] = useState<DetailedOrder[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
@@ -347,7 +369,17 @@ export default function App() {
     <div className="flex h-screen w-full flex-row overflow-hidden bg-background text-text transition-colors duration-300">
       <Sidebar currentUser={currentUser} currentView={currentView} onNavigate={v => { setCurrentView(v); setMobileMenuOpen(false); }} />
       <main className="flex flex-1 flex-col h-full relative overflow-hidden bg-background">
-        <Header onMenuClick={() => setMobileMenuOpen(true)} title={currentView === View.DASHBOARD ? "Panel de Control" : currentView} subtitle="Software de Gestión Alfonsa" isDarkMode={isDarkMode} onToggleTheme={() => setIsDarkMode(!isDarkMode)} currentUser={currentUser} onLogout={handleLogout} />
+        <Header 
+          onMenuClick={() => setMobileMenuOpen(true)} 
+          title={currentView === View.DASHBOARD ? "Panel de Control" : currentView} 
+          subtitle="Software de Gestión Alfonsa" 
+          isDarkMode={isDarkMode} 
+          onToggleTheme={() => setIsDarkMode(!isDarkMode)} 
+          currentUser={currentUser} 
+          onLogout={handleLogout}
+          showInstallBtn={!!deferredPrompt}
+          onInstallApp={handleInstallApp}
+        />
         <div className="flex-1 overflow-y-auto p-4 md:p-8">
             <div className="mx-auto max-w-7xl animate-in fade-in duration-500">
                 {currentView === View.DASHBOARD && currentUser.role === 'vale' && (
@@ -386,6 +418,8 @@ export default function App() {
             onSave={() => {}}
             onUpdateProduct={(code, qty) => setSelectedOrderForAssembly(applyQuantityChange(selectedOrderForAssembly, code, qty) as DetailedOrder)}
             onToggleCheck={code => setSelectedOrderForAssembly(toggleProductCheck(selectedOrderForAssembly, code) as DetailedOrder)}
+            onUpdatePrice={(code, price) => setSelectedOrderForAssembly(updateProductPrice(selectedOrderForAssembly, code, price) as DetailedOrder)}
+            onRemoveProduct={code => setSelectedOrderForAssembly(removeProductFromOrder(selectedOrderForAssembly, code) as DetailedOrder)}
             onUpdateObservations={text => setSelectedOrderForAssembly(updateObservations(selectedOrderForAssembly, text) as DetailedOrder)}
           />
       )}

@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Menu, LogOut, Sun, Moon, Users } from 'lucide-react';
+import { Menu, LogOut, Sun, Moon, Users, DownloadCloud } from 'lucide-react';
 import { User } from '../types';
 
 interface HeaderProps {
@@ -12,6 +12,8 @@ interface HeaderProps {
   currentUser: User;
   onToggleRole?: () => void;
   onLogout?: () => void;
+  showInstallBtn?: boolean;
+  onInstallApp?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({ 
@@ -22,7 +24,9 @@ export const Header: React.FC<HeaderProps> = ({
     onToggleTheme, 
     currentUser, 
     onToggleRole,
-    onLogout
+    onLogout,
+    showInstallBtn,
+    onInstallApp
 }) => {
   return (
     <header className="flex w-full items-center justify-between border-b border-surfaceHighlight bg-background/95 backdrop-blur px-8 py-5 shrink-0 z-20 sticky top-0 transition-colors duration-300">
@@ -37,8 +41,19 @@ export const Header: React.FC<HeaderProps> = ({
         <p className="text-muted text-xs">{subtitle}</p>
       </div>
 
-      <div className="flex items-center gap-6 ml-auto lg:ml-0">
+      <div className="flex items-center gap-4 ml-auto lg:ml-0">
         
+        {/* PWA Install Button */}
+        {showInstallBtn && (
+            <button 
+                onClick={onInstallApp}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-white text-[10px] font-black uppercase tracking-widest shadow-lg shadow-primary/20 hover:bg-primaryHover transition-all animate-bounce"
+            >
+                <DownloadCloud size={16} />
+                <span className="hidden sm:inline">Instalar App</span>
+            </button>
+        )}
+
         {/* Role Toggle (For Testing) */}
         {onToggleRole && (
             <button 
