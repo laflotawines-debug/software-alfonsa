@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { 
   LayoutDashboard, 
@@ -17,13 +18,16 @@ import {
   X,
   Wrench,
   Table,
-  Database
+  Database,
+  Tag,
+  MessageSquareQuote
 } from 'lucide-react';
-import { NavItem, View } from '../types';
+import { NavItem, View, User } from '../types';
 
 interface SidebarProps {
   currentView: View;
   onNavigate: (view: View) => void;
+  currentUser: User; 
   isMobile?: boolean;
   onClose?: () => void;
 }
@@ -55,15 +59,16 @@ const NAV_STRUCTURE: NavItem[] = [
     icon: <Wrench size={20} />,
     subItems: [
         { id: View.PRESUPUESTADOR, label: 'Presupuestador', icon: <Calculator size={16} /> },
+        { id: View.ETIQUETADOR, label: 'Etiquetador', icon: <Tag size={16} /> },
         { id: View.EXPIRATIONS, label: 'Vencimientos', icon: <AlertTriangle size={16} /> },
-        { id: View.LISTS, label: 'Listas', icon: <List size={16} /> },
+        { id: View.LISTA_CHINA, label: 'Lista china', icon: <MessageSquareQuote size={16} /> },
         { id: View.SQL_EDITOR, label: 'Editor SQL', icon: <Database size={16} /> },
     ]
   },
   { id: View.HISTORY, label: 'Historial', icon: <History size={20} /> },
 ];
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, isMobile = false, onClose }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, currentUser, isMobile = false, onClose }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [expandedMenu, setExpandedMenu] = useState<View | null>(null);
 
@@ -71,6 +76,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, isMob
     setIsCollapsed(!isCollapsed);
     if (!isCollapsed) setExpandedMenu(null); 
   };
+
+  const filteredNav = NAV_STRUCTURE.filter(item => {
+    if (currentUser.role === 'armador') {
+        if (item.id === View.DASHBOARD) return false;
+    }
+    return true;
+  });
 
   const containerClasses = isMobile 
     ? "fixed inset-0 z-50 w-full flex flex-col h-full bg-surface animate-in slide-in-from-left duration-200"
@@ -81,7 +93,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, isMob
   return (
     <aside className={containerClasses}>
       
-      {/* Mobile Header with Close */}
       {isMobile && (
           <div className="flex items-center justify-between p-4 border-b border-surfaceHighlight bg-surface shrink-0">
               <span className="font-bold text-lg text-text">Menú</span>
@@ -91,7 +102,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, isMob
           </div>
       )}
 
-      {/* Collapse Toggle (Desktop) */}
       {showCollapse && (
         <button 
             onClick={toggleCollapse}
@@ -101,7 +111,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, isMob
         </button>
       )}
 
-      {/* Desktop Header */}
       {!isMobile && (
           <div className={`p-6 flex items-center ${isCollapsed ? 'justify-center' : ''} h-24 shrink-0`}>
             {isCollapsed ? (
@@ -117,20 +126,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, isMob
           </div>
       )}
 
-      {/* Navigation - Scrollable Area */}
       <nav className="flex flex-col gap-2 flex-1 px-3 overflow-y-auto overflow-x-hidden pt-4 scroll-smooth">
-        {NAV_STRUCTURE.map((item) => {
+        {filteredNav.map((item) => {
           const hasSubItems = !!item.subItems;
-          const isParentActive = item.id === currentView || item.subItems?.some(sub => sub.id === currentView);
+          const isDirectlyActive = item.id === currentView;
+          const isParentOfActive = item.subItems?.some(sub => sub.id === currentView);
           const isOpen = expandedMenu === item.id;
-          const isTools = item.id === View.TOOLS;
           
           return (
             <div key={item.id} className="relative group shrink-0">
               
               <div 
                   className={`flex items-center rounded-xl transition-all duration-200 w-full select-none
-                  ${isParentActive && !hasSubItems
+                  ${isDirectlyActive || (isParentOfActive && !isOpen)
                     ? 'bg-primary/10 text-primary font-bold' 
                     : 'text-text hover:bg-surfaceHighlight'
                   }
@@ -138,24 +146,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, isMob
               >
                   <button
                     onClick={() => {
-                        if (isCollapsed && !isMobile) {
-                             if (hasSubItems) {
-                                 setIsCollapsed(false);
-                                 setExpandedMenu(item.id);
-                             } else {
-                                 onNavigate(item.id);
-                             }
-                        } else {
-                             if (isTools) {
-                                 setExpandedMenu(expandedMenu === item.id ? null : item.id);
-                             } else {
-                                 onNavigate(item.id);
-                             }
+                        onNavigate(item.id);
+                        if (isCollapsed && !isMobile && hasSubItems) {
+                             setIsCollapsed(false);
+                             setExpandedMenu(item.id);
+                        } else if (hasSubItems) {
+                            setExpandedMenu(item.id);
                         }
                     }}
                     className={`flex items-center gap-3 px-3 py-3 flex-1 text-left outline-none ${isCollapsed && !isMobile ? 'justify-center' : ''}`}
                   >
-                        <span className={`${isParentActive ? 'text-primary' : 'text-muted group-hover:text-text'} transition-colors`}>
+                        <span className={`${isDirectlyActive || isParentOfActive ? 'text-primary' : 'text-muted group-hover:text-text'} transition-colors`}>
                             {item.icon}
                         </span>
                         {(!isCollapsed || isMobile) && (
@@ -169,21 +170,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, isMob
                              e.stopPropagation();
                              setExpandedMenu(expandedMenu === item.id ? null : item.id);
                         }}
-                        className="p-3 text-muted hover:text-text transition-transform outline-none"
+                        className="p-3 text-muted hover:text-text transition-transform outline-none border-l border-transparent hover:border-surfaceHighlight"
                      >
                         <ChevronDown size={16} className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
                      </button>
                   )}
               </div>
 
-              {isCollapsed && !isMobile && (
-                <div className="absolute left-full top-1/2 -translate-y-1/2 ml-3 px-2 py-1 bg-text text-background text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
-                    {item.label}
-                </div>
-              )}
-
               {(!isCollapsed || isMobile) && hasSubItems && (
-                  <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isOpen ? 'max-h-60 opacity-100 mt-1' : 'max-h-0 opacity-0'}`}>
+                  <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isOpen ? 'max-h-64 opacity-100 mt-1' : 'max-h-0 opacity-0'}`}>
                       <div className="flex flex-col gap-1 pl-10 pr-2 pb-2">
                         {item.subItems!.map((sub) => (
                             <button
@@ -208,7 +203,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, isMob
         })}
       </nav>
 
-      {/* Footer Settings */}
       <div className="mt-auto pt-4 border-t border-surfaceHighlight p-3 shrink-0 bg-surface z-10">
         <button 
            onClick={() => onNavigate(View.SETTINGS)}
@@ -219,12 +213,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, isMob
         >
           <Settings size={20} />
           {(!isCollapsed || isMobile) && <span>Configuración</span>}
-          
-          {isCollapsed && !isMobile && (
-            <div className="absolute left-full top-1/2 -translate-y-1/2 ml-3 px-2 py-1 bg-text text-background text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
-                Configuración
-            </div>
-          )}
         </button>
       </div>
     </aside>

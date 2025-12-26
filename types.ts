@@ -14,8 +14,9 @@ export enum View {
     PROVIDERS = 'PROVIDERS',
     EXPIRATIONS = 'EXPIRATIONS',
     HISTORY = 'HISTORY',
-    LISTS = 'LISTS',
+    LISTA_CHINA = 'LISTA_CHINA', 
     PRESUPUESTADOR = 'PRESUPUESTADOR', 
+    ETIQUETADOR = 'ETIQUETADOR',
     SETTINGS = 'SETTINGS',
     TOOLS = 'TOOLS',
     SQL_EDITOR = 'SQL_EDITOR'
@@ -28,9 +29,32 @@ export interface NavItem {
     subItems?: NavItem[];
 }
 
-// --- DOMAIN MODEL: EXPIRATIONS TOOL ---
-export type ExpirationStatus = 'CRÍTICO' | 'PRÓXIMO' | 'MODERADO' | 'NORMAL';
+// --- DOMAIN MODEL: MASTER CATALOG ---
+export interface MasterProduct {
+    codart: string;
+    codprove?: string;
+    cbarra?: string;
+    desart: string;
+    costo: number;
+    familia?: string;
+    nsubf?: string;
+    en_dolares?: string;
+    tasa?: string;
+    nomprov?: string;
+    pventa_1: number;
+    pventa_2: number;
+    pventa_3: number;
+    pventa_4: number;
+    // Campos de Stock añadidos
+    stock_total?: number;
+    stock_betbeder?: number;
+    stock_llerena?: number;
+    unidad?: string;
+    updated_at?: string;
+}
 
+// --- RESTO DE TYPES ---
+export type ExpirationStatus = 'CRÍTICO' | 'PRÓXIMO' | 'MODERADO' | 'NORMAL';
 export interface ProductExpiration {
     id: string;
     productName: string;
@@ -39,12 +63,8 @@ export interface ProductExpiration {
     daysRemaining: number;
     status: ExpirationStatus;
 }
-
-// --- DOMAIN MODEL: PAYMENTS & PROVIDERS ---
-
 export type ProviderStatus = 'Activado' | 'Desactivado' | 'Frenado' | 'Completado' | 'Archivado';
 export type TransferStatus = 'Pendiente' | 'Realizado';
-
 export interface Provider {
     id: string;
     name: string;
@@ -53,7 +73,6 @@ export interface Provider {
     status: ProviderStatus;
     accounts: ProviderAccount[];
 }
-
 export interface ProviderAccount {
     id: string;
     providerId: string;
@@ -66,7 +85,6 @@ export interface ProviderAccount {
     pendingAmount: number;
     status: 'Activa' | 'Inactiva';
 }
-
 export interface Transfer {
     id: string;
     clientName: string;
@@ -78,16 +96,12 @@ export interface Transfer {
     status: TransferStatus;
     isLoadedInSystem?: boolean; 
 }
-
-// --- DOMAIN MODEL: USERS & ROLES ---
 export type UserRole = 'vale' | 'armador';
 export interface User {
     id: string;
     name: string;
     role: UserRole;
 }
-
-// --- DOMAIN MODEL: ORDERS ---
 export enum OrderStatus {
     EN_ARMADO = 'en_armado',
     ARMADO = 'armado',
@@ -98,7 +112,6 @@ export enum OrderStatus {
     ENTREGADO = 'entregado',
     PAGADO = 'pagado'
 }
-
 export interface Product {
     code: string;
     name: string;
@@ -109,7 +122,6 @@ export interface Product {
     subtotal: number;
     isChecked: boolean;
 }
-
 export interface HistoryEntry {
     timestamp: string;
     userId: string;
@@ -119,10 +131,8 @@ export interface HistoryEntry {
     previousState?: OrderStatus;
     newState?: OrderStatus;
 }
-
 export type PaymentMethod = 'Efectivo' | 'Transferencia' | 'Cheque' | 'Cta Cte' | 'Pendiente';
 export type OrderZone = 'V. Mercedes' | 'San Luis' | 'Norte';
-
 export interface Order {
     id: string;
     displayId: string;
@@ -143,15 +153,11 @@ export interface Order {
     customerColor?: string;
     customerInitials?: string;
 }
-
 export interface DetailedOrder extends Order {
     productCount: number;
 }
-
-// --- DOMAIN MODEL: TRIPS ---
 export type TripStatus = 'PLANNING' | 'IN_PROGRESS' | 'CLOSED';
 export type PaymentStatus = 'PENDING' | 'PARTIAL' | 'PAID';
-
 export interface TripClient {
     id: string;
     name: string;
@@ -163,9 +169,7 @@ export interface TripClient {
     isTransferExpected: boolean;
     status: PaymentStatus;
 }
-
 export type ExpenseType = 'viatico' | 'peaje' | 'combustible' | 'otro';
-
 export interface TripExpense {
     id: string;
     type: ExpenseType;
@@ -173,7 +177,6 @@ export interface TripExpense {
     note: string;
     timestamp: Date;
 }
-
 export interface Trip {
     id: string;
     displayId: string;
@@ -185,7 +188,6 @@ export interface Trip {
     clients: TripClient[];
     expenses: TripExpense[];
 }
-
 export interface ExpirationItem {
     id: string;
     title: string;

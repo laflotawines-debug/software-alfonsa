@@ -310,6 +310,10 @@ const TripDetailView: React.FC<{
     const [selectedClient, setSelectedClient] = useState<TripClient | null>(null);
     const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
     const [isReportOpen, setIsReportOpen] = useState(false);
+    
+    // Inline editing states
+    const [editingPrevBal, setEditingPrevBal] = useState<string | null>(null); // clientId
+    const [tempPrevBal, setTempPrevBal] = useState<string>('');
 
     const isVale = currentUser.role === 'vale';
     const isClosed = trip.status === 'CLOSED';
@@ -373,6 +377,27 @@ const TripDetailView: React.FC<{
     const toggleStatus = () => {
         if (!isVale) return;
         onUpdateTrip({ ...trip, status: isClosed ? 'IN_PROGRESS' : 'CLOSED' });
+    };
+
+    const startInlineEdit = (client: TripClient) => {
+        if (!isVale || isClosed) return;
+        setEditingPrevBal(client.id);
+        setTempPrevBal(client.previousBalance.toString());
+    };
+
+    const saveInlineEdit = (client: TripClient) => {
+        const newVal = parseFloat(tempPrevBal);
+        if (!isNaN(newVal)) {
+            handleUpdatePayment(
+                client.id, 
+                client.paymentCash, 
+                client.paymentTransfer, 
+                client.isTransferExpected, 
+                newVal, 
+                client.currentInvoiceAmount
+            );
+        }
+        setEditingPrevBal(null);
     };
 
     return (
@@ -448,13 +473,35 @@ const TripDetailView: React.FC<{
                             {(trip.clients || []).map(c => {
                                 const { totalDebt, totalPaid } = getClientTotals(c);
                                 const isPaid = c.status === 'PAID';
+                                const isEditing = editingPrevBal === c.id;
+
                                 return (
                                     <tr key={c.id} className="hover:bg-surfaceHighlight/30 transition-colors">
                                         <td className="p-4">
                                             <p className="font-bold text-sm text-text">{c.name}</p>
                                             <p className="text-[10px] text-muted uppercase font-bold">{c.address}</p>
                                         </td>
-                                        <td className="p-4 text-right text-muted font-bold">$ {(c.previousBalance || 0).toLocaleString()}</td>
+                                        <td className="p-4 text-right font-bold text-muted group/edit relative">
+                                            {isEditing ? (
+                                                <input 
+                                                    autoFocus
+                                                    type="number"
+                                                    value={tempPrevBal}
+                                                    onChange={e => setTempPrevBal(e.target.value)}
+                                                    onBlur={() => saveInlineEdit(c)}
+                                                    onKeyDown={e => e.key === 'Enter' && saveInlineEdit(c)}
+                                                    className="w-24 bg-background border border-primary rounded px-2 py-1 text-right font-bold text-text outline-none"
+                                                />
+                                            ) : (
+                                                <div 
+                                                    onClick={() => startInlineEdit(c)} 
+                                                    className={`inline-flex items-center gap-1 ${isVale && !isClosed ? 'cursor-edit hover:text-primary transition-colors' : ''}`}
+                                                >
+                                                    $ {(c.previousBalance || 0).toLocaleString()}
+                                                    {isVale && !isClosed && <Edit3 size={10} className="opacity-0 group-hover/edit:opacity-50" />}
+                                                </div>
+                                            )}
+                                        </td>
                                         <td className="p-4 text-right text-muted font-bold">$ {(c.currentInvoiceAmount || 0).toLocaleString()}</td>
                                         <td className="p-4 text-right font-black text-text">$ {(totalDebt || 0).toLocaleString()}</td>
                                         <td className="p-4 text-center">
@@ -481,6 +528,8 @@ const TripDetailView: React.FC<{
                     {(trip.clients || []).map(c => {
                         const { totalDebt, totalPaid, remaining } = getClientTotals(c);
                         const isPaid = c.status === 'PAID';
+                        const isEditing = editingPrevBal === c.id;
+
                         return (
                             <div key={c.id} className="bg-surface border border-surfaceHighlight rounded-2xl p-4 shadow-sm flex flex-col gap-3">
                                 <div className="flex justify-between items-start">
@@ -490,16 +539,37 @@ const TripDetailView: React.FC<{
                                     </div>
                                     <StatusBadge status={c.status} />
                                 </div>
+                                
                                 <div className="grid grid-cols-2 gap-4 border-y border-surfaceHighlight py-3 my-1">
-                                    <div>
-                                        <p className="text-[10px] text-muted uppercase font-bold">Total Deuda</p>
-                                        <p className="text-lg font-black text-text">$ {(totalDebt || 0).toLocaleString()}</p>
+                                    <div className="flex flex-col gap-1">
+                                        <p className="text-[10px] text-muted uppercase font-bold">Saldo Ant.</p>
+                                        {isEditing ? (
+                                            <input 
+                                                autoFocus
+                                                type="number"
+                                                value={tempPrevBal}
+                                                onChange={e => setTempPrevBal(e.target.value)}
+                                                onBlur={() => saveInlineEdit(c)}
+                                                onKeyDown={e => e.key === 'Enter' && saveInlineEdit(c)}
+                                                className="w-full bg-background border border-primary rounded px-2 py-1 font-bold text-text outline-none text-sm"
+                                            />
+                                        ) : (
+                                            <div onClick={() => startInlineEdit(c)} className="flex items-center gap-2">
+                                                <p className="text-sm font-bold text-muted">$ {(c.previousBalance || 0).toLocaleString()}</p>
+                                                {isVale && !isClosed && <Edit3 size={12} className="text-primary/50" />}
+                                            </div>
+                                        )}
+                                        <p className="text-[10px] text-muted uppercase font-bold mt-2">Factura Hoy</p>
+                                        <p className="text-sm font-bold text-muted">$ {(c.currentInvoiceAmount || 0).toLocaleString()}</p>
                                     </div>
-                                    <div className="text-right">
-                                        <p className="text-[10px] text-muted uppercase font-bold">Saldo Pend.</p>
+                                    <div className="text-right border-l border-surfaceHighlight pl-4">
+                                        <p className="text-[10px] text-muted uppercase font-bold">Deuda Total</p>
+                                        <p className="text-lg font-black text-text">$ {(totalDebt || 0).toLocaleString()}</p>
+                                        <p className="text-[10px] text-muted uppercase font-bold mt-2">Pendiente</p>
                                         <p className={`text-lg font-black ${remaining <= 0 ? 'text-green-500' : 'text-blue-500'}`}>$ {(remaining || 0).toLocaleString()}</p>
                                     </div>
                                 </div>
+
                                 <div className="flex justify-between items-center">
                                     <div className="flex flex-col">
                                         <span className="text-[10px] text-muted font-bold">COBRADO: <span className="text-green-500 font-black">$ {(totalPaid || 0).toLocaleString()}</span></span>

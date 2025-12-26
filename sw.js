@@ -1,52 +1,61 @@
-const CACHE_NAME = 'alfonsa-v3';
-const APP_SHELL = ['/index.html', '/manifest.json', '/index.css'];
 
-// INSTALL
-self.addEventListener('install', event => {
+/**
+ * Alfonsa Software - Service Worker v3.0
+ * Corregido para evitar "Cache Poisoning" y errores de origen.
+ */
+
+const CACHE_NAME = 'alfonsa-v3-final';
+const STATIC_ASSETS = [
+  './index.html',
+  './manifest.json'
+];
+
+// 1. Instalación: Precarga el 'corazón' de la app
+self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL))
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
   );
   self.skipWaiting();
 });
 
-// ACTIVATE
-self.addEventListener('activate', event => {
+// 2. Activación: Limpia CUALQUIER caché previa para eliminar el error del texto/código
+self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.map(k => k !== CACHE_NAME && caches.delete(k)))
-    )
+    caches.keys().then((keys) => {
+      return Promise.all(
+        keys.map((key) => {
+          if (key !== CACHE_NAME) return caches.delete(key);
+        })
+      );
+    })
   );
-  self.clients.claim();
+  return self.clients.claim();
 });
 
-// FETCH
-self.addEventListener('fetch', event => {
+// 3. Estrategia de Red: SEGURIDAD ANTE TODO
+self.addEventListener('fetch', (event) => {
   const { request } = event;
+  const url = new URL(request.url);
 
-  // 1️⃣ Navegaciones → index.html
+  // A. PETICIONES DE NAVEGACIÓN (Cuando entras a la app)
+  // Solo devolvemos HTML. Esto evita que el JS se cargue como página principal.
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch('/index.html').catch(() => caches.match('/index.html'))
+      fetch(request).catch(() => {
+        return caches.match('./index.html');
+      })
     );
     return;
   }
 
-  // 2️⃣ No tocar requests externos (esm.sh, fonts, etc)
-  if (!request.url.startsWith(self.location.origin)) {
-    return;
-  }
-
-  // 3️⃣ Assets locales → cache first
-  event.respondWith(
-    caches.match(request).then(cached =>
-      cached ||
-      fetch(request).then(response => {
-        if (response.status === 200) {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
-        }
-        return response;
+  // B. ARCHIVOS ESTÁTICOS (JS, CSS, Imágenes, Manifiesto)
+  // Usamos "Network-First" pero NO guardamos el JS en caché dinámicamente 
+  // para evitar el error de origen cruzado en el entorno de previsualización.
+  if (STATIC_ASSETS.some(asset => request.url.includes(asset.replace('./', '')))) {
+    event.respondWith(
+      caches.match(request).then((response) => {
+        return response || fetch(request);
       })
-    )
-  );
+    );
+  }
 });

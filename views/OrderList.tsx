@@ -316,10 +316,15 @@ const DetailedOrderCard: React.FC<{ order: DetailedOrder; currentUser: User; onO
                 <span className="text-[11px] text-muted font-bold">Productos:</span>
                 <span className="text-xs text-text font-black">{order.productCount}</span>
             </div>
-            <div className="flex justify-between items-center">
-                <span className="text-[11px] text-muted font-bold">Total:</span>
-                <span className="text-lg text-green-600 dark:text-green-400 font-black tracking-tighter">$ {(order.total || 0).toLocaleString('es-AR')}</span>
-            </div>
+            
+            {/* Solo mostramos el total si el usuario es 'vale' (Administrador) */}
+            {isVale && (
+                <div className="flex justify-between items-center">
+                    <span className="text-[11px] text-muted font-bold">Total:</span>
+                    <span className="text-lg text-green-600 dark:text-green-400 font-black tracking-tighter">$ {(order.total || 0).toLocaleString('es-AR')}</span>
+                </div>
+            )}
+            
             <div className="flex justify-between items-center">
                 <span className="text-[11px] text-muted font-bold">Creado:</span>
                 <span className="text-[11px] text-text font-bold">{order.createdDate}</span>
