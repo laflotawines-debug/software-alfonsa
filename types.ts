@@ -10,7 +10,7 @@ export enum View {
     PAYMENTS_OVERVIEW = 'PAYMENTS_OVERVIEW',
     PAYMENTS_PROVIDERS = 'PAYMENTS_PROVIDERS',
     PAYMENTS_HISTORY = 'PAYMENTS_HISTORY',
-    ACCOUNTS = 'ACCOUNTS',
+    CATALOG = 'CATALOG',
     PROVIDERS = 'PROVIDERS',
     EXPIRATIONS = 'EXPIRATIONS',
     HISTORY = 'HISTORY',
@@ -45,15 +45,16 @@ export interface MasterProduct {
     pventa_2: number;
     pventa_3: number;
     pventa_4: number;
-    // Campos de Stock añadidos
     stock_total?: number;
     stock_betbeder?: number;
     stock_llerena?: number;
     unidad?: string;
     updated_at?: string;
+    is_nacional?: boolean; 
+    last_sale_date?: string; 
+    last_invoice_ref?: string; 
 }
 
-// --- RESTO DE TYPES ---
 export type ExpirationStatus = 'CRÍTICO' | 'PRÓXIMO' | 'MODERADO' | 'NORMAL';
 export interface ProductExpiration {
     id: string;
@@ -64,7 +65,7 @@ export interface ProductExpiration {
     status: ExpirationStatus;
 }
 export type ProviderStatus = 'Activado' | 'Desactivado' | 'Frenado' | 'Completado' | 'Archivado';
-export type TransferStatus = 'Pendiente' | 'Realizado';
+export type TransferStatus = 'Pendiente' | 'Realizado' | 'Archivado';
 export interface Provider {
     id: string;
     name: string;

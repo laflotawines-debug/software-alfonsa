@@ -20,7 +20,8 @@ import {
   Table,
   Database,
   Tag,
-  MessageSquareQuote
+  MessageSquareQuote,
+  Boxes
 } from 'lucide-react';
 import { NavItem, View, User } from '../types';
 
@@ -52,7 +53,7 @@ const NAV_STRUCTURE: NavItem[] = [
         { id: View.PAYMENTS_HISTORY, label: 'Historial', icon: <FileText size={16} /> },
     ]
   },
-  { id: View.ACCOUNTS, label: 'Cuentas y mov.', icon: <Wallet size={20} /> },
+  { id: View.CATALOG, label: 'Maestro de artículos', icon: <Boxes size={20} /> },
   { 
     id: View.TOOLS, 
     label: 'Herramientas', 
@@ -79,7 +80,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, curre
 
   const filteredNav = NAV_STRUCTURE.filter(item => {
     if (currentUser.role === 'armador') {
-        if (item.id === View.DASHBOARD) return false;
+        if (item.id === View.DASHBOARD || item.id === View.CATALOG) return false;
     }
     return true;
   });
@@ -96,7 +97,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, curre
       {isMobile && (
           <div className="flex items-center justify-between p-4 border-b border-surfaceHighlight bg-surface shrink-0">
               <span className="font-bold text-lg text-text">Menú</span>
-              <button onClick={onClose} className="p-2 text-muted hover:text-text rounded-lg hover:bg-surfaceHighlight transition-colors">
+              <button onClick={onClose} className="p-2 text-muted rounded-lg hover:bg-surfaceHighlight transition-colors">
                   <X size={24} />
               </button>
           </div>

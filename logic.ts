@@ -222,7 +222,21 @@ export const updatePaymentMethod = (order: Order, method: PaymentMethod): Order 
 export const parseOrderText = (text: string): Product[] => {
     const products: Product[] = [];
     const lines = text.split('\n');
-    const regex = /(\d+)\s*(?:\(x(\d+)\))?\s+(\d+)\s+(.*?)\s+\$\s*([\d.,]+)\s+\$\s*([\d.,]+)/i;
+    
+    /**
+     * Regex actualizada para soportar el formato:
+     * [Base] [(xMultiplicador)] [Extra Opcional] [Código] [Descripción] [$ P.Unit] [$ Subtotal]
+     * 
+     * Ejemplo: 1 (x6) 3 312 TIA MARIA CREAM 690ML - $ 8.280,00 $ 74.520,00
+     * G1: 1 (base)
+     * G2: 6 (multiplicador)
+     * G3: 3 (extra) -> Opcional
+     * G4: 312 (código)
+     * G5: TIA MARIA CREAM... (nombre)
+     * G6: 8.280,00 (p.unit)
+     * G7: 74.520,00 (subtotal)
+     */
+    const regex = /(\d+)\s*(?:\(x(\d+)\))?\s*(?:(\d+)\s+)?(\d+)\s+(.*?)\s+\$\s*([\d.,]+)\s+\$\s*([\d.,]+)/i;
 
     lines.forEach(line => {
         const trimmed = line.trim();
@@ -231,15 +245,30 @@ export const parseOrderText = (text: string): Product[] => {
         if (match) {
             const baseQty = parseInt(match[1]);
             const multiplier = match[2] ? parseInt(match[2]) : 1;
-            const quantity = baseQty * multiplier;
-            const code = match[3];
-            let rawName = match[4].trim();
+            const extraQty = match[3] ? parseInt(match[3]) : 0;
+            
+            // Fórmula: (Base * Multiplicador) + Unidades Extra
+            const quantity = (baseQty * multiplier) + extraQty;
+            
+            const code = match[4];
+            let rawName = match[5].trim();
             let name = rawName;
+            
             if (rawName.includes(' - ')) name = rawName.split(' - ')[0].trim();
             else if (rawName.endsWith(' -')) name = rawName.slice(0, -2).trim();
-            const unitPrice = parseFloat(match[5].replace(/\./g, '').replace(',', '.'));
-            const subtotal = parseFloat(match[6].replace(/\./g, '').replace(',', '.'));
-            products.push({ code, name, originalQuantity: quantity, quantity, unitPrice, subtotal, isChecked: false });
+            
+            const unitPrice = parseFloat(match[6].replace(/\./g, '').replace(',', '.'));
+            const subtotal = parseFloat(match[7].replace(/\./g, '').replace(',', '.'));
+            
+            products.push({ 
+                code, 
+                name, 
+                originalQuantity: quantity, 
+                quantity, 
+                unitPrice, 
+                subtotal, 
+                isChecked: false 
+            });
         }
     });
     return products;

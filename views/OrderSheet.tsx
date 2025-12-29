@@ -31,14 +31,23 @@ interface OrderSheetProps {
     trips: Trip[];
     onSaveTrip: (trip: Trip) => void;
     onDeleteTrip: (tripId: string) => void;
+    selectedTripId: string | null;
+    onSelectTrip: (id: string | null) => void;
 }
 
 // ==========================================
 // MAIN COMPONENT: ORDER SHEET CONTROLLER
 // ==========================================
 
-export const OrderSheet: React.FC<OrderSheetProps> = ({ currentUser, orders, trips, onSaveTrip, onDeleteTrip }) => {
-    const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
+export const OrderSheet: React.FC<OrderSheetProps> = ({ 
+    currentUser, 
+    orders, 
+    trips, 
+    onSaveTrip, 
+    onDeleteTrip,
+    selectedTripId,
+    onSelectTrip
+}) => {
     const [isEditorOpen, setIsEditorOpen] = useState(false);
     const [tripToEdit, setTripToEdit] = useState<Trip | null>(null);
 
@@ -53,7 +62,7 @@ export const OrderSheet: React.FC<OrderSheetProps> = ({ currentUser, orders, tri
     };
 
     const handleDelete = (tripId: string) => {
-        if (selectedTripId === tripId) setSelectedTripId(null);
+        if (selectedTripId === tripId) onSelectTrip(null);
         setTimeout(() => onDeleteTrip(tripId), 50);
     };
 
@@ -83,7 +92,7 @@ export const OrderSheet: React.FC<OrderSheetProps> = ({ currentUser, orders, tri
             <TripDetailView 
                 trip={selectedTrip} 
                 currentUser={currentUser}
-                onBack={() => setSelectedTripId(null)}
+                onBack={() => onSelectTrip(null)}
                 onUpdateTrip={onSaveTrip} 
                 onEditRequest={() => handleEditTrip(selectedTrip)}
                 onDelete={() => handleDelete(selectedTrip.id)}
@@ -94,7 +103,7 @@ export const OrderSheet: React.FC<OrderSheetProps> = ({ currentUser, orders, tri
     return (
         <TripListView 
             trips={trips} 
-            onSelect={setSelectedTripId} 
+            onSelect={onSelectTrip} 
             onCreate={handleCreateNew}
             onDelete={handleDelete}
             currentUser={currentUser}

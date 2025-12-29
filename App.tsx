@@ -16,7 +16,9 @@ import { Etiquetador } from './views/Etiquetador';
 import { Presupuestador } from './views/Presupuestador';
 import { ListaChina } from './views/ListaChina';
 import { Login } from './views/Login';
+import { Catalog } from './views/Catalog';
 import { OrderAssemblyModal } from './components/OrderAssemblyModal';
+import { Loader2 } from 'lucide-react';
 import { 
     View, 
     DetailedOrder, 
@@ -26,12 +28,11 @@ import {
     Transfer, 
     OrderStatus, 
     UserRole, 
-    ProviderAccount, 
-    TripClient, 
-    TripExpense, 
     ProductExpiration, 
     ExpirationStatus, 
-    PaymentStatus 
+    PaymentStatus,
+    Order,
+    Product
 } from './types';
 import { supabase } from './supabase';
 import { 
@@ -46,45 +47,22 @@ import {
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [isDataLoading, setIsDataLoading] = useState(true);
+  const [isDataLoading, setIsDataLoading] = useState(false);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
-  
   const [currentView, setCurrentView] = useState<View>(View.DASHBOARD);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  
   const [isDarkMode, setIsDarkMode] = useState(() => {
     const saved = localStorage.getItem('theme');
     return saved ? saved === 'dark' : true;
   });
 
-  // --- LÓGICA PWA ---
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-
-  useEffect(() => {
-    const handler = (e: any) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-      console.log('Alfonsa PWA: Instalación disponible.');
-    };
-    window.addEventListener('beforeinstallprompt', handler);
-    return () => window.removeEventListener('beforeinstallprompt', handler);
-  }, []);
-
-  const handleInstallApp = async () => {
-    if (!deferredPrompt) return;
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === 'accepted') {
-      setDeferredPrompt(null);
-    }
-  };
-  
   const [orders, setOrders] = useState<DetailedOrder[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [expirations, setExpirations] = useState<ProductExpiration[]>([]);
   const [selectedOrderForAssembly, setSelectedOrderForAssembly] = useState<DetailedOrder | null>(null);
+  const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
 
   useEffect(() => {
     const root = window.document.documentElement;
@@ -98,68 +76,22 @@ export default function App() {
   }, [isDarkMode]);
 
   useEffect(() => {
-    if (currentUser && currentUser.role === 'armador' && currentView === View.DASHBOARD) {
-        setCurrentView(View.ORDERS);
-    }
-  }, [currentUser, currentView]);
-
-  useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) fetchProfile(session.user.id);
       else setIsAuthChecking(false);
     });
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) fetchProfile(session.user.id);
-      else {
-        setCurrentUser(null);
-        setIsAuthChecking(false);
-      }
+      else { setCurrentUser(null); setIsAuthChecking(false); }
     });
-
     return () => subscription.unsubscribe();
   }, []);
 
   const fetchProfile = async (userId: string) => {
     try {
-      const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
-      
-      if (data) {
-        const profile = { id: data.id, name: data.name, role: data.role as UserRole };
-        setCurrentUser(profile);
-      } else {
-          const { data: { user } } = await supabase.auth.getUser();
-          if (user) {
-              const baseName = user.email?.split('@')[0] || 'Usuario';
-              const initialRole = user.email === 'fernandoist98@gmail.com' ? 'vale' : 'armador';
-              
-              const { data: newProfile, error: insError } = await supabase
-                .from('profiles')
-                .insert({ id: userId, name: baseName, role: initialRole })
-                .select()
-                .single();
-                
-              if (newProfile) {
-                const profile = { id: newProfile.id, name: newProfile.name, role: newProfile.role as UserRole };
-                setCurrentUser(profile);
-              }
-          }
-      }
-    } catch (err) {
-      console.error("Error cargando perfil:", err);
-    } finally {
-      setIsAuthChecking(false);
-    }
-  };
-
-  const handleUpdateProfile = async (newName: string) => {
-      if (!currentUser) return;
-      const { error } = await supabase.from('profiles').update({ name: newName }).eq('id', currentUser.id);
-      if (!error) {
-          setCurrentUser({ ...currentUser, name: newName });
-      } else {
-          throw error;
-      }
+      const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
+      if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role as UserRole });
+    } catch (err) { console.error(err); } finally { setIsAuthChecking(false); }
   };
 
   const fetchAllData = async () => {
@@ -168,31 +100,16 @@ export default function App() {
         const { data: dbOrders } = await supabase.from('orders').select('*, order_items(*)');
         if (dbOrders) {
             const mappedOrders: DetailedOrder[] = dbOrders.map(o => ({
-                id: o.id,
-                displayId: o.display_id,
-                clientName: o.client_name,
-                zone: o.zone,
-                status: o.status as OrderStatus,
-                createdDate: new Date(o.created_at).toLocaleDateString('es-AR'),
-                total: Number(o.total || 0),
-                observations: o.observations,
-                paymentMethod: o.payment_method,
-                assemblerId: o.assembler_id,
-                assemblerName: o.assembler_name,
-                controllerId: o.controller_id,
-                controllerName: o.controller_name,
-                invoicerName: o.invoicer_name,
-                history: o.history || [],
+                id: o.id, displayId: o.display_id, clientName: o.client_name, zone: o.zone, 
+                status: o.status as OrderStatus, createdDate: new Date(o.created_at).toLocaleDateString('es-AR'), 
+                total: Number(o.total || 0), observations: o.observations, paymentMethod: o.payment_method, 
+                assemblerId: o.assembler_id, assemblerName: o.assembler_name, controllerId: o.controller_id, 
+                controllerName: o.controller_name, invoicerName: o.invoicer_name, history: o.history || [], 
                 productCount: o.order_items?.length || 0,
                 products: (o.order_items || []).map((item: any) => ({
-                    code: item.code,
-                    name: item.name,
-                    originalQuantity: item.original_quantity,
-                    quantity: item.quantity,
-                    shippedQuantity: item.shipped_quantity,
-                    unitPrice: Number(item.unit_price || 0),
-                    subtotal: Number(item.subtotal || 0),
-                    isChecked: item.is_checked
+                    code: item.code, name: item.name, originalQuantity: item.original_quantity, 
+                    quantity: item.quantity, shippedQuantity: item.shipped_quantity, 
+                    unitPrice: Number(item.unit_price || 0), subtotal: Number(item.subtotal || 0), isChecked: item.is_checked
                 }))
             }));
             setOrders(mappedOrders.sort((a, b) => b.id.localeCompare(a.id)));
@@ -201,22 +118,13 @@ export default function App() {
         const { data: dbProviders } = await supabase.from('providers').select('*, provider_accounts(*)');
         if (dbProviders) {
             const mappedProviders: Provider[] = dbProviders.map(p => ({
-                id: p.id,
-                name: p.name,
-                goalAmount: Number(p.goal_amount || 0),
-                priority: p.priority,
-                status: p.status,
+                id: p.id, name: p.name, goalAmount: Number(p.goal_amount || 0), priority: p.priority, 
+                status: p.status as any,
                 accounts: (p.provider_accounts || []).map((a: any) => ({
-                    id: a.id,
-                    providerId: a.provider_id,
-                    condition: a.condition,
-                    holder: a.holder,
-                    identifierAlias: a.identifier_alias,
-                    identifierCBU: a.identifier_cbu,
-                    metaAmount: Number(a.meta_amount || 0),
-                    currentAmount: Number(a.current_amount || 0),
-                    pendingAmount: Number(a.pending_amount || 0),
-                    status: a.status
+                    id: a.id, providerId: a.provider_id, condition: a.condition, holder: a.holder,
+                    identifierAlias: a.identifier_alias, identifierCBU: a.identifier_cbu, 
+                    metaAmount: Number(a.meta_amount || 0), currentAmount: Number(a.current_amount || 0), 
+                    pendingAmount: Number(a.pending_amount || 0), status: a.status
                 }))
             }));
             setProviders(mappedProviders);
@@ -225,15 +133,9 @@ export default function App() {
         const { data: dbTransfers } = await supabase.from('transfers').select('*');
         if (dbTransfers) {
             const mappedTransfers: Transfer[] = dbTransfers.map(t => ({
-                id: t.id,
-                clientName: t.client_name,
-                amount: Number(t.amount || 0),
-                date: t.date_text,
-                providerId: t.provider_id,
-                accountId: t.account_id,
-                notes: t.notes,
-                status: t.status as 'Pendiente' | 'Realizado',
-                isLoadedInSystem: t.is_loaded_in_system
+                id: t.id, clientName: t.client_name, amount: Number(t.amount || 0), date: t.date_text,
+                providerId: t.provider_id, accountId: t.account_id, notes: t.notes, 
+                status: t.status as any, isLoadedInSystem: t.is_loaded_in_system
             }));
             setTransfers(mappedTransfers.sort((a, b) => b.id.localeCompare(a.id)));
         }
@@ -241,30 +143,16 @@ export default function App() {
         const { data: dbTrips } = await supabase.from('trips').select('*, trip_clients(*), trip_expenses(*)');
         if (dbTrips) {
             const mappedTrips: Trip[] = dbTrips.map(t => ({
-                id: t.id,
-                displayId: t.display_id,
-                name: t.name,
-                status: t.status,
-                driverName: t.driver_name,
-                date: t.date_text,
-                route: t.route,
+                id: t.id, displayId: t.display_id, name: t.name, status: t.status as any,
+                driverName: t.driver_name, date: t.date_text, route: t.route,
                 clients: (t.trip_clients || []).map((c: any) => ({
-                    id: c.id,
-                    name: c.name,
-                    address: c.address,
-                    previousBalance: Number(c.previous_balance || 0),
-                    currentInvoiceAmount: Number(c.current_invoice_amount || 0),
-                    paymentCash: Number(c.payment_cash || 0), 
-                    paymentTransfer: Number(c.payment_transfer || 0),
-                    isTransferExpected: !!c.is_transfer_expected,
-                    status: c.status as PaymentStatus
+                    id: c.id, name: c.name, address: c.address, previousBalance: Number(c.previous_balance || 0),
+                    currentInvoiceAmount: Number(c.current_invoice_amount || 0), paymentCash: Number(c.payment_cash || 0),
+                    paymentTransfer: Number(c.payment_transfer || 0), isTransferExpected: !!c.is_transfer_expected,
+                    status: c.status as any
                 })),
                 expenses: (t.trip_expenses || []).map((e: any) => ({
-                    id: e.id,
-                    type: e.type,
-                    amount: Number(e.amount || 0),
-                    note: e.note,
-                    timestamp: new Date(e.timestamp)
+                    id: e.id, type: e.type, amount: Number(e.amount || 0), note: e.note, timestamp: new Date(e.timestamp)
                 }))
             }));
             setTrips(mappedTrips.sort((a, b) => b.id.localeCompare(a.id)));
@@ -282,148 +170,281 @@ export default function App() {
                 if (daysRemaining < 30) status = 'CRÍTICO';
                 else if (daysRemaining < 90) status = 'PRÓXIMO';
                 else if (daysRemaining < 180) status = 'MODERADO';
-                return {
-                    id: item.id,
-                    productName: item.product_name,
-                    quantity: `${item.total_quantity} unidades`,
-                    expiryDate,
-                    daysRemaining,
-                    status
-                };
+                return { id: item.id, productName: item.product_name, quantity: `${item.total_quantity} unidades`, expiryDate, daysRemaining, status };
             });
             setExpirations(mappedExpirations);
         }
-    } catch (err) {
-        console.error("Error sincronizando datos:", err);
+    } catch (err) { console.error(err); } finally { setIsDataLoading(false); }
+  };
+
+  useEffect(() => { if (currentUser) fetchAllData(); }, [currentUser]);
+
+  const handleDeleteTransfer = async (id: string) => {
+    setIsDataLoading(true);
+    await supabase.from('transfers').delete().eq('id', id);
+    await fetchAllData();
+  };
+
+  const handleClearHistory = async () => {
+    setIsDataLoading(true);
+    await supabase.from('transfers').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await fetchAllData();
+  };
+
+  const handleDeleteProvider = async (id: string) => {
+    if (id.startsWith('p-')) return;
+    setIsDataLoading(true);
+    try {
+        const { data, error } = await supabase.from('providers').delete().eq('id', id).select();
+        if (error || !data || data.length === 0) {
+            await supabase.from('providers').update({ status: 'Desactivado' }).eq('id', id);
+        }
+        await fetchAllData();
+    } catch (err: any) { 
+        alert("Error al eliminar: " + err.message);
     } finally {
         setIsDataLoading(false);
     }
   };
 
-  useEffect(() => {
-    if (currentUser) fetchAllData();
-  }, [currentUser]);
+  const handleResetProvider = async (providerId: string) => {
+    setIsDataLoading(true);
+    try {
+        const { error: delError } = await supabase.from('transfers').delete().eq('provider_id', providerId);
+        if (delError) throw delError;
+        await supabase.from('provider_accounts').update({ current_amount: 0, pending_amount: 0 }).eq('provider_id', providerId);
+        await fetchAllData();
+        alert("¡Nuevo ciclo iniciado!");
+    } catch (err: any) { alert("Error al reiniciar: " + err.message); } finally { setIsDataLoading(false); }
+  };
 
-  const releaseOccupancy = useCallback(async (orderId: string) => {
-    if (!currentUser) return;
-    const { error } = await supabase
-        .from('orders')
-        .update({ assembler_id: null, assembler_name: null, controller_id: null, controller_name: null })
-        .eq('id', orderId)
-        .or(`assembler_id.eq.${currentUser.id},controller_id.eq.${currentUser.id}`);
-    if (!error) fetchAllData();
-  }, [currentUser]);
-
-  const handleOpenOrder = async (order: DetailedOrder) => {
-    if (!currentUser) return;
-    if (order.status === OrderStatus.EN_ARMADO && !order.assemblerId) {
-        const { error } = await supabase.from('orders').update({ assembler_id: currentUser.id, assembler_name: currentUser.name }).eq('id', order.id);
-        if (!error) {
-            setSelectedOrderForAssembly({ ...order, assemblerId: currentUser.id, assemblerName: currentUser.name });
-            fetchAllData();
-            return;
+  const handleUpdateProvider = async (provider: Provider) => {
+    setIsDataLoading(true);
+    const isNew = provider.id.startsWith('p-');
+    const payload = { name: provider.name, goal_amount: provider.goalAmount, priority: provider.priority, status: provider.status };
+    let pId = provider.id;
+    try {
+        if (isNew) {
+            const { data, error } = await supabase.from('providers').insert([payload]).select().single();
+            if (error) throw error;
+            pId = data.id;
+        } else {
+            const { error } = await supabase.from('providers').update(payload).eq('id', provider.id);
+            if (error) throw error;
         }
-    } else if (order.status === OrderStatus.ARMADO) {
-        if (!order.controllerId) {
-            const { error } = await supabase.from('orders').update({ controller_id: currentUser.id, controller_name: currentUser.name }).eq('id', order.id);
-            if (!error) {
-                setSelectedOrderForAssembly({ ...order, controllerId: currentUser.id, controllerName: currentUser.name });
-                fetchAllData();
-                return;
-            }
+        for (const acc of provider.accounts) {
+            const isNewAcc = acc.id.startsWith('acc-');
+            const accPayload = { 
+                provider_id: pId, condition: acc.condition, holder: acc.holder, 
+                identifier_alias: acc.identifierAlias, identifier_cbu: acc.identifierCBU, 
+                meta_amount: acc.metaAmount, status: acc.status 
+            };
+            if (isNewAcc) await supabase.from('provider_accounts').insert([accPayload]);
+            else await supabase.from('provider_accounts').update(accPayload).eq('id', acc.id);
         }
-    }
-    setSelectedOrderForAssembly(order);
+        await fetchAllData();
+    } catch (e: any) { alert("Error: " + e.message); setIsDataLoading(false); }
   };
 
   const handleSaveTransfer = async (transfer: Transfer) => {
+    setIsDataLoading(true);
     const isNew = transfer.id.toString().startsWith('t-');
-    const payload: any = { 
-        client_name: transfer.clientName, 
-        amount: Number(transfer.amount), 
-        date_text: transfer.date, 
-        provider_id: transfer.providerId, 
-        account_id: transfer.accountId, 
-        notes: transfer.notes, 
-        status: transfer.status, 
-        is_loaded_in_system: transfer.isLoadedInSystem 
+    const payload = { 
+        client_name: transfer.clientName, amount: Number(transfer.amount), date_text: transfer.date, 
+        provider_id: transfer.providerId, account_id: transfer.accountId, notes: transfer.notes, 
+        status: transfer.status, is_loaded_in_system: transfer.isLoadedInSystem 
     };
-    let tError;
-    if (isNew) {
-        const { error } = await supabase.from('transfers').insert([payload]);
-        tError = error;
-    } else {
-        const { error } = await supabase.from('transfers').update(payload).eq('id', transfer.id);
-        tError = error;
-    }
-    if (!tError) fetchAllData();
+    if (isNew) await supabase.from('transfers').insert([payload]);
+    else await supabase.from('transfers').update(payload).eq('id', transfer.id);
+    await fetchAllData();
   };
 
-  const handleLogout = async () => { await supabase.auth.signOut(); setCurrentUser(null); };
+  const handleUpdateTransferStatus = async (id: string, status: any) => {
+    setIsDataLoading(true);
+    await supabase.from('transfers').update({ status }).eq('id', id);
+    await fetchAllData();
+  };
 
-  if (isAuthChecking) return <div className="h-screen w-full flex flex-col items-center justify-center bg-background gap-4"><div className="h-16 w-16 border-4 border-primary border-t-transparent rounded-full animate-spin"></div><p className="text-muted font-bold text-xs uppercase animate-pulse">Cargando...</p></div>;
+  const handleSaveTrip = async (trip: Trip) => {
+    setIsDataLoading(true);
+    try {
+        const isNew = trip.id.startsWith('trip-') && !trips.find(t => t.id === trip.id);
+        const tripPayload = { display_id: trip.displayId, name: trip.name, status: trip.status, driver_name: trip.driverName, date_text: trip.date, route: trip.route };
+        let tId = trip.id;
+        if (isNew) {
+            const { data, error } = await supabase.from('trips').insert([tripPayload]).select().single();
+            if (error) throw error;
+            tId = data.id;
+        } else {
+            await supabase.from('trips').update(tripPayload).eq('id', trip.id);
+        }
+        for (const client of trip.clients) {
+            const isNewClient = client.id.startsWith('tc-');
+            const clientPayload = { 
+                trip_id: tId, name: client.name, address: client.address, previous_balance: client.previousBalance, 
+                current_invoice_amount: client.currentInvoiceAmount, payment_cash: client.paymentCash, 
+                payment_transfer: client.paymentTransfer, is_transfer_expected: client.isTransferExpected, status: client.status 
+            };
+            if (isNewClient) await supabase.from('trip_clients').insert([clientPayload]);
+            else await supabase.from('trip_clients').update(clientPayload).eq('id', client.id);
+        }
+        for (const exp of trip.expenses) {
+            const isNewExp = exp.id.startsWith('exp-') || exp.id.startsWith('e-');
+            const expPayload = { trip_id: tId, type: exp.type, amount: exp.amount, note: exp.note, timestamp: exp.timestamp.toISOString() };
+            if (isNewExp) await supabase.from('trip_expenses').insert([expPayload]);
+            else await supabase.from('trip_expenses').update(expPayload).eq('id', exp.id);
+        }
+        await fetchAllData();
+    } catch (err) { console.error(err); setIsDataLoading(false); }
+  };
+
+  const handleDeleteTrip = async (tripId: string) => {
+    setIsDataLoading(true);
+    await supabase.from('trips').delete().eq('id', tripId);
+    await fetchAllData();
+  };
+
+  const handleCreateOrder = async (newOrder: DetailedOrder) => {
+    setIsDataLoading(true);
+    try {
+        const { data: orderData, error: orderError } = await supabase.from('orders').insert([{
+            display_id: newOrder.displayId, 
+            client_name: newOrder.clientName,
+            zone: newOrder.zone, 
+            status: newOrder.status, 
+            total: newOrder.total, 
+            observations: newOrder.observations || '', 
+            history: newOrder.history
+        }]).select().single();
+        if (orderError) throw orderError;
+        const itemsToInsert = newOrder.products.map(p => ({ 
+            order_id: orderData.id, code: p.code, name: p.name, original_quantity: p.originalQuantity, 
+            quantity: p.quantity, unit_price: p.unitPrice, subtotal: p.subtotal, is_checked: p.isChecked 
+        }));
+        await supabase.from('order_items').insert(itemsToInsert);
+        await fetchAllData();
+        setCurrentView(View.ORDERS);
+    } catch (err) { console.error(err); setIsDataLoading(false); }
+  };
+
+  const handleSaveAssembly = async (updatedOrder: Order, shouldAdvance: boolean) => {
+    if (!currentUser) return;
+    setIsDataLoading(true);
+    let finalOrder = updatedOrder;
+    if (shouldAdvance) finalOrder = advanceOrderStatus(updatedOrder, currentUser);
+    try {
+        await supabase.from('orders').update({
+            total: finalOrder.total, observations: finalOrder.observations, status: finalOrder.status, 
+            payment_method: finalOrder.paymentMethod, assembler_id: finalOrder.assemblerId, 
+            assembler_name: finalOrder.assemblerName, controller_id: finalOrder.controllerId, 
+            controller_name: finalOrder.controllerName, history: finalOrder.history
+        }).eq('id', finalOrder.id);
+        for (const p of finalOrder.products) {
+            await supabase.from('order_items').update({ 
+                quantity: p.quantity, shipped_quantity: p.shippedQuantity, 
+                unit_price: p.unitPrice, subtotal: p.subtotal, is_checked: p.isChecked 
+            }).eq('order_id', finalOrder.id).eq('code', p.code);
+        }
+        setSelectedOrderForAssembly(null);
+        await fetchAllData();
+    } catch (err) { console.error(err); setIsDataLoading(false); }
+  };
+
+  const handleAdvanceOrder = async (order: DetailedOrder) => {
+    if (!currentUser) return;
+    setIsDataLoading(true);
+    const updated = advanceOrderStatus(order, currentUser);
+    try {
+        await supabase.from('orders').update({
+            status: updated.status,
+            history: updated.history,
+            invoicer_name: updated.invoicerName,
+            controller_id: updated.controllerId,
+            controller_name: updated.controllerName
+        }).eq('id', updated.id);
+        // Si el paso es de FACTURA_CONTROLADA a EN_TRANSITO, debemos actualizar shippedQuantity
+        if (updated.status === OrderStatus.EN_TRANSITO) {
+            for (const p of updated.products) {
+                await supabase.from('order_items').update({ 
+                    shipped_quantity: p.quantity 
+                }).eq('order_id', updated.id).eq('code', p.code);
+            }
+        }
+        await fetchAllData();
+    } catch (err) { console.error(err); } finally { setIsDataLoading(false); }
+  };
+
+  if (isAuthChecking) return <div className="h-screen w-full flex items-center justify-center bg-background"><Loader2 className="animate-spin text-primary" size={48} /></div>;
   if (!currentUser) return <Login isDarkMode={isDarkMode} onToggleTheme={() => setIsDarkMode(!isDarkMode)} />;
-  if (isDataLoading) return <div className="h-screen w-full flex flex-col items-center justify-center bg-background gap-4"><div className="h-16 w-16 border-4 border-primary border-t-transparent rounded-full animate-spin"></div><p className="text-muted font-bold text-xs uppercase animate-pulse">Sincronizando...</p></div>;
 
   return (
-    <div className="flex h-screen w-full flex-row overflow-hidden bg-background text-text transition-colors duration-300">
+    <div className="flex h-screen w-full overflow-hidden bg-background text-text">
+      {isDataLoading && (
+        <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-background/60 backdrop-blur-sm">
+           <div className="bg-surface p-8 rounded-3xl border border-surfaceHighlight shadow-2xl flex flex-col items-center gap-4">
+              <Loader2 className="animate-spin text-primary" size={48} />
+              <p className="font-black text-xs uppercase tracking-[0.2em] text-muted">Sincronizando con Servidor</p>
+           </div>
+        </div>
+      )}
+
       <Sidebar currentUser={currentUser} currentView={currentView} onNavigate={v => { setCurrentView(v); setMobileMenuOpen(false); }} />
-      <main className="flex flex-1 flex-col h-full relative overflow-hidden bg-background">
-        <Header 
-          onMenuClick={() => setMobileMenuOpen(true)} 
-          title={currentView === View.DASHBOARD ? "Panel de Control" : currentView} 
-          subtitle="Software de Gestión Alfonsa" 
-          isDarkMode={isDarkMode} 
-          onToggleTheme={() => setIsDarkMode(!isDarkMode)} 
-          currentUser={currentUser} 
-          onLogout={handleLogout}
-          showInstallBtn={!!deferredPrompt}
-          onInstallApp={handleInstallApp}
-        />
+      <main className="flex-1 flex flex-col h-full relative overflow-hidden bg-background">
+        <Header onMenuClick={() => setMobileMenuOpen(true)} title={currentView === View.DASHBOARD ? "Tablero" : currentView} subtitle="Gestión Alfonsa" isDarkMode={isDarkMode} onToggleTheme={() => setIsDarkMode(!isDarkMode)} currentUser={currentUser} onLogout={() => supabase.auth.signOut()} />
         <div className="flex-1 overflow-y-auto p-4 md:p-8">
-            <div className="mx-auto max-w-7xl animate-in fade-in duration-500">
-                {currentView === View.DASHBOARD && currentUser.role === 'vale' && (
-                    <Dashboard orders={orders} expirations={expirations} onNavigate={setCurrentView} />
-                )}
+            <div className="mx-auto max-w-7xl">
+                {currentView === View.DASHBOARD && <Dashboard orders={orders} expirations={expirations} onNavigate={setCurrentView} />}
                 {currentView === View.ORDERS && (
-                    <OrderList onNavigate={setCurrentView} orders={orders} currentUser={currentUser} onOpenAssembly={handleOpenOrder} onDeleteOrder={id => supabase.from('orders').delete().eq('id', id).then(() => fetchAllData())} onInvoiceOrder={() => {}} />
+                    <OrderList 
+                      onNavigate={setCurrentView} orders={orders} currentUser={currentUser} 
+                      onOpenAssembly={o => setSelectedOrderForAssembly(o)} 
+                      onDeleteOrder={id => supabase.from('orders').delete().eq('id', id).then(() => fetchAllData())} 
+                      onAdvanceOrder={handleAdvanceOrder} 
+                    />
                 )}
                 {currentView === View.ORDER_SHEET && (
-                    <OrderSheet currentUser={currentUser} orders={orders} trips={trips} onSaveTrip={() => {}} onDeleteTrip={() => {}} />
+                    <OrderSheet currentUser={currentUser} orders={orders} trips={trips} onSaveTrip={handleSaveTrip} onDeleteTrip={handleDeleteTrip} selectedTripId={selectedTripId} onSelectTrip={setSelectedTripId} />
                 )}
+                {currentView === View.CREATE_BUDGET && <CreateBudget onNavigate={setCurrentView} onCreateOrder={handleCreateOrder} currentUser={currentUser} />}
                 {currentView === View.PAYMENTS_OVERVIEW && (
-                    <PaymentsOverview providers={providers} onDeleteProvider={() => {}} onUpdateProviders={() => {}} transfers={transfers} onUpdateTransfers={handleSaveTransfer} onConfirmTransfer={() => {}} />
+                    <PaymentsOverview 
+                      providers={providers} onDeleteProvider={handleDeleteProvider} onUpdateProviders={handleUpdateProvider} 
+                      transfers={transfers} onUpdateTransfers={handleSaveTransfer} onConfirmTransfer={handleUpdateTransferStatus} 
+                    />
                 )}
                 {currentView === View.PAYMENTS_HISTORY && (
-                    <PaymentsHistory transfers={transfers} onDeleteTransfer={() => {}} onClearHistory={() => {}} onUpdateTransfers={handleSaveTransfer} onUpdateStatus={() => {}} providers={providers} />
+                    <PaymentsHistory 
+                      transfers={transfers} onDeleteTransfer={handleDeleteTransfer} onClearHistory={handleClearHistory} 
+                      onUpdateTransfers={handleSaveTransfer} onUpdateStatus={handleUpdateTransferStatus} providers={providers} 
+                    />
                 )}
                 {currentView === View.PAYMENTS_PROVIDERS && (
-                    <PaymentsProviders providers={providers} onUpdateProviders={() => {}} onDeleteProvider={() => {}} />
+                    <PaymentsProviders 
+                      providers={providers} onUpdateProviders={handleUpdateProvider} onDeleteProvider={handleDeleteProvider} onResetProvider={handleResetProvider} 
+                    />
                 )}
+                {currentView === View.CATALOG && <Catalog currentUser={currentUser} />}
                 {currentView === View.EXPIRATIONS && <Expirations />}
                 {currentView === View.ETIQUETADOR && <Etiquetador />}
                 {currentView === View.PRESUPUESTADOR && <Presupuestador />}
                 {currentView === View.LISTA_CHINA && <ListaChina />}
-                {currentView === View.CREATE_BUDGET && <CreateBudget onNavigate={setCurrentView} onCreateOrder={() => {}} currentUser={currentUser} />}
-                {currentView === View.SQL_EDITOR && currentUser.role === 'vale' && <SqlEditor currentUser={currentUser} />}
-                {currentView === View.SETTINGS && <Settings currentUser={currentUser} onUpdateProfile={handleUpdateProfile} />}
+                {currentView === View.SQL_EDITOR && <SqlEditor currentUser={currentUser} />}
+                {currentView === View.SETTINGS && <Settings currentUser={currentUser} onUpdateProfile={async (n) => { await supabase.from('profiles').update({name: n}).eq('id', currentUser.id); fetchProfile(currentUser.id); }} />}
             </div>
         </div>
       </main>
       {selectedOrderForAssembly && (
           <OrderAssemblyModal 
-            order={selectedOrderForAssembly} 
-            currentUser={currentUser} 
-            onClose={() => { releaseOccupancy(selectedOrderForAssembly.id); setSelectedOrderForAssembly(null); }} 
-            onSave={() => {}}
-            onUpdateProduct={(code, qty) => setSelectedOrderForAssembly(applyQuantityChange(selectedOrderForAssembly, code, qty) as DetailedOrder)}
-            onToggleCheck={code => setSelectedOrderForAssembly(toggleProductCheck(selectedOrderForAssembly, code) as DetailedOrder)}
-            onUpdatePrice={(code, price) => setSelectedOrderForAssembly(updateProductPrice(selectedOrderForAssembly, code, price) as DetailedOrder)}
-            onRemoveProduct={code => setSelectedOrderForAssembly(removeProductFromOrder(selectedOrderForAssembly, code) as DetailedOrder)}
-            onUpdateObservations={text => setSelectedOrderForAssembly(updateObservations(selectedOrderForAssembly, text) as DetailedOrder)}
+              order={selectedOrderForAssembly} currentUser={currentUser} onClose={() => setSelectedOrderForAssembly(null)} onSave={handleSaveAssembly}
+              onUpdateProduct={(code, qty) => setSelectedOrderForAssembly(prev => prev ? { ...applyQuantityChange(prev, code, qty) } as any : null)}
+              onToggleCheck={(code) => setSelectedOrderForAssembly(prev => prev ? { ...toggleProductCheck(prev, code) } as any : null)}
+              onAddProduct={(p: Product) => setSelectedOrderForAssembly(prev => prev ? { ...addProductToOrder(prev, p) } as any : null)}
+              onUpdatePrice={(code, price) => setSelectedOrderForAssembly(prev => prev ? { ...updateProductPrice(prev, code, price) } as any : null)}
+              onUpdateObservations={(text) => setSelectedOrderForAssembly(prev => prev ? { ...updateObservations(prev, text) } as any : null)}
+              onRemoveProduct={(code) => setSelectedOrderForAssembly(prev => prev ? { ...removeProductFromOrder(prev, code) } as any : null)}
+              onDeleteOrder={async (id) => { await supabase.from('orders').delete().eq('id', id); setSelectedOrderForAssembly(null); fetchAllData(); }}
           />
       )}
-      {mobileMenuOpen && <Sidebar currentUser={currentUser} currentView={currentView} onNavigate={v => { setCurrentView(v); setMobileMenuOpen(false); }} isMobile onClose={() => setMobileMenuOpen(false)} />}
     </div>
   );
 }

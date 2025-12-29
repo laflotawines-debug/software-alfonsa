@@ -12,9 +12,10 @@ import {
     Eraser,
     Boxes,
     FileWarning,
-    Layers
+    Layers,
+    FileDown
 } from 'lucide-react';
-import { User } from '../types';
+import { User, MasterProduct } from '../types';
 import { supabase } from '../supabase';
 import * as XLSX from 'xlsx';
 
@@ -32,6 +33,7 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
     const [showSuccess, setShowSuccess] = useState(false);
 
     const [isSyncing, setIsSyncing] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
     const [syncLog, setSyncLog] = useState<string[]>([]);
     const [syncError, setSyncError] = useState<string | null>(null);
     const [syncSuccess, setSyncSuccess] = useState(false);
@@ -60,7 +62,7 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
             .toLowerCase()
             .normalize("NFD")
             .replace(/[\u0300-\u036f]/g, "") // Quitar acentos
-            .replace(/[^a-z0-9]/g, ""); // Quitar todo lo que no sea letra o número
+            .replace(/[^a-z0-9_]/g, ""); // Quitar todo lo que no sea letra, número o guión bajo
     };
 
     const normalizeNumber = (val: any): number => {
@@ -71,66 +73,121 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
         return isNaN(num) ? 0 : num;
     };
 
+    // --- LÓGICA DE EXPORTACIÓN ---
+    const handleExportExcel = async (type: 'prices' | 'stock') => {
+        setIsExporting(true);
+        setSyncLog([`Generando archivo de ${type === 'prices' ? 'Precio Maestro' : 'Stock Maestro'}...`]);
+        
+        try {
+            const PAGE_SIZE = 1000;
+            let allData: any[] = [];
+            let from = 0;
+            let hasMore = true;
+
+            // Bucle para traer la base completa paginada
+            while (hasMore) {
+                const { data, error } = await supabase
+                    .from('master_products')
+                    .select('*')
+                    .order('desart', { ascending: true })
+                    .range(from, from + PAGE_SIZE - 1);
+
+                if (error) throw error;
+                
+                if (data && data.length > 0) {
+                    allData = [...allData, ...data];
+                    setSyncLog(prev => [...prev, `Progreso descarga: ${allData.length} artículos...`]);
+                    if (data.length < PAGE_SIZE) hasMore = false;
+                    else from += PAGE_SIZE;
+                } else {
+                    hasMore = false;
+                }
+            }
+
+            // Preparar datos según el tipo y orden solicitado
+            let excelData: any[] = [];
+            if (type === 'prices') {
+                excelData = allData.map(p => ({
+                    'codart': p.codart,
+                    'codprove': p.codprove || '',
+                    'cbarra': p.cbarra || '',
+                    'desart': p.desart,
+                    'costo': p.costo || 0,
+                    'familia': p.familia || '',
+                    'nsubf': p.nsubf || '',
+                    'en_dolares': p.en_dolares || 'FALSO',
+                    'tasa': p.tasa || '21',
+                    'nomprov': p.nomprov || '',
+                    'pventa_1': p.pventa_1 || 0,
+                    'pventa_2': p.pventa_2 || 0,
+                    'pventa_3': p.pventa_3 || 0,
+                    'pventa_4': p.pventa_4 || 0,
+                    'unicomp': '', // Campo vacío solicitado
+                    'unidad': p.unidad || '',
+                    'coeficient': 1 // Valor fijo solicitado
+                }));
+            } else {
+                excelData = allData.map(p => ({
+                    'codart': p.codart,
+                    'desart': p.desart,
+                    'stock_betbeder': p.stock_betbeder || 0,
+                    'stock_llerena': p.stock_llerena || 0,
+                    'stock_total': p.stock_total || 0,
+                    'familia': p.familia || '',
+                    'nomprov': p.nomprov || ''
+                }));
+            }
+
+            // Generar Excel
+            const worksheet = XLSX.utils.json_to_sheet(excelData);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "Maestro");
+            
+            const fileName = `${type === 'prices' ? 'articulo' : 'stock'}_${new Date().toISOString().split('T')[0]}.xlsx`;
+            XLSX.writeFile(workbook, fileName);
+            
+            setSyncLog(prev => [...prev, `¡Exportación exitosa! ${allData.length} registros.`]);
+            setSyncSuccess(true);
+            setTimeout(() => setSyncSuccess(false), 3000);
+
+        } catch (err: any) {
+            console.error("Error Export:", err);
+            setSyncError("Error al exportar datos: " + err.message);
+        } finally {
+            setIsExporting(false);
+        }
+    };
+
     const processExcel = async (file: File) => {
         setIsSyncing(true);
         setSyncError(null);
         setSyncSuccess(false);
-        setSyncLog([`Analizando: ${file.name}...`]);
+        setSyncLog([`Iniciando importación: ${file.name}...`]);
         setInconsistencies([]);
 
         const reader = new FileReader();
         reader.onload = async (e) => {
             try {
                 const data = new Uint8Array(e.target?.result as ArrayBuffer);
-                
-                let workbook;
-                try {
-                    // Configuración robusta para evitar errores de registros XLS antiguos
-                    workbook = XLSX.read(data, { 
-                        type: 'array',
-                        cellFormula: false, // Ignorar fórmulas reduce errores 0x27d
-                        cellStyles: false,
-                        cellNF: false,
-                        cellHTML: false,
-                        codepage: 65001 // UTF-8
-                    });
-                } catch (readErr: any) {
-                    console.error("SheetJS Read Error:", readErr);
-                    if (readErr.message?.includes('0x27d') || readErr.message?.includes('Record')) {
-                        throw new Error("ERROR DE FORMATO: El archivo tiene una estructura antigua incompatible. Por favor, ábrelo en Excel y guárdalo nuevamente como 'Libro de Excel (.xlsx)' antes de subirlo.");
-                    }
-                    throw readErr;
-                }
-                
+                let workbook = XLSX.read(data, { type: 'array' });
                 const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-                // header: 1 obtiene un array de arrays (filas)
                 const rows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
 
-                if (rows.length < 1) throw new Error("El archivo no tiene filas de datos.");
+                if (rows.length < 1) throw new Error("El archivo está vacío.");
 
-                // ESCANEO FLEXIBLE DE ENCABEZADOS
                 let headerRowIndex = -1;
                 let foundHeaders: string[] = [];
 
-                // Buscamos columnas clave en las primeras 20 filas (por si hay logos arriba)
                 for (let i = 0; i < Math.min(rows.length, 20); i++) {
                     const rowNormalized = rows[i].map(c => normalizeString(c));
-                    
-                    // Alias de búsqueda para el código (codart o codigo)
-                    const hasCodigo = rowNormalized.some(h => h === 'codigo' || h === 'codart' || h === 'cod' || h === 'articulo');
-                    // Alias para descripción
-                    const hasDesc = rowNormalized.some(h => h === 'desart' || h === 'denominacion' || h === 'desc' || h === 'descripcion');
-                    
-                    if (hasCodigo && hasDesc) {
+                    if (rowNormalized.some(h => h === 'codart' || h === 'codigo')) {
                         headerRowIndex = i;
                         foundHeaders = rowNormalized;
                         break;
                     }
                 }
 
-                if (headerRowIndex === -1) {
-                    throw new Error("No se detectaron las columnas necesarias (Código y Denominación). Verifica los nombres de los encabezados.");
-                }
+                if (headerRowIndex === -1) throw new Error("No se encontró la columna 'codart' o 'codigo'.");
 
                 const findIdx = (aliases: string[]) => {
                     const normAliases = aliases.map(a => normalizeString(a));
@@ -143,41 +200,50 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                 if (activeTab === 'catalog_prices') {
                     const idx = {
                         codart: findIdx(['codart', 'codigo', 'cod']),
+                        codprove: findIdx(['codprove']),
+                        cbarra: findIdx(['cbarra', 'barras']),
                         desart: findIdx(['desart', 'denominacion', 'articulo', 'desc']),
                         familia: findIdx(['familia', 'fam']),
                         nsubf: findIdx(['nsubf', 'subfamilia', 'subf']),
+                        en_dolares: findIdx(['en_dolares', 'dolares']),
+                        tasa: findIdx(['tasa', 'iva']),
+                        nomprov: findIdx(['nomprov', 'proveedor', 'noprov']),
                         costo: findIdx(['costo']),
-                        p1: findIdx(['pventa1', 'precio1', 'pventa_1']),
-                        p2: findIdx(['pventa2', 'precio2', 'pventa_2']),
-                        p3: findIdx(['pventa3', 'precio3', 'pventa_3']),
-                        p4: findIdx(['pventa4', 'precio4', 'pventa_4'])
+                        p1: findIdx(['pventa_1', 'pventa1', 'precio1']),
+                        p2: findIdx(['pventa_2', 'pventa2', 'precio2']),
+                        p3: findIdx(['pventa_3', 'pventa3', 'precio3']),
+                        p4: findIdx(['pventa_4', 'pventa4', 'precio4']),
+                        unidad: findIdx(['unidad'])
                     };
 
                     dataRows.forEach((row) => {
                         const code = String(row[idx.codart] || '').trim();
                         if (!code) return;
+
                         dataToUpsert.push({
                             codart: code,
+                            codprove: idx.codprove !== -1 ? String(row[idx.codprove] || '').trim() : undefined,
+                            cbarra: idx.cbarra !== -1 ? String(row[idx.cbarra] || '').trim() : undefined,
                             desart: String(row[idx.desart] || 'SIN NOMBRE').trim(),
+                            costo: normalizeNumber(row[idx.costo]),
                             familia: idx.familia !== -1 ? String(row[idx.familia] || '').trim() : null,
                             nsubf: idx.nsubf !== -1 ? String(row[idx.nsubf] || '').trim() : null,
-                            costo: normalizeNumber(row[idx.costo]),
+                            en_dolares: idx.en_dolares !== -1 ? String(row[idx.en_dolares] || 'FALSO').trim() : 'FALSO',
+                            tasa: idx.tasa !== -1 ? String(row[idx.tasa] || '21').trim() : '21',
+                            nomprov: idx.nomprov !== -1 ? String(row[idx.nomprov] || '').trim() : null,
                             pventa_1: normalizeNumber(row[idx.p1]),
                             pventa_2: normalizeNumber(row[idx.p2]),
                             pventa_3: normalizeNumber(row[idx.p3]),
                             pventa_4: normalizeNumber(row[idx.p4]),
+                            unidad: idx.unidad !== -1 ? String(row[idx.unidad] || '').trim() : null,
                             updated_at: new Date().toISOString()
                         });
                     });
                 } else {
                     const idx = {
-                        codigo: findIdx(['codigo', 'codart', 'cod']),
-                        betbeder: findIdx(['betbeder', 'stockbetbeder']),
-                        llerena: findIdx(['llerena', 'stockllerena']),
-                        costo: findIdx(['costo']),
-                        prov: findIdx(['proveedor', 'nomprov', 'prov']),
-                        fam: findIdx(['familia', 'fam']),
-                        des: findIdx(['denominacion', 'desart', 'articulo'])
+                        codart: findIdx(['codart', 'codigo', 'cod']),
+                        betbeder: findIdx(['betbeder', 'stock_betbeder']),
+                        llerena: findIdx(['llerena', 'stock_llerena'])
                     };
 
                     const { data: existingCodes } = await supabase.from('master_products').select('codart');
@@ -185,12 +251,10 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                     const localInconsistencies: string[] = [];
 
                     dataRows.forEach((row) => {
-                        const code = String(row[idx.codigo] || '').trim();
+                        const code = String(row[idx.codart] || '').trim();
                         if (!code) return;
 
-                        if (!codeSet.has(code)) {
-                            localInconsistencies.push(code);
-                        }
+                        if (!codeSet.has(code)) localInconsistencies.push(code);
 
                         const b = normalizeNumber(row[idx.betbeder]);
                         const l = normalizeNumber(row[idx.llerena]);
@@ -200,9 +264,6 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                             stock_betbeder: b,
                             stock_llerena: l,
                             stock_total: b + l,
-                            desart: idx.des !== -1 ? String(row[idx.des] || '').trim() : undefined,
-                            familia: idx.fam !== -1 ? String(row[idx.fam] || '').trim() : undefined,
-                            nomprov: idx.prov !== -1 ? String(row[idx.prov] || '').trim() : undefined,
                             updated_at: new Date().toISOString()
                         });
                     });
@@ -210,20 +271,20 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                     if (localInconsistencies.length > 0) setInconsistencies(localInconsistencies);
                 }
 
-                if (dataToUpsert.length === 0) throw new Error("No se encontraron registros válidos para procesar.");
+                if (dataToUpsert.length === 0) throw new Error("No se detectaron filas válidas.");
 
-                setSyncLog(prev => [...prev, `Guardando ${dataToUpsert.length} registros...`]);
+                setSyncLog(prev => [...prev, `Sincronizando ${dataToUpsert.length} artículos...`]);
 
                 const chunkSize = 150;
                 for (let i = 0; i < dataToUpsert.length; i += chunkSize) {
                     const chunk = dataToUpsert.slice(i, i + chunkSize);
                     const { error } = await supabase.from('master_products').upsert(chunk, { onConflict: 'codart' });
                     if (error) throw error;
-                    setSyncLog(prev => [...prev, `Progreso: ${Math.min(100, Math.round(((i + chunk.length) / dataToUpsert.length) * 100))}%`]);
+                    setSyncLog(prev => [...prev, `Progreso: ${Math.round(((i + chunk.length) / dataToUpsert.length) * 100)}%`]);
                 }
 
                 setSyncSuccess(true);
-                setSyncLog(prev => [...prev, "¡OPERACIÓN COMPLETADA!"]);
+                setSyncLog(prev => [...prev, "¡IMPORTACIÓN COMPLETADA CON ÉXITO!"]);
             } catch (err: any) {
                 console.error("Error Excel:", err);
                 setSyncError(err.message || "Error procesando el archivo.");
@@ -299,15 +360,28 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                                 <div>
                                     <h3 className="text-xl font-black text-text flex items-center gap-3 uppercase tracking-tight italic">
                                         {activeTab === 'catalog_prices' ? <Layers size={24} className="text-primary" /> : <Boxes size={24} className="text-primary" />}
-                                        {activeTab === 'catalog_prices' ? 'Actualizar Precios' : 'Actualizar Stock'}
+                                        {activeTab === 'catalog_prices' ? 'Artículos y Precios' : 'Maestro de Stock'}
                                     </h3>
                                     <p className="text-xs text-muted font-medium mt-1">
-                                        Arrastra el archivo Excel. Se detectarán las columnas automáticamente.
+                                        {activeTab === 'catalog_prices' 
+                                            ? 'Importa/Exporta el archivo de 17 columnas compatible con la web.' 
+                                            : 'Gestiona existencias de Betbeder y Llerena.'}
                                     </p>
                                 </div>
-                                <button onClick={() => { setSyncLog([]); setSyncError(null); setSyncSuccess(false); setInconsistencies([]); }} className="p-3 rounded-xl bg-background border border-surfaceHighlight text-muted hover:text-red-500 transition-colors">
-                                    <Eraser size={20} />
-                                </button>
+                                <div className="flex gap-2">
+                                    <button 
+                                        onClick={() => handleExportExcel(activeTab === 'catalog_prices' ? 'prices' : 'stock')}
+                                        disabled={isExporting}
+                                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-green-600 hover:bg-green-700 text-white text-[10px] font-black uppercase tracking-widest shadow-lg shadow-green-500/20 transition-all active:scale-95 disabled:opacity-50"
+                                        title="Descargar base actual en formato compatible"
+                                    >
+                                        {isExporting ? <Loader2 size={16} className="animate-spin" /> : <FileDown size={16} />}
+                                        Exportar
+                                    </button>
+                                    <button onClick={() => { setSyncLog([]); setSyncError(null); setSyncSuccess(false); setInconsistencies([]); }} className="p-2.5 rounded-xl bg-background border border-surfaceHighlight text-muted hover:text-red-500 transition-colors">
+                                        <Eraser size={20} />
+                                    </button>
+                                </div>
                             </div>
 
                             <div className="space-y-6">
@@ -323,9 +397,9 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                                             <UploadCloud size={48} className="text-muted mb-4" />
                                         )}
                                         <p className="mb-2 text-sm text-text font-black uppercase tracking-tight text-center px-4">
-                                            {isSyncing ? 'Analizando estructura...' : 'Seleccionar o arrastrar Excel'}
+                                            {isSyncing ? 'Procesando archivo...' : 'Seleccionar o arrastrar Excel para IMPORTAR'}
                                         </p>
-                                        <p className="text-xs text-muted font-medium">Soporta .xlsx y .xls antiguos</p>
+                                        <p className="text-xs text-muted font-medium">Formato compatible de 17 columnas</p>
                                     </div>
                                     <input type="file" className="hidden" accept=".xlsx, .xls" onChange={onFileChange} disabled={isSyncing} />
                                 </label>
@@ -341,15 +415,15 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                                     <div className="p-5 bg-orange-500/10 border border-orange-500/20 rounded-2xl text-orange-700 space-y-2">
                                         <div className="flex items-center gap-2 font-black text-[10px] uppercase">
                                             <FileWarning size={16} /> 
-                                            {inconsistencies.length} Códigos de stock no detectados en el maestro previo.
+                                            {inconsistencies.length} Códigos de stock no detectados previamente (se crearán).
                                         </div>
                                     </div>
                                 )}
 
-                                {syncSuccess && (
+                                {syncSuccess && !isExporting && (
                                     <div className="p-5 bg-green-500/10 border border-green-500/20 rounded-2xl text-green-600 flex items-center justify-center gap-3 animate-in zoom-in-95">
                                         <CheckCircle2 size={24} />
-                                        <span className="text-sm font-black uppercase tracking-widest">¡Actualización Exitosa!</span>
+                                        <span className="text-sm font-black uppercase tracking-widest">¡Sincronización Exitosa!</span>
                                     </div>
                                 )}
 
@@ -359,6 +433,7 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                                             <span className="text-primary font-black shrink-0">→</span> {log}
                                         </div>
                                     ))}
+                                    {syncLog.length === 0 && <p className="text-center italic opacity-50 py-4">Sin actividad reciente.</p>}
                                 </div>
                             </div>
                         </section>

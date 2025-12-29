@@ -18,7 +18,7 @@ import { parseOrderText } from '../logic';
 
 interface CreateBudgetProps {
   onNavigate: (view: View) => void;
-  onCreateOrder: (newOrder: DetailedOrder) => void;
+  onCreateOrder: (newOrder: DetailedOrder) => Promise<void>;
   currentUser: User;
 }
 
@@ -28,6 +28,7 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
   const [rawText, setRawText] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Computed total
   const totalAmount = products.reduce((sum, p) => sum + p.subtotal, 0);
@@ -55,7 +56,7 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
     setProducts(newProducts);
   };
 
-  const handleSaveOrder = () => {
+  const handleSaveOrder = async () => {
     if (!clientName) {
         alert("Por favor ingrese el nombre del cliente");
         return;
@@ -65,29 +66,35 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
         return;
     }
 
-    const newId = `PED-${Date.now()}`;
-    const newOrder: DetailedOrder = {
-        id: newId,
-        displayId: `${newId}-${Math.random().toString(36).substr(2, 5)}`,
-        clientName: clientName,
-        zone: selectedZone,
-        status: OrderStatus.EN_ARMADO, // Initial State
-        productCount: products.length,
-        total: totalAmount,
-        createdDate: new Date().toLocaleDateString('es-AR'),
-        products: products,
-        history: [{
-            // Fix: Convert Date to ISO string to match HistoryEntry type definition
-            timestamp: new Date().toISOString(),
-            userId: currentUser.id, 
-            userName: currentUser.name,
-            action: 'CREATE_ORDER',
-            details: 'Pedido creado manualmente'
-        }]
-    };
+    setIsSaving(true);
+    try {
+        const newId = `PED-${Date.now()}`;
+        const newOrder: DetailedOrder = {
+            id: newId,
+            displayId: `PED-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
+            clientName: clientName,
+            zone: selectedZone,
+            status: OrderStatus.EN_ARMADO, // Initial State
+            productCount: products.length,
+            total: totalAmount,
+            createdDate: new Date().toLocaleDateString('es-AR'),
+            products: products,
+            history: [{
+                timestamp: new Date().toISOString(),
+                userId: currentUser.id, 
+                userName: currentUser.name,
+                action: 'CREATE_ORDER',
+                details: 'Pedido creado manualmente'
+            }]
+        };
 
-    onCreateOrder(newOrder);
-    onNavigate(View.ORDERS);
+        await onCreateOrder(newOrder);
+        // La navegación ya ocurre dentro de handleCreateOrder en App.tsx para asegurar sincronía
+    } catch (err) {
+        console.error(err);
+    } finally {
+        setIsSaving(false);
+    }
   };
 
   return (
@@ -111,10 +118,11 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
              </button>
              <button 
                 onClick={handleSaveOrder}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary hover:bg-primaryHover text-white font-bold text-sm shadow-lg shadow-primary/20 transition-colors"
+                disabled={isSaving}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary hover:bg-primaryHover text-white font-bold text-sm shadow-lg shadow-primary/20 transition-colors disabled:opacity-50 disabled:cursor-wait"
              >
-                <Save size={18} />
-                Crear Pedido
+                {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                {isSaving ? 'Guardando...' : 'Crear Pedido'}
              </button>
         </div>
       </div>
@@ -137,7 +145,7 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
                         value={clientName}
                         onChange={(e) => setClientName(e.target.value)}
                         placeholder="Nombre completo"
-                        className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3 pl-10 pr-4 text-sm text-text focus:border-primary outline-none transition-colors shadow-sm"
+                        className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3 pl-10 pr-4 text-sm text-text focus:border-primary outline-none transition-colors shadow-sm font-bold uppercase"
                     />
                 </div>
             </div>
@@ -151,7 +159,7 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
                     <select 
                         value={selectedZone}
                         onChange={(e) => setSelectedZone(e.target.value as OrderZone)}
-                        className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3 pl-10 pr-4 text-sm text-text focus:border-primary outline-none transition-colors appearance-none cursor-pointer shadow-sm"
+                        className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3 pl-10 pr-4 text-sm text-text focus:border-primary outline-none transition-colors appearance-none cursor-pointer shadow-sm font-bold"
                     >
                         <option value="V. Mercedes">V. Mercedes</option>
                         <option value="San Luis">San Luis</option>
@@ -241,7 +249,7 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
                 <tbody className="divide-y divide-surfaceHighlight">
                     {products.length === 0 ? (
                         <tr>
-                            <td colSpan={6} className="py-10 text-center text-muted text-sm italic">
+                            <td colSpan={currentUser.role === 'vale' ? 6 : 4} className="py-10 text-center text-muted text-sm italic">
                                 No hay productos cargados. Use el procesador de texto arriba o agregue manualmente.
                             </td>
                         </tr>
@@ -258,7 +266,7 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
                                         type="text" 
                                         value={product.name} 
                                         readOnly
-                                        className="w-full bg-surface border border-surfaceHighlight rounded px-3 py-2 text-sm text-text outline-none focus:border-primary shadow-sm"
+                                        className="w-full bg-transparent border-none py-2 text-sm text-text outline-none font-bold uppercase"
                                     />
                                 </td>
                                 <td className="py-4 px-6">
@@ -266,7 +274,7 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
                                         type="number" 
                                         value={product.quantity} 
                                         readOnly
-                                        className="w-full bg-surface border border-surfaceHighlight rounded px-3 py-2 text-sm text-text text-center font-bold outline-none focus:border-primary shadow-sm"
+                                        className="w-full bg-surface border border-surfaceHighlight rounded px-3 py-2 text-sm text-text text-center font-black outline-none focus:border-primary shadow-sm"
                                     />
                                 </td>
                                 

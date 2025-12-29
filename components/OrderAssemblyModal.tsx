@@ -45,7 +45,6 @@ interface OrderAssemblyModalProps {
     onUpdatePrice?: (productCode: string, newPrice: number) => void;
     onRemoveProduct?: (productCode: string) => void;
     onDeleteOrder?: (orderId: string) => void;
-    onInvoice?: (order: any) => void; 
 }
 
 export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
@@ -59,8 +58,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     onAddProduct,
     onUpdatePrice,
     onRemoveProduct,
-    onDeleteOrder,
-    onInvoice
+    onDeleteOrder
 }) => {
     const [editingProductCode, setEditingProductCode] = useState<string | null>(null);
     const [editingPriceCode, setEditingPriceCode] = useState<string | null>(null);
@@ -82,7 +80,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     const isTransitStep = order.status === OrderStatus.EN_TRANSITO; 
     const isFinishedStep = order.status === OrderStatus.ENTREGADO || order.status === OrderStatus.PAGADO;
 
-    const canPrint = isInvoiceControlStep || isReadyForTransit || isTransitStep || isFinishedStep;
+    const canPrint = isBillingStep || isInvoiceControlStep || isReadyForTransit || isTransitStep || isFinishedStep;
 
     const isOriginalAssembler = order.assemblerId === currentUser.id;
     const isReadyForControl = order.status === OrderStatus.ARMADO;
@@ -169,7 +167,9 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
             currentY += 5;
         }
 
-        const shortages = order.products.filter(p => p.originalQuantity > (p.shippedQuantity ?? p.originalQuantity));
+        // Lógica corregida para detectar faltantes: 
+        // Si no hay shippedQuantity (paso facturación), comparamos contra quantity
+        const shortages = order.products.filter(p => p.originalQuantity > (p.shippedQuantity ?? p.quantity));
         if (shortages.length > 0) {
             currentY += 10;
             doc.setFontSize(11);
@@ -189,7 +189,8 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
 
             doc.setTextColor(textColor[0], textColor[1], textColor[2]);
             shortages.forEach(p => {
-                const missing = p.originalQuantity - (p.shippedQuantity || p.quantity);
+                const actualDelivered = p.shippedQuantity ?? p.quantity;
+                const missing = p.originalQuantity - actualDelivered;
                 doc.text(p.code, 20, currentY);
                 doc.text(p.name.substring(0, 45), 35, currentY);
                 doc.text(p.originalQuantity.toString(), 150, currentY, { align: 'center' });
@@ -202,7 +203,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
             currentY += 5;
         }
 
-        const returns = order.products.filter(p => (p.shippedQuantity ?? p.quantity) > p.quantity);
+        const returns = order.products.filter(p => p.shippedQuantity !== undefined && p.shippedQuantity > p.quantity);
         if (returns.length > 0) {
             currentY += 10;
             doc.setFontSize(11);
@@ -222,10 +223,11 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
 
             doc.setTextColor(textColor[0], textColor[1], textColor[2]);
             returns.forEach(p => {
-                const returned = (p.shippedQuantity || p.quantity) - p.quantity;
+                const sent = p.shippedQuantity || p.quantity;
+                const returned = sent - p.quantity;
                 doc.text(p.code, 20, currentY);
                 doc.text(p.name.substring(0, 45), 35, currentY);
-                doc.text((p.shippedQuantity || p.quantity).toString(), 150, currentY, { align: 'center' });
+                doc.text(sent.toString(), 150, currentY, { align: 'center' });
                 doc.setTextColor(37, 99, 235);
                 doc.text(returned.toString(), 180, currentY, { align: 'center' });
                 doc.setTextColor(textColor[0], textColor[1], textColor[2]);
@@ -323,13 +325,10 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     };
 
     const handleInvoiceClick = () => {
-        if (onInvoice) {
-            setIsGeneratingInvoice(true);
-            setTimeout(() => {
-                onInvoice(order);
-                onClose();
-            }, 1000);
-        }
+        setIsGeneratingInvoice(true);
+        setTimeout(() => {
+            onSave(order, true);
+        }, 1000);
     };
 
     const handlePaymentMethodChange = (e: React.ChangeEvent<HTMLSelectElement>) => {

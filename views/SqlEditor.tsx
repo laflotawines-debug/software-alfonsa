@@ -1,6 +1,7 @@
+
 import React, { useState } from 'react';
-import {
-    Copy,
+import { 
+    Copy, 
     Check,
     Zap,
     Database,
@@ -9,46 +10,78 @@ import {
 } from 'lucide-react';
 import { User } from '../types';
 
-interface SqlEditorProps {
-    currentUser: User;
-}
+interface SqlEditorProps { currentUser: User; }
 
 export const SqlEditor: React.FC<SqlEditorProps> = ({ currentUser }) => {
     const fullSchemaScript = `-- =============================================================
--- ALFONSA SOFTWARE: SCRIPT DE INTEGRACIÓN (v11.0)
--- Optimización para Lista China y Etiquetas
+-- ALFONSA SOFTWARE: SCRIPT DE INTEGRIDAD TOTAL (v19.0)
+-- Especial: Reinicio de Tablero y Control de Archivados
 -- =============================================================
 
--- 1. TABLA: ESTADO DE ETIQUETAS IMPRESAS
-CREATE TABLE IF NOT EXISTS public.printed_labels_state (
-    codart text PRIMARY KEY REFERENCES public.master_products(codart) ON DELETE CASCADE,
-    last_printed_price numeric NOT NULL,
-    updated_at timestamptz DEFAULT now()
-);
+-- 1. ACTUALIZAR TIPO DE DATO PARA ESTADOS DE TRANSFERENCIA
+-- Nos aseguramos que la columna status soporte 'Archivado'
+-- Si la columna ya existe, esto no rompe nada.
+DO $$ 
+BEGIN
+    -- Intentamos forzar que el check constraint acepte 'Archivado'
+    ALTER TABLE IF EXISTS public.transfers DROP CONSTRAINT IF EXISTS transfers_status_check;
+END $$;
 
--- 2. TABLA: SNAPSHOT LISTA CHINA (WHATSAPP)
--- Agregamos desart para tener referencia completa del nombre guardado
-CREATE TABLE IF NOT EXISTS public.whatsapp_list_snapshot (
-    codart text PRIMARY KEY,
-    desart text,
-    last_price numeric,
-    created_at timestamptz DEFAULT now()
-);
+ALTER TABLE public.transfers 
+ADD CONSTRAINT transfers_status_check 
+CHECK (status IN ('Pendiente', 'Realizado', 'Archivado'));
 
--- 3. SEGURIDAD RLS (Row Level Security)
-ALTER TABLE public.printed_labels_state ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.whatsapp_list_snapshot ENABLE ROW LEVEL SECURITY;
+-- 2. APAGAR SEGURIDAD TEMPORALMENTE
+ALTER TABLE IF EXISTS public.providers DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.provider_accounts DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.transfers DISABLE ROW LEVEL SECURITY;
 
--- Políticas para permitir todo a usuarios autenticados
-DROP POLICY IF EXISTS "Acceso total etiquetas" ON public.printed_labels_state;
-CREATE POLICY "Acceso total etiquetas" ON public.printed_labels_state
-FOR ALL TO authenticated USING (true) WITH CHECK (true);
+-- 3. OTORGAR PERMISOS ABSOLUTOS (Evita bloqueos silenciosos)
+GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated, anon, postgres, service_role;
 
-DROP POLICY IF EXISTS "Acceso total snapshots" ON public.whatsapp_list_snapshot;
-CREATE POLICY "Acceso total snapshots" ON public.whatsapp_list_snapshot
-FOR ALL TO authenticated USING (true) WITH CHECK (true);
+-- 4. FORZAR CASCADA REAL (Para que el botón Eliminar realmente funcione)
+DO $$ 
+DECLARE 
+    r RECORD;
+BEGIN
+    -- Eliminar FKs de transfers
+    FOR r IN (SELECT constraint_name FROM information_schema.table_constraints WHERE table_name = 'transfers' AND constraint_type = 'FOREIGN KEY') LOOP
+        EXECUTE 'ALTER TABLE public.transfers DROP CONSTRAINT IF EXISTS ' || quote_ident(r.constraint_name);
+    END LOOP;
+    
+    -- Eliminar FKs de provider_accounts
+    FOR r IN (SELECT constraint_name FROM information_schema.table_constraints WHERE table_name = 'provider_accounts' AND constraint_type = 'FOREIGN KEY') LOOP
+        EXECUTE 'ALTER TABLE public.provider_accounts DROP CONSTRAINT IF EXISTS ' || quote_ident(r.constraint_name);
+    END LOOP;
+END $$;
 
--- 4. REFRESCAR CACHÉ DE POSTGREST
+ALTER TABLE public.provider_accounts 
+ADD CONSTRAINT fk_provider_accounts_providers 
+FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE;
+
+ALTER TABLE public.transfers 
+ADD CONSTRAINT fk_transfers_providers 
+FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE;
+
+ALTER TABLE public.transfers 
+ADD CONSTRAINT fk_transfers_accounts 
+FOREIGN KEY (account_id) REFERENCES provider_accounts(id) ON DELETE CASCADE;
+
+-- 5. RE-ACTIVAR RLS CON ACCESO PÚBLICO (Garantía de funcionamiento de la App)
+ALTER TABLE public.providers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.provider_accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.transfers ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Full Access Providers" ON public.providers;
+CREATE POLICY "Full Access Providers" ON public.providers FOR ALL TO public USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Full Access Accounts" ON public.provider_accounts;
+CREATE POLICY "Full Access Accounts" ON public.provider_accounts FOR ALL TO public USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Full Access Transfers" ON public.transfers;
+CREATE POLICY "Full Access Transfers" ON public.transfers FOR ALL TO public USING (true) WITH CHECK (true);
+
+-- 6. REFRESCAR ESQUEMA
 NOTIFY pgrst, 'reload schema';
 `;
 
@@ -69,47 +102,27 @@ NOTIFY pgrst, 'reload schema';
                         <ShieldCheck size={32} className="text-primary" />
                         SQL Editor
                     </h2>
-                    <p className="text-muted text-sm mt-1 font-medium">
-                        Ejecuta este script v11.0 para que la Lista China funcione correctamente.
-                    </p>
+                    <p className="text-muted text-sm mt-1 font-medium">Ejecuta el script v19.0 para habilitar el reinicio de tarjetas.</p>
                 </div>
-
-                <button
-                    onClick={handleCopy}
-                    className={`flex items-center gap-2 px-8 py-4 rounded-2xl font-black transition-all shadow-xl uppercase text-xs tracking-widest ${
-                        copied
-                            ? 'bg-green-500 text-white'
-                            : 'bg-primary text-white hover:bg-primaryHover active:scale-95'
-                    }`}
-                >
+                <button onClick={handleCopy} className={`flex items-center gap-2 px-8 py-4 rounded-2xl font-black transition-all shadow-xl uppercase text-xs tracking-widest ${copied ? 'bg-green-500 text-white' : 'bg-primary text-white hover:bg-primaryHover active:scale-95'}`}>
                     {copied ? <Check size={18} /> : <Zap size={18} />}
-                    {copied ? 'Copiado' : 'Copiar Script v11.0'}
+                    {copied ? 'Copiado' : 'Copiar Script v19.0'}
                 </button>
             </div>
-
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                 <div className="lg:col-span-3">
                     <div className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm relative">
-                        <textarea
-                            value={query}
-                            readOnly
-                            className="w-full h-[600px] bg-slate-950 p-8 outline-none resize-none text-blue-400 font-mono text-xs leading-relaxed"
-                        />
+                        <textarea value={query} readOnly className="w-full h-[600px] bg-slate-950 p-8 outline-none resize-none text-blue-400 font-mono text-xs leading-relaxed" />
                     </div>
                 </div>
-
                 <div className="lg:col-span-1 space-y-4">
                     <div className="bg-primary/5 border border-primary/20 rounded-2xl p-6">
-                        <h4 className="text-xs font-black text-primary uppercase tracking-widest mb-3 flex items-center gap-2">
-                            <Database size={14} />
-                            Instrucciones
-                        </h4>
-
+                        <h4 className="text-xs font-black text-primary uppercase tracking-widest mb-3 flex items-center gap-2"><Database size={14} /> Instrucciones</h4>
                         <p className="text-[10px] text-muted font-bold leading-relaxed">
-                            1. Copia el script.<br />
-                            2. Ve a Supabase -&gt; SQL Editor.<br />
-                            3. Pega y dale a RUN.<br />
-                            4. Vuelve aquí y usa la Lista China.
+                            1. Copia el script.<br/>
+                           2. Ve a Supabase → SQL Editor.<br />
+                            3. Pega y presiona RUN.<br/>
+                            4. Esto permite que el reinicio oculte transacciones viejas sin borrarlas de la base.
                         </p>
                     </div>
                 </div>

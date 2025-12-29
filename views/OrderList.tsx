@@ -42,7 +42,7 @@ interface OrderListProps {
   currentUser: User;
   onOpenAssembly: (order: DetailedOrder) => void;
   onDeleteOrder: (orderId: string) => void; 
-  onInvoiceOrder: (order: DetailedOrder) => void;
+  onAdvanceOrder: (order: DetailedOrder) => void;
 }
 
 type TabType = 'active' | 'unpaid' | 'delivered';
@@ -53,7 +53,7 @@ export const OrderList: React.FC<OrderListProps> = ({
     currentUser, 
     onOpenAssembly, 
     onDeleteOrder,
-    onInvoiceOrder 
+    onAdvanceOrder 
 }) => {
   const [currentTab, setCurrentTab] = useState<TabType>('active');
   const [searchTerm, setSearchTerm] = useState('');
@@ -139,7 +139,7 @@ export const OrderList: React.FC<OrderListProps> = ({
                   currentUser={currentUser} 
                   onOpenAssembly={onOpenAssembly} 
                   onDeleteOrder={onDeleteOrder} 
-                  onInvoiceOrder={onInvoiceOrder} 
+                  onAdvanceOrder={onAdvanceOrder} 
               />
           ))}
           {filteredOrders.length === 0 && (
@@ -153,7 +153,7 @@ export const OrderList: React.FC<OrderListProps> = ({
   );
 };
 
-const DetailedOrderCard: React.FC<{ order: DetailedOrder; currentUser: User; onOpenAssembly: any; onDeleteOrder: any; onInvoiceOrder: any }> = ({ order, currentUser, onOpenAssembly, onDeleteOrder, onInvoiceOrder }) => {
+const DetailedOrderCard: React.FC<{ order: DetailedOrder; currentUser: User; onOpenAssembly: any; onDeleteOrder: any; onAdvanceOrder: any }> = ({ order, currentUser, onOpenAssembly, onDeleteOrder, onAdvanceOrder }) => {
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const badgeStyle = getStatusColor(order.status);
   const zoneStyles = getZoneStyles(order.zone);
@@ -176,8 +176,8 @@ const DetailedOrderCard: React.FC<{ order: DetailedOrder; currentUser: User; onO
             onClick={() => onOpenAssembly(order)}
             className="flex-1 py-2.5 rounded-xl border border-surfaceHighlight text-text hover:bg-surfaceHighlight font-bold text-[11px] flex items-center justify-center gap-2 transition-all shadow-sm"
         >
-            {isFinished ? <History size={14} /> : (isPostBilling ? <Eye size={14} /> : <Eye size={14} />)}
-            {isFinished ? 'Historial' : (isPostBilling ? 'Ver Detalle' : 'Editar')}
+            {isFinished ? <History size={14} /> : <Eye size={14} />}
+            {isFinished ? 'Historial' : 'Editar'}
         </button>
     );
 
@@ -197,19 +197,19 @@ const DetailedOrderCard: React.FC<{ order: DetailedOrder; currentUser: User; onO
     let primaryAction = null;
     if (order.status === OrderStatus.ARMADO_CONTROLADO) {
         primaryAction = (
-            <button onClick={() => onInvoiceOrder(order)} className="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-black uppercase text-[11px] shadow-lg shadow-purple-500/20 flex items-center justify-center gap-2">
+            <button onClick={() => onAdvanceOrder(order)} className="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-black uppercase text-[11px] shadow-lg shadow-purple-500/20 flex items-center justify-center gap-2">
                 <Receipt size={14} /> Facturar
             </button>
         );
     } else if (order.status === OrderStatus.FACTURA_CONTROLADA) {
         primaryAction = (
-            <button onClick={() => onInvoiceOrder(order)} className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase text-[11px] shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2">
+            <button onClick={() => onAdvanceOrder(order)} className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase text-[11px] shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2">
                 <Truck size={14} /> Reparto
             </button>
         );
     } else if (order.status === OrderStatus.EN_TRANSITO) {
         primaryAction = (
-            <button onClick={() => onInvoiceOrder(order)} className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black uppercase text-[11px] shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2">
+            <button onClick={() => onAdvanceOrder(order)} className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black uppercase text-[11px] shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2">
                 <CheckCircle size={14} /> Entregado
             </button>
         );
@@ -317,7 +317,6 @@ const DetailedOrderCard: React.FC<{ order: DetailedOrder; currentUser: User; onO
                 <span className="text-xs text-text font-black">{order.productCount}</span>
             </div>
             
-            {/* Solo mostramos el total si el usuario es 'vale' (Administrador) */}
             {isVale && (
                 <div className="flex justify-between items-center">
                     <span className="text-[11px] text-muted font-bold">Total:</span>
