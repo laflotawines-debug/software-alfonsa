@@ -15,8 +15,16 @@ import { Expirations } from './views/Expirations';
 import { Etiquetador } from './views/Etiquetador';
 import { Presupuestador } from './views/Presupuestador';
 import { ListaChina } from './views/ListaChina';
+import { SuppliersMaster } from './views/SuppliersMaster';
+import { ClientsMaster } from './views/ClientsMaster'; 
 import { Login } from './views/Login';
 import { Catalog } from './views/Catalog';
+// INVENTORY VIEWS
+import { InventoryInbounds } from './views/InventoryInbounds';
+import { InventoryAdjustments } from './views/InventoryAdjustments';
+import { InventoryTransfers } from './views/InventoryTransfers';
+import { InventoryHistory } from './views/InventoryHistory';
+
 import { OrderAssemblyModal } from './components/OrderAssemblyModal';
 import { Loader2 } from 'lucide-react';
 import { 
@@ -87,10 +95,34 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Lógica de redirección inicial por permisos
+  useEffect(() => {
+      if (currentUser && currentUser.role !== 'vale' && currentView === View.DASHBOARD) {
+          const perms = currentUser.permissions || [];
+          if (!perms.includes('dashboard.view')) {
+              // Si no puede ver Dashboard, buscar el primer acceso permitido
+              if (perms.includes('orders.view')) setCurrentView(View.ORDERS);
+              else if (perms.includes('orders.sheet')) setCurrentView(View.ORDER_SHEET);
+              else if (perms.includes('inventory.inbounds')) setCurrentView(View.INV_INBOUNDS);
+              else setCurrentView(View.SETTINGS); // Fallback final
+          }
+      }
+  }, [currentUser, currentView]);
+
   const fetchProfile = async (userId: string) => {
     try {
-      const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
-      if (data) setCurrentUser({ id: data.id, name: data.name, role: data.role as UserRole });
+      const { data: profile } = await supabase.from('profiles').select('*').eq('id', userId).single();
+      if (profile) {
+        const { data: perms } = await supabase.from('user_permissions').select('permission_key').eq('user_id', userId);
+        const permissionKeys = perms?.map(p => p.permission_key) || [];
+        
+        setCurrentUser({ 
+            id: profile.id, 
+            name: profile.name, 
+            role: profile.role as UserRole,
+            permissions: permissionKeys 
+        });
+      }
     } catch (err) { console.error(err); } finally { setIsAuthChecking(false); }
   };
 
@@ -122,9 +154,12 @@ export default function App() {
                 status: p.status as any,
                 accounts: (p.provider_accounts || []).map((a: any) => ({
                     id: a.id, providerId: a.provider_id, condition: a.condition, holder: a.holder,
-                    identifierAlias: a.identifier_alias, identifierCBU: a.identifier_cbu, 
-                    metaAmount: Number(a.meta_amount || 0), currentAmount: Number(a.current_amount || 0), 
-                    pendingAmount: Number(a.pending_amount || 0), status: a.status
+                    identifierAlias: a.identifier_alias, 
+                    identifierCBU: a.identifier_cbu, 
+                    metaAmount: Number(a.meta_amount || 0), 
+                    currentAmount: Number(a.current_amount || 0), 
+                    pendingAmount: Number(a.pending_amount || 0), 
+                    status: a.status
                 }))
             }));
             setProviders(mappedProviders);
@@ -210,12 +245,20 @@ export default function App() {
   const handleResetProvider = async (providerId: string) => {
     setIsDataLoading(true);
     try {
-        const { error: delError } = await supabase.from('transfers').delete().eq('provider_id', providerId);
-        if (delError) throw delError;
-        await supabase.from('provider_accounts').update({ current_amount: 0, pending_amount: 0 }).eq('provider_id', providerId);
+        const { error: updateError } = await supabase
+            .from('transfers')
+            .update({ status: 'Archivado' })
+            .eq('provider_id', providerId)
+            .in('status', ['Realizado', 'Pendiente']);
+
+        if (updateError) throw updateError;
         await fetchAllData();
         alert("¡Nuevo ciclo iniciado!");
-    } catch (err: any) { alert("Error al reiniciar: " + err.message); } finally { setIsDataLoading(false); }
+    } catch (err: any) { 
+        alert("Error al reiniciar ciclo: " + err.message); 
+    } finally { 
+        setIsDataLoading(false); 
+    }
   };
 
   const handleUpdateProvider = async (provider: Provider) => {
@@ -236,8 +279,10 @@ export default function App() {
             const isNewAcc = acc.id.startsWith('acc-');
             const accPayload = { 
                 provider_id: pId, condition: acc.condition, holder: acc.holder, 
-                identifier_alias: acc.identifierAlias, identifier_cbu: acc.identifierCBU, 
-                meta_amount: acc.metaAmount, status: acc.status 
+                identifier_alias: acc.identifierAlias, 
+                identifier_cbu: acc.identifierCBU, 
+                meta_amount: acc.metaAmount, 
+                status: acc.status 
             };
             if (isNewAcc) await supabase.from('provider_accounts').insert([accPayload]);
             else await supabase.from('provider_accounts').update(accPayload).eq('id', acc.id);
@@ -362,7 +407,6 @@ export default function App() {
             controller_id: updated.controllerId,
             controller_name: updated.controllerName
         }).eq('id', updated.id);
-        // Si el paso es de FACTURA_CONTROLADA a EN_TRANSITO, debemos actualizar shippedQuantity
         if (updated.status === OrderStatus.EN_TRANSITO) {
             for (const p of updated.products) {
                 await supabase.from('order_items').update({ 
@@ -388,9 +432,25 @@ export default function App() {
         </div>
       )}
 
-      <Sidebar currentUser={currentUser} currentView={currentView} onNavigate={v => { setCurrentView(v); setMobileMenuOpen(false); }} />
+      {/* Sidebar Desktop y Móvil */}
+      <Sidebar 
+        currentUser={currentUser} 
+        currentView={currentView} 
+        isOpen={mobileMenuOpen}
+        onClose={() => setMobileMenuOpen(false)}
+        onNavigate={v => { setCurrentView(v); setMobileMenuOpen(false); }} 
+      />
+
       <main className="flex-1 flex flex-col h-full relative overflow-hidden bg-background">
-        <Header onMenuClick={() => setMobileMenuOpen(true)} title={currentView === View.DASHBOARD ? "Tablero" : currentView} subtitle="Gestión Alfonsa" isDarkMode={isDarkMode} onToggleTheme={() => setIsDarkMode(!isDarkMode)} currentUser={currentUser} onLogout={() => supabase.auth.signOut()} />
+        <Header 
+            onMenuClick={() => setMobileMenuOpen(true)} 
+            title={currentView === View.DASHBOARD ? "Tablero" : currentView === View.ORDERS ? "Gestión de Pedidos" : currentView === View.ORDER_SHEET ? "Planilla" : currentView} 
+            subtitle="Gestión Alfonsa" 
+            isDarkMode={isDarkMode} 
+            onToggleTheme={() => setIsDarkMode(!isDarkMode)} 
+            currentUser={currentUser} 
+            onLogout={() => supabase.auth.signOut()} 
+        />
         <div className="flex-1 overflow-y-auto p-4 md:p-8">
             <div className="mx-auto max-w-7xl">
                 {currentView === View.DASHBOARD && <Dashboard orders={orders} expirations={expirations} onNavigate={setCurrentView} />}
@@ -423,7 +483,14 @@ export default function App() {
                       providers={providers} onUpdateProviders={handleUpdateProvider} onDeleteProvider={handleDeleteProvider} onResetProvider={handleResetProvider} 
                     />
                 )}
+                {currentView === View.INV_INBOUNDS && <InventoryInbounds currentUser={currentUser} />}
+                {currentView === View.INV_ADJUSTMENTS && <InventoryAdjustments currentUser={currentUser} />}
+                {currentView === View.INV_TRANSFERS && <InventoryTransfers currentUser={currentUser} />}
+                {currentView === View.INV_HISTORY && <InventoryHistory currentUser={currentUser} />}
+                
                 {currentView === View.CATALOG && <Catalog currentUser={currentUser} />}
+                {currentView === View.CLIENTS_MASTER && <ClientsMaster currentUser={currentUser} />}
+                {currentView === View.SUPPLIERS_MASTER && <SuppliersMaster currentUser={currentUser} />}
                 {currentView === View.EXPIRATIONS && <Expirations />}
                 {currentView === View.ETIQUETADOR && <Etiquetador />}
                 {currentView === View.PRESUPUESTADOR && <Presupuestador />}

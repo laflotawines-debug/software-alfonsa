@@ -28,22 +28,29 @@ const MONTHS = [
 const YEARS = [2023, 2024, 2025];
 
 export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNavigate }) => {
-  const [filterMonth, setFilterMonth] = useState(new Date().getMonth());
-  const [filterYear, setFilterYear] = useState(new Date().getFullYear());
+  // Por defecto "all" para ver todo el tiempo
+  const [filterMonth, setFilterMonth] = useState<number | 'all'>('all');
+  const [filterYear, setFilterYear] = useState<number | 'all'>('all');
 
   // --- DINAMISMO DE DATOS FILTRADOS ---
   
   const filteredOrders = useMemo(() => {
     return (orders || []).filter(order => {
+      if (filterMonth === 'all' && filterYear === 'all') return true;
+      
       const parts = order.createdDate.split('/');
       if (parts.length !== 3) return false;
       const m = parseInt(parts[1]) - 1; 
       const y = parseInt(parts[2]);
-      return m === filterMonth && y === filterYear;
+      
+      const matchMonth = filterMonth === 'all' || m === filterMonth;
+      const matchYear = filterYear === 'all' || y === filterYear;
+      
+      return matchMonth && matchYear;
     });
   }, [orders, filterMonth, filterYear]);
 
-  // Cálculo de datos para el gráfico de tendencia (Pedidos por semana)
+  // Cálculo de datos para el gráfico de tendencia
   const dynamicChartData = useMemo(() => {
     const counts = [0, 0, 0, 0]; // Semanas 1, 2, 3, 4+
     
@@ -80,12 +87,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
     return filteredOrders.filter(o => o.status === OrderStatus.ENTREGADO).length;
   }, [filteredOrders]);
 
-  // 4. Vencimientos Críticos
+  // 4. Vencimientos Críticos (Estos suelen ser globales, no dependen del filtro de pedidos)
   const criticalExpirationsCount = useMemo(() => {
     return (expirations || []).filter(e => e.status === 'CRÍTICO').length;
   }, [expirations]);
 
-  // 5. Mapeo para la lista de vencimientos del Dashboard (Críticos y Próximos)
+  // 5. Vencimientos próximos
   const dashboardExpirationsList: ExpirationItem[] = useMemo(() => {
     return (expirations || [])
       .filter(e => e.status === 'CRÍTICO' || e.status === 'PRÓXIMO')
@@ -101,10 +108,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
       }));
   }, [expirations]);
 
-  // 6. Últimas Órdenes del Periodo para la tabla
+  // 6. Últimas Órdenes para la tabla
   const recentOrdersReal = useMemo(() => {
     return [...filteredOrders].slice(0, 5);
   }, [filteredOrders]);
+
+  const periodLabel = filterMonth === 'all' && filterYear === 'all' ? 'Todo el tiempo' : 
+                     filterMonth === 'all' ? `Año ${filterYear}` : 
+                     filterYear === 'all' ? `${MONTHS[filterMonth as number]}` :
+                     `${MONTHS[filterMonth as number]} ${filterYear}`;
 
   return (
     <div className="flex flex-col gap-8 pb-10">
@@ -112,29 +124,31 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
         <div>
           <h2 className="text-text text-3xl md:text-4xl font-black tracking-tight">Tablero Principal</h2>
-          <p className="text-muted text-sm mt-1">Análisis de rendimiento por periodo.</p>
+          <p className="text-muted text-sm mt-1">Análisis de rendimiento: <span className="text-primary font-bold">{periodLabel}</span></p>
         </div>
         
         {/* Filtro de Fechas */}
-        <div className="flex items-center gap-2 bg-surface p-1.5 rounded-2xl border border-surfaceHighlight shadow-sm w-full sm:w-auto">
-          <div className="flex items-center gap-2 px-3 text-muted">
+        <div className="flex items-center gap-2 bg-surface p-1.5 rounded-2xl border border-surfaceHighlight shadow-sm w-full sm:w-auto overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-2 px-3 text-muted shrink-0">
             <CalendarDays size={18} />
           </div>
           <select 
             value={filterMonth} 
-            onChange={(e) => setFilterMonth(parseInt(e.target.value))}
-            className="bg-transparent text-sm font-bold text-text outline-none cursor-pointer py-1.5 pr-2 focus:ring-0"
+            onChange={(e) => setFilterMonth(e.target.value === 'all' ? 'all' : parseInt(e.target.value))}
+            className="bg-transparent text-sm font-bold text-text outline-none cursor-pointer py-1.5 pr-2 focus:ring-0 shrink-0"
           >
+            <option value="all" className="bg-surface text-text">Mes: Todos</option>
             {MONTHS.map((name, i) => (
               <option key={name} value={i} className="bg-surface text-text">{name}</option>
             ))}
           </select>
-          <div className="h-4 w-px bg-surfaceHighlight mx-1"></div>
+          <div className="h-4 w-px bg-surfaceHighlight mx-1 shrink-0"></div>
           <select 
             value={filterYear} 
-            onChange={(e) => setFilterYear(parseInt(e.target.value))}
-            className="bg-transparent text-sm font-bold text-text outline-none cursor-pointer py-1.5 pr-4 focus:ring-0"
+            onChange={(e) => setFilterYear(e.target.value === 'all' ? 'all' : parseInt(e.target.value))}
+            className="bg-transparent text-sm font-bold text-text outline-none cursor-pointer py-1.5 pr-4 focus:ring-0 shrink-0"
           >
+            <option value="all" className="bg-surface text-text">Año: Todos</option>
             {YEARS.map(y => (
               <option key={y} value={y} className="bg-surface text-text">{y}</option>
             ))}
@@ -146,9 +160,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard 
           icon={<ShoppingBag size={24} />}
-          label={`Pedidos ${MONTHS[filterMonth]}`}
+          label="Pedidos Totales"
           value={(totalOrdersCount || 0).toLocaleString()}
-          pill="Del Mes"
+          pill={filterMonth === 'all' ? "Consolidado" : MONTHS[filterMonth as number]}
           pillColor="text-primary"
           pillBg="bg-primary/10"
         />
@@ -162,7 +176,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
         />
         <KPICard 
           icon={<TrendingUp size={24} />}
-          label={`Ingresos ${MONTHS[filterMonth]}`}
+          label="Ingresos Realizados"
           value={`$ ${(monthlyIncome || 0).toLocaleString('es-AR')}`}
           trend="Real"
           trendColor="text-green-500"
@@ -186,11 +200,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
           <div className="flex items-center justify-between mb-2">
             <div>
               <h3 className="text-text text-lg font-bold">Tendencia de Pedidos</h3>
-              <p className="text-muted text-sm">Cantidad de pedidos por semana ({MONTHS[filterMonth]} {filterYear})</p>
+              <p className="text-muted text-sm">Volumen relativo por semana en el periodo actual</p>
             </div>
             <div className="flex items-center gap-2">
               <span className="h-3 w-3 rounded-full bg-primary"></span>
-              <span className="text-sm text-text font-medium">Volumen Semanal</span>
+              <span className="text-sm text-text font-medium">Volumen</span>
             </div>
           </div>
           
@@ -268,7 +282,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
       {/* Recent Orders Table */}
       <div className="flex flex-col gap-4 bg-surface p-6 rounded-2xl border border-surfaceHighlight shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <h3 className="text-text text-lg font-bold">Pedidos de {MONTHS[filterMonth]}</h3>
+          <h3 className="text-text text-lg font-bold">Pedidos - {periodLabel}</h3>
           <div className="flex gap-2">
             <button className="p-2 rounded-full bg-background text-muted hover:text-text transition-colors border border-surfaceHighlight">
               <Filter size={18} />
@@ -297,7 +311,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
               ))}
               {recentOrdersReal.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="p-10 text-center text-muted italic">No hay pedidos registrados en {MONTHS[filterMonth]} {filterYear}.</td>
+                  <td colSpan={6} className="p-10 text-center text-muted italic">No hay pedidos registrados en el periodo seleccionado.</td>
                 </tr>
               )}
             </tbody>

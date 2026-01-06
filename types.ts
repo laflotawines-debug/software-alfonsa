@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React from "react";
 
 // --- UI / NAVIGATION TYPES ---
 export enum View {
@@ -11,6 +11,8 @@ export enum View {
     PAYMENTS_PROVIDERS = 'PAYMENTS_PROVIDERS',
     PAYMENTS_HISTORY = 'PAYMENTS_HISTORY',
     CATALOG = 'CATALOG',
+    CLIENTS_MASTER = 'CLIENTS_MASTER', 
+    SUPPLIERS_MASTER = 'SUPPLIERS_MASTER',
     PROVIDERS = 'PROVIDERS',
     EXPIRATIONS = 'EXPIRATIONS',
     HISTORY = 'HISTORY',
@@ -19,7 +21,12 @@ export enum View {
     ETIQUETADOR = 'ETIQUETADOR',
     SETTINGS = 'SETTINGS',
     TOOLS = 'TOOLS',
-    SQL_EDITOR = 'SQL_EDITOR'
+    SQL_EDITOR = 'SQL_EDITOR',
+    // --- INVENTORY VIEWS ---
+    INV_INBOUNDS = 'INV_INBOUNDS',
+    INV_ADJUSTMENTS = 'INV_ADJUSTMENTS',
+    INV_TRANSFERS = 'INV_TRANSFERS',
+    INV_HISTORY = 'INV_HISTORY'
 }
 
 export interface NavItem {
@@ -27,9 +34,81 @@ export interface NavItem {
     label: string;
     icon: React.ReactNode;
     subItems?: NavItem[];
+    permission?: string; // Nueva propiedad para control dinámico
 }
 
-// --- DOMAIN MODEL: MASTER CATALOG ---
+// --- PERMISSIONS DOMAIN ---
+export interface AppPermission {
+    key: string;
+    module: string;
+    label: string;
+}
+
+// --- CLIENT DOMAIN ---
+export interface ClientMaster {
+    codigo: string;
+    nombre: string;
+    domicilio?: string;
+    localidad?: string;
+    provincia?: string;
+    celular?: string;
+    email?: string;
+    created_at?: string;
+}
+
+// --- INVENTORY DOMAIN ---
+export type WarehouseCode = 'LLERENA' | 'BETBEDER';
+export type InboundStatus = 'borrador' | 'enviado' | 'aprobado' | 'anulado';
+export type MovementType = 'ingreso' | 'ajuste' | 'transferencia' | 'reverso';
+
+export interface WarehouseMapping {
+    id: string;
+    name: WarehouseCode;
+}
+
+export interface StockInbound {
+    id: string;
+    display_number: number;
+    supplier_code: string;
+    warehouse_id: string;
+    status: InboundStatus;
+    created_at: string;
+    created_by: string;
+    sent_at?: string;
+    approved_at?: string;
+    approved_by?: string;
+    observations?: string;
+    supplier_name?: string;
+    assembler_name?: string;
+    warehouse_name?: WarehouseCode;
+}
+
+export interface StockInboundItem {
+    id: string;
+    inbound_id: string;
+    codart: string;
+    desart?: string;
+    quantity: number;
+}
+
+export interface StockMovement {
+    id: string;
+    created_at: string;
+    codart: string;
+    desart?: string;
+    warehouse_id: string;
+    quantity: number;
+    type: MovementType;
+    status: 'activo' | 'anulado';
+    reference_id: string;
+    transfer_group_code?: string;
+    created_by: string;
+    user_name?: string;
+    warehouse_name?: string;
+    inbound_display_number?: number;
+}
+
+// --- REST OF DOMAIN MODELS ---
 export interface MasterProduct {
     codart: string;
     codprove?: string;
@@ -45,14 +124,28 @@ export interface MasterProduct {
     pventa_2: number;
     pventa_3: number;
     pventa_4: number;
+    unicom?: string;
+    unidad?: string;
+    coeficient?: number;
     stock_total?: number;
     stock_betbeder?: number;
     stock_llerena?: number;
-    unidad?: string;
+    stock_iseas?: number;
+    vencido_iseas?: number;
+    vencido_llerena?: number;
+    defectuoso_llerena?: number;
     updated_at?: string;
     is_nacional?: boolean; 
     last_sale_date?: string; 
     last_invoice_ref?: string; 
+    proveedor_nombre_oficial?: string; 
+}
+
+export interface SupplierMaster {
+    codigo: string;
+    razon_social: string;
+    activo: boolean;
+    created_at?: string;
 }
 
 export type ExpirationStatus = 'CRÍTICO' | 'PRÓXIMO' | 'MODERADO' | 'NORMAL';
@@ -102,6 +195,7 @@ export interface User {
     id: string;
     name: string;
     role: UserRole;
+    permissions: string[]; // Lista de keys concedidas
 }
 export enum OrderStatus {
     EN_ARMADO = 'en_armado',

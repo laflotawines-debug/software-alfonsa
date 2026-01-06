@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
     Plus, 
     Edit2, 
@@ -9,15 +9,18 @@ import {
     Eye,
     EyeOff,
     XCircle,
-    RefreshCcw,
+    RefreshCw,
     AlertTriangle,
     Save,
     CheckCircle2,
     History,
     Eraser,
-    Sparkles
+    Sparkles,
+    Building2,
+    Loader2
 } from 'lucide-react';
-import { Provider, ProviderAccount, ProviderStatus } from '../types';
+import { Provider, ProviderAccount, ProviderStatus, SupplierMaster } from '../types';
+import { supabase } from '../supabase';
 
 const formatCurrencyInput = (val: string) => {
     const clean = val.replace(/\D/g, '');
@@ -71,10 +74,10 @@ export const PaymentsProviders: React.FC<PaymentsProvidersProps> = ({ providers,
             <div className="flex justify-between items-center">
                 <div>
                     <h2 className="text-3xl font-black text-text tracking-tight uppercase italic">Gestión de Proveedores</h2>
-                    <p className="text-muted text-sm font-medium mt-1">Crea y edita los perfiles de cobro y sus cuentas bancarias.</p>
+                    <p className="text-muted text-sm font-medium mt-1">Vincule proveedores del maestro y gestione sus metas y cuentas de cobro.</p>
                 </div>
                 <button type="button" onClick={() => handleOpenModal()} className="flex items-center gap-2 bg-primary hover:bg-primaryHover text-white px-6 py-3 rounded-2xl text-sm font-black uppercase transition-all shadow-xl shadow-primary/20 active:scale-95 cursor-pointer">
-                    <Plus size={18} /> Nuevo Proveedor
+                    <Plus size={18} /> Vincular Nuevo
                 </button>
             </div>
 
@@ -82,7 +85,7 @@ export const PaymentsProviders: React.FC<PaymentsProvidersProps> = ({ providers,
                 <table className="w-full text-left">
                     <thead>
                         <tr className="bg-background/50 border-b border-surfaceHighlight text-[10px] text-muted uppercase font-black tracking-widest">
-                            <th className="p-4 pl-6">Nombre del Proveedor</th>
+                            <th className="p-4 pl-6">Proveedor Vinculado</th>
                             <th className="p-4 text-center">Prioridad</th>
                             <th className="p-4 text-center">Cuentas Activas</th>
                             <th className="p-4 text-center">Estado</th>
@@ -119,7 +122,7 @@ export const PaymentsProviders: React.FC<PaymentsProvidersProps> = ({ providers,
                             </tr>
                         ))}
                         {providers.length === 0 && (
-                            <tr><td colSpan={5} className="p-20 text-center text-muted italic font-bold">No hay proveedores registrados.</td></tr>
+                            <tr><td colSpan={5} className="p-20 text-center text-muted italic font-bold">No hay proveedores configurados para pagos.</td></tr>
                         )}
                     </tbody>
                 </table>
@@ -130,6 +133,7 @@ export const PaymentsProviders: React.FC<PaymentsProvidersProps> = ({ providers,
                     onClose={() => setIsModalOpen(false)} 
                     onSave={handleSave} 
                     initialData={editingProvider} 
+                    existingProviderNames={providers.map(p => p.name)}
                     onReset={editingProvider ? () => handleReset(editingProvider.id) : undefined}
                 />
             )}
@@ -137,12 +141,43 @@ export const PaymentsProviders: React.FC<PaymentsProvidersProps> = ({ providers,
     );
 };
 
-const NewProviderModal: React.FC<{ onClose: () => void; onSave: (data: Provider) => void; initialData: Provider | null; onReset?: () => void }> = ({ onClose, onSave, initialData, onReset }) => {
+const NewProviderModal: React.FC<{ 
+    onClose: () => void; 
+    onSave: (data: Provider) => void; 
+    initialData: Provider | null; 
+    existingProviderNames: string[];
+    onReset?: () => void 
+}> = ({ onClose, onSave, initialData, existingProviderNames, onReset }) => {
+    const [masterSuppliers, setMasterSuppliers] = useState<SupplierMaster[]>([]);
+    const [isMasterLoading, setIsMasterLoading] = useState(false);
+    
     const [name, setName] = useState(initialData?.name || '');
     const [goalAmountDisplay, setGoalAmountDisplay] = useState(initialData?.goalAmount ? formatCurrencyInput(initialData.goalAmount.toString()) : '0');
     const [priority, setPriority] = useState(initialData?.priority?.toString() || '3');
     const [status, setStatus] = useState<ProviderStatus>(initialData?.status || 'Activado');
     const [accounts, setAccounts] = useState<ProviderAccount[]>(initialData?.accounts || []);
+
+    // Cargar proveedores del maestro al abrir el modal (solo si es nuevo)
+    useEffect(() => {
+        if (!initialData) {
+            const fetchMaster = async () => {
+                setIsMasterLoading(true);
+                try {
+                    const { data, error } = await supabase
+                        .from('providers_master')
+                        .select('*')
+                        .eq('activo', true)
+                        .order('razon_social');
+                    if (data) setMasterSuppliers(data);
+                } catch (e) {
+                    console.error("Error cargando maestro:", e);
+                } finally {
+                    setIsMasterLoading(false);
+                }
+            };
+            fetchMaster();
+        }
+    }, [initialData]);
 
     const handleAddAccount = () => {
         const newAcc: ProviderAccount = { id: `acc-${Date.now()}`, providerId: initialData?.id || '', condition: '', holder: '', identifierAlias: '', identifierCBU: '', metaAmount: 0, currentAmount: 0, pendingAmount: 0, status: 'Activa' };
@@ -150,18 +185,23 @@ const NewProviderModal: React.FC<{ onClose: () => void; onSave: (data: Provider)
     };
 
     const submit = () => {
-        if (!name) return alert("Ingrese un nombre");
+        if (!name) return alert("Seleccione un proveedor del maestro.");
         const finalId = (initialData && initialData.id) ? initialData.id : `p-${Date.now()}`;
         onSave({ id: finalId, name, goalAmount: parseFloat(parseCurrencyInput(goalAmountDisplay)) || 0, priority: parseInt(priority) || 1, status, accounts });
     };
+
+    // Filtrar proveedores del maestro que ya están configurados como perfiles de pago
+    const availableSuppliers = masterSuppliers.filter(s => !existingProviderNames.includes(s.razon_social));
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
             <div className="bg-surface w-full max-w-2xl rounded-3xl border border-surfaceHighlight shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
                 <div className="p-6 md:p-8 border-b border-surfaceHighlight bg-surface flex justify-between items-center shrink-0">
                     <div>
-                        <h3 className="text-2xl font-black text-text uppercase tracking-tight italic">Configurar Proveedor</h3>
-                        <p className="text-muted text-xs font-bold mt-1">Gestiona identidades de pago y metas financieras.</p>
+                        <h3 className="text-2xl font-black text-text uppercase tracking-tight italic">
+                            {initialData ? 'Configurar Perfil' : 'Vincular del Maestro'}
+                        </h3>
+                        <p className="text-muted text-xs font-bold mt-1">Configura identidades de pago y metas financieras.</p>
                     </div>
                     <button type="button" onClick={onClose} className="p-2 hover:bg-surfaceHighlight rounded-full text-muted transition-all cursor-pointer"><X size={28} /></button>
                 </div>
@@ -183,15 +223,43 @@ const NewProviderModal: React.FC<{ onClose: () => void; onSave: (data: Provider)
                                 onClick={onReset} 
                                 className="w-full sm:w-auto flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-4 rounded-xl text-xs font-black uppercase transition-all shadow-lg active:scale-95 cursor-pointer whitespace-nowrap"
                             >
-                                <RefreshCcw size={18} /> Iniciar Nuevo Ciclo
+                                <RefreshCw size={18} /> Iniciar Nuevo Ciclo
                             </button>
                         </div>
                     )}
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="space-y-2 md:col-span-2">
-                            <label className="text-[10px] font-black uppercase text-muted tracking-widest ml-1">Nombre Comercial del Proveedor</label>
-                            <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Ej: Coca Cola S.A." className="w-full bg-background border border-surfaceHighlight rounded-2xl py-4 px-5 text-sm font-black text-text outline-none focus:border-primary transition-all shadow-inner uppercase" />
+                            <label className="text-[10px] font-black uppercase text-muted tracking-widest ml-1 flex items-center gap-1">
+                                <Building2 size={12} className="text-primary"/> Proveedor (Identidad Maestra)
+                            </label>
+                            {initialData ? (
+                                <div className="w-full bg-background/50 border border-surfaceHighlight rounded-2xl py-4 px-5 text-sm font-black text-text shadow-inner uppercase opacity-80">
+                                    {name}
+                                </div>
+                            ) : (
+                                <div className="relative">
+                                    <select 
+                                        value={name} 
+                                        onChange={e => setName(e.target.value)} 
+                                        disabled={isMasterLoading}
+                                        className="w-full bg-background border border-surfaceHighlight rounded-2xl py-4 px-5 text-sm font-black text-text outline-none focus:border-primary transition-all shadow-inner appearance-none uppercase cursor-pointer"
+                                    >
+                                        <option value="">{isMasterLoading ? "Cargando..." : "-- Seleccionar del Maestro --"}</option>
+                                        {availableSuppliers.map(s => (
+                                            <option key={s.codigo} value={s.razon_social}>
+                                                {s.codigo} — {s.razon_social}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-muted">
+                                        {isMasterLoading ? <Loader2 size={16} className="animate-spin"/> : <RefreshCw size={16}/>}
+                                    </div>
+                                </div>
+                            )}
+                            {!initialData && availableSuppliers.length === 0 && !isMasterLoading && (
+                                <p className="text-[9px] text-orange-500 font-bold uppercase ml-1">⚠️ Todos los proveedores activos ya tienen perfiles de pago configurados.</p>
+                            )}
                         </div>
 
                         <div className="space-y-2">
@@ -200,6 +268,11 @@ const NewProviderModal: React.FC<{ onClose: () => void; onSave: (data: Provider)
                         </div>
 
                         <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase text-muted tracking-widest ml-1">Prioridad / Orden</label>
+                            <input type="number" value={priority} onChange={e => setPriority(e.target.value)} className="w-full bg-background border border-surfaceHighlight rounded-2xl py-4 px-5 font-black text-text outline-none focus:border-primary shadow-inner" placeholder="3" />
+                        </div>
+
+                        <div className="space-y-2 md:col-span-2">
                             <label className="text-[10px] font-black uppercase text-muted tracking-widest ml-1">Estado Operativo</label>
                             <select value={status} onChange={e => setStatus(e.target.value as ProviderStatus)} className="w-full bg-background border border-surfaceHighlight rounded-2xl py-4 px-5 font-bold text-text outline-none focus:border-primary appearance-none cursor-pointer">
                                 <option value="Activado">✅ Activado (Visible en Tablero)</option>
