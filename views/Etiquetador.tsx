@@ -111,9 +111,13 @@ export const Etiquetador: React.FC = () => {
     }, [products, printedState, batchDiscount, forceNormalPrice]);
 
     const filteredProducts = useMemo(() => {
+        // Búsqueda tipo Google: Separa por palabras y verifica que TODAS existan en el string
+        const keywords = searchTerm.toLowerCase().split(' ').filter(k => k.trim().length > 0);
+
         return processedProducts.filter(p => {
-            const matchesSearch = p.desart.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                                 p.codart.toLowerCase().includes(searchTerm.toLowerCase());
+            const prodText = `${p.desart} ${p.codart}`.toLowerCase();
+            const matchesSearch = keywords.every(word => prodText.includes(word));
+            
             const matchesSubfamily = subfamilyFilter === 'TODAS' || p.nsubf === subfamilyFilter;
             
             let matchesListType = true;
@@ -121,7 +125,7 @@ export const Etiquetador: React.FC = () => {
             if (listTypeFilter === 'CAMBIOS') matchesListType = p.isChange || p.isNew;
 
             return matchesSearch && matchesSubfamily && matchesListType;
-        }).slice(0, 50); // Aumentado para mejor selección masiva
+        }).slice(0, 80); // Límite aumentado para mejor selección masiva
     }, [processedProducts, searchTerm, subfamilyFilter, listTypeFilter]);
 
     // Lógica para Seleccionar Todo el filtro actual
@@ -242,13 +246,13 @@ export const Etiquetador: React.FC = () => {
         <div className="flex flex-col lg:flex-row h-[calc(100vh-140px)] gap-6 animate-in fade-in overflow-hidden">
             
             <div className="flex-1 flex flex-col gap-6 min-w-0 overflow-hidden">
-                <div className="bg-surface rounded-3xl border border-surfaceHighlight shadow-sm flex flex-col max-h-[500px] shrink-0">
+                <div className="bg-surface rounded-3xl border border-surfaceHighlight shadow-sm flex flex-col max-h-[550px] shrink-0">
                     <div className="p-5 border-b border-surfaceHighlight flex flex-col gap-4 bg-background/20">
                         <div className="flex flex-col md:flex-row gap-3">
                             <div className="relative flex-1">
                                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
                                 <input 
-                                    type="text" placeholder="Buscar por nombre o código..." value={searchTerm}
+                                    type="text" placeholder="Búsqueda inteligente: Ej: 'fer bran'..." value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
                                     className="w-full bg-background border border-surfaceHighlight rounded-2xl py-3.5 pl-12 pr-4 text-sm font-bold text-text outline-none focus:border-primary uppercase shadow-inner"
                                 />
@@ -318,11 +322,12 @@ export const Etiquetador: React.FC = () => {
                                         <td className="p-3">
                                             <div className="flex flex-col">
                                                 <div className="flex items-center gap-2">
-                                                    <span className="text-[11px] font-black text-text uppercase truncate max-w-[180px]">{p.desart}</span>
+                                                    {/* Nombre completo sin truncar en escritorio */}
+                                                    <span className="text-[11px] font-black text-text uppercase leading-tight block">{p.desart}</span>
                                                     {p.hasPrintedOffer && (
                                                         <button 
                                                             onClick={(e) => toggleRevertOffer(e, p.codart)}
-                                                            className={`h-5 w-5 rounded flex items-center justify-center border transition-all
+                                                            className={`h-5 w-5 rounded flex items-center justify-center border transition-all shrink-0
                                                                 ${p.isEndingOffer 
                                                                     ? 'bg-red-500 text-white border-red-600 shadow-sm' 
                                                                     : 'bg-orange-500/10 text-orange-600 border-orange-300 hover:bg-red-500 hover:text-white'}
@@ -341,15 +346,15 @@ export const Etiquetador: React.FC = () => {
                                         </td>
                                         <td className="p-3 text-right">
                                             <div className="flex flex-col items-end">
-                                                <span className="font-bold text-xs text-muted">{p.lastPrintedFinal !== null ? `$ ${Math.round(p.lastPrintedFinal).toLocaleString('es-AR')}` : '---'}</span>
-                                                {p.hasPrintedOffer && !p.isEndingOffer && <span className="text-[7px] text-orange-500 font-black uppercase">Oferta Activa</span>}
+                                                <span className="font-bold text-xs text-muted whitespace-nowrap">{p.lastPrintedFinal !== null ? `$ ${Math.round(p.lastPrintedFinal).toLocaleString('es-AR')}` : '---'}</span>
+                                                {p.hasPrintedOffer && !p.isEndingOffer && <span className="text-[7px] text-orange-500 font-black uppercase whitespace-nowrap">Oferta Activa</span>}
                                             </div>
                                         </td>
                                         <td className="p-3 text-right font-black text-xs text-text">
                                             <div className="flex flex-col items-end">
-                                                <span className={p.isEndingOffer ? 'text-primary' : ''}>$ {p.pventa_1.toLocaleString('es-AR')}</span>
+                                                <span className={`whitespace-nowrap ${p.isEndingOffer ? 'text-primary' : ''}`}>$ {p.pventa_1.toLocaleString('es-AR')}</span>
                                                 {p.currentItemDiscount > 0 && <span className="text-[9px] text-primary font-bold">-{p.currentItemDiscount}%</span>}
-                                                {p.isEndingOffer && <span className="text-[8px] text-red-500 font-black uppercase flex items-center gap-1 mt-0.5"><RotateCcw size={8}/> Revertir a Normal</span>}
+                                                {p.isEndingOffer && <span className="text-[8px] text-red-500 font-black uppercase flex items-center gap-1 mt-0.5 whitespace-nowrap"><RotateCcw size={8}/> Revertir a Normal</span>}
                                             </div>
                                         </td>
                                         <td className="p-3 text-center">
@@ -417,7 +422,7 @@ export const Etiquetador: React.FC = () => {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                     <button onClick={() => generatePDF(false)} disabled={labelQueue.length === 0} className="py-4 bg-surface border border-surfaceHighlight text-text hover:bg-surfaceHighlight rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-30"><FileText size={16} /> Vista Previa</button>
-                    <button onClick={() => generatePDF(true)} disabled={labelQueue.length === 0} className="py-4 bg-[#e47c00] hover:bg-[#cc6f00] text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-primary/30 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-30"><Printer size={16} /> Imprimir Lote</button>
+                    <button onClick={() => generatePDF(true)} disabled={labelQueue.length === 0} className="py-4 bg-[#e47c00] hover:bg-[#cc6f00] text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-primary/20 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-30"><Printer size={16} /> Imprimir Lote</button>
                 </div>
             </div>
         </div>

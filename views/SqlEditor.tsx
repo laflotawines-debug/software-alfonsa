@@ -4,48 +4,58 @@ import { Database, Play, Loader2, AlertCircle, Terminal, ClipboardCheck, Sparkle
 import { User } from '../types';
 
 export const SqlEditor: React.FC<{ currentUser: User }> = ({ currentUser }) => {
-    const [query, setQuery] = useState(`-- ==========================================
--- SCRIPT DE ACTUALIZACIÓN: ETIQUETADOR V2
--- AGREGA SOPORTE PARA DESCUENTOS PERSISTENTES
--- ==========================================
+    const [query, setQuery] = useState(`-- ========================================================
+-- SCRIPT DE REPARACIÓN Y ACTUALIZACIÓN: PEDIDOS A PROVEEDORES
+-- ========================================================
 
-ALTER TABLE public.printed_labels_state 
-ADD COLUMN IF NOT EXISTS last_discount numeric DEFAULT 0;
+-- 1. Asegurar que las tablas existan
+CREATE TABLE IF NOT EXISTS public.supplier_orders (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    supplier_code text NOT NULL,
+    supplier_name text,
+    estimated_arrival date NOT NULL,
+    status text DEFAULT 'pendiente' CHECK (status IN ('pendiente', 'confirmado')),
+    pdf_url text,
+    created_at timestamptz DEFAULT now(),
+    created_by uuid REFERENCES auth.users(id)
+);
 
--- script previo de reparación de stock...
-DROP TRIGGER IF EXISTS tr_after_insert_movement ON public.stock_movements;
-DROP TRIGGER IF EXISTS tr_sync_stock_inbound ON public.stock_movements;
+CREATE TABLE IF NOT EXISTS public.supplier_order_items (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    order_id uuid REFERENCES public.supplier_orders(id) ON DELETE CASCADE,
+    codart text NOT NULL,
+    quantity numeric NOT NULL DEFAULT 1
+);
 
-CREATE OR REPLACE FUNCTION public.fn_sync_stock_from_movement()
-RETURNS TRIGGER AS $$
-DECLARE
-    v_wh_name text;
-BEGIN
-    SELECT name INTO v_wh_name FROM public.warehouses WHERE id = NEW.warehouse_id;
-    IF v_wh_name = 'LLERENA' THEN
-        UPDATE public.master_products 
-        SET stock_llerena = COALESCE(stock_llerena, 0) + NEW.quantity,
-            stock_total = COALESCE(stock_total, 0) + NEW.quantity,
-            updated_at = now()
-        WHERE codart = NEW.codart;
-    ELSIF v_wh_name = 'BETBEDER' OR v_wh_name = 'ISEAS' THEN
-        UPDATE public.master_products 
-        SET stock_betbeder = COALESCE(stock_betbeder, 0) + NEW.quantity,
-            stock_total = COALESCE(stock_total, 0) + NEW.quantity,
-            updated_at = now()
-        WHERE codart = NEW.codart;
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+-- 2. CRÍTICO: Definir relación con master_products para que el JOIN funcione
+-- Primero eliminamos si ya existe para evitar errores
+ALTER TABLE public.supplier_order_items DROP CONSTRAINT IF EXISTS fk_items_master_products;
 
-CREATE TRIGGER tr_after_insert_movement 
-AFTER INSERT ON public.stock_movements 
-FOR EACH ROW EXECUTE FUNCTION public.fn_sync_stock_from_movement();`);
+-- Creamos la relación (vía codart)
+ALTER TABLE public.supplier_order_items 
+ADD CONSTRAINT fk_items_master_products 
+FOREIGN KEY (codart) REFERENCES public.master_products(codart);
+
+-- 3. Habilitar RLS para seguridad
+ALTER TABLE public.supplier_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.supplier_order_items ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Supplier Orders CRUD" ON public.supplier_orders;
+CREATE POLICY "Supplier Orders CRUD" ON public.supplier_orders
+    FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Supplier Order Items CRUD" ON public.supplier_order_items;
+CREATE POLICY "Supplier Order Items CRUD" ON public.supplier_order_items
+    FOR ALL USING (true) WITH CHECK (true);
+
+-- 4. Insertar permiso
+INSERT INTO public.app_permissions (key, module, label)
+VALUES ('inventory.supplier_orders', 'Inventario', 'Pedidos Proveedores')
+ON CONFLICT (key) DO NOTHING;`);
 
     const copyToClipboard = () => {
         navigator.clipboard.writeText(query);
-        alert("Script copiado. Ejecútalo en Supabase para corregir errores del etiquetador y stock.");
+        alert("Script copiado. Ejecútalo en Supabase para reparar la relación de tablas.");
     };
 
     return (
@@ -62,9 +72,6 @@ FOR EACH ROW EXECUTE FUNCTION public.fn_sync_stock_from_movement();`);
                 <div className="flex items-center justify-between mb-4">
                     <span className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-2">
                         <Terminal size={14} className="text-primary" /> Scripts del Sistema
-                    </span>
-                    <span className="text-[10px] font-black text-orange-500 uppercase flex items-center gap-1">
-                        <Sparkles size={12}/> Incluye corrección columna 'last_discount'
                     </span>
                 </div>
                 <textarea 

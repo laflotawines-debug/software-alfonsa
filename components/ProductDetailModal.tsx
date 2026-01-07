@@ -13,7 +13,8 @@ import {
     Edit3,
     Hash,
     Type,
-    Building2
+    Building2,
+    Package
 } from 'lucide-react';
 import { MasterProduct, User, SupplierMaster } from '../types';
 import { supabase } from '../supabase';
@@ -50,6 +51,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
         nomprov: product?.nomprov || '', // Valor de texto del proveedor (Excel)
         familia: product?.familia || '',
         nsubf: product?.nsubf || '',
+        units_per_box: product?.units_per_box ?? 6, // Valor por defecto 6
         pventa_1: product?.pventa_1 || 0,
         pventa_2: product?.pventa_2 || 0,
         pventa_3: product?.pventa_3 || 0,
@@ -74,6 +76,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 nomprov: formData.nomprov?.toUpperCase() || null, // Guardamos el nombre de texto
                 familia: formData.familia?.toUpperCase() || null,
                 nsubf: formData.nsubf?.toUpperCase() || null,
+                units_per_box: formData.units_per_box,
                 pventa_1: formData.pventa_1,
                 pventa_2: formData.pventa_2,
                 pventa_3: formData.pventa_3,
@@ -273,6 +276,19 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                                         value={formData.costo}
                                         onChange={(e) => setFormData({...formData, costo: parseFloat(e.target.value) || 0})}
                                         className="w-full bg-background border border-surfaceHighlight rounded-xl py-3.5 px-5 text-sm font-black text-orange-500 outline-none focus:border-primary shadow-inner disabled:opacity-50"
+                                    />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1 flex items-center gap-1">
+                                        <Package size={10} /> Unidades por Caja
+                                    </label>
+                                    <input 
+                                        type="number" 
+                                        value={formData.units_per_box}
+                                        onChange={(e) => setFormData({...formData, units_per_box: parseInt(e.target.value) || 0})}
+                                        className="w-full bg-background border border-surfaceHighlight rounded-xl py-3.5 px-5 text-sm font-black text-primary outline-none focus:border-primary shadow-inner"
+                                        placeholder="Default: 6"
                                     />
                                 </div>
                             </div>

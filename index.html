@@ -1,6 +1,6 @@
 
 <!DOCTYPE html>
-<html lang="es" class="dark">
+<html lang="es">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
@@ -23,6 +23,16 @@
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
+      // Script para evitar el flash de tema (Dark/Light)
+      (function() {
+        const savedTheme = localStorage.getItem('theme');
+        if (savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+      })();
+
       tailwind.config = {
         darkMode: 'class',
         theme: {

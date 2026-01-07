@@ -19,11 +19,13 @@ import { SuppliersMaster } from './views/SuppliersMaster';
 import { ClientsMaster } from './views/ClientsMaster'; 
 import { Login } from './views/Login';
 import { Catalog } from './views/Catalog';
+import { StockControl } from './views/StockControl';
 // INVENTORY VIEWS
 import { InventoryInbounds } from './views/InventoryInbounds';
 import { InventoryAdjustments } from './views/InventoryAdjustments';
 import { InventoryTransfers } from './views/InventoryTransfers';
 import { InventoryHistory } from './views/InventoryHistory';
+import { SupplierOrders } from './views/SupplierOrders';
 
 import { OrderAssemblyModal } from './components/OrderAssemblyModal';
 import { Loader2 } from 'lucide-react';
@@ -59,10 +61,16 @@ export default function App() {
   const [isAuthChecking, setIsAuthChecking] = useState(true);
   const [currentView, setCurrentView] = useState<View>(View.DASHBOARD);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  
+  // Inicialización inteligente del tema desde localStorage o preferencia del sistema
   const [isDarkMode, setIsDarkMode] = useState(() => {
     const saved = localStorage.getItem('theme');
-    return saved ? saved === 'dark' : true;
+    if (saved) return saved === 'dark';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
   });
+
+  // PWA Installation State
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
   const [orders, setOrders] = useState<DetailedOrder[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
@@ -72,6 +80,7 @@ export default function App() {
   const [selectedOrderForAssembly, setSelectedOrderForAssembly] = useState<DetailedOrder | null>(null);
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
 
+  // Sincronizar el DOM y localStorage cada vez que cambie isDarkMode
   useEffect(() => {
     const root = window.document.documentElement;
     if (isDarkMode) {
@@ -84,6 +93,19 @@ export default function App() {
   }, [isDarkMode]);
 
   useEffect(() => {
+    // Escuchar el evento de instalación de PWA
+    window.addEventListener('beforeinstallprompt', (e) => {
+      // Prevenir que el navegador muestre su banner por defecto
+      e.preventDefault();
+      // Guardar el evento para dispararlo luego
+      setDeferredPrompt(e);
+    });
+
+    window.addEventListener('appinstalled', () => {
+      setDeferredPrompt(null);
+      console.log('Alfonsa PWA instalada exitosamente');
+    });
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) fetchProfile(session.user.id);
       else setIsAuthChecking(false);
@@ -95,16 +117,29 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  const handleInstallApp = async () => {
+    if (!deferredPrompt) return;
+    
+    // Mostrar el prompt nativo
+    deferredPrompt.prompt();
+    
+    // Esperar la respuesta del usuario
+    const { outcome } = await deferredPrompt.userChoice;
+    console.log(`Usuario respondió a la instalación: ${outcome}`);
+    
+    // Limpiar el prompt ya usado
+    setDeferredPrompt(null);
+  };
+
   // Lógica de redirección inicial por permisos
   useEffect(() => {
       if (currentUser && currentUser.role !== 'vale' && currentView === View.DASHBOARD) {
           const perms = currentUser.permissions || [];
           if (!perms.includes('dashboard.view')) {
-              // Si no puede ver Dashboard, buscar el primer acceso permitido
               if (perms.includes('orders.view')) setCurrentView(View.ORDERS);
               else if (perms.includes('orders.sheet')) setCurrentView(View.ORDER_SHEET);
               else if (perms.includes('inventory.inbounds')) setCurrentView(View.INV_INBOUNDS);
-              else setCurrentView(View.SETTINGS); // Fallback final
+              else setCurrentView(View.SETTINGS);
           }
       }
   }, [currentUser, currentView]);
@@ -120,7 +155,8 @@ export default function App() {
             id: profile.id, 
             name: profile.name, 
             role: profile.role as UserRole,
-            permissions: permissionKeys 
+            permissions: permissionKeys,
+            avatar_url: profile.avatar_url
         });
       }
     } catch (err) { console.error(err); } finally { setIsAuthChecking(false); }
@@ -140,7 +176,7 @@ export default function App() {
                 productCount: o.order_items?.length || 0,
                 products: (o.order_items || []).map((item: any) => ({
                     code: item.code, name: item.name, originalQuantity: item.original_quantity, 
-                    quantity: item.quantity, shippedQuantity: item.shipped_quantity, 
+                    quantity: item.quantity, shipped_quantity: item.shipped_quantity, 
                     unitPrice: Number(item.unit_price || 0), subtotal: Number(item.subtotal || 0), isChecked: item.is_checked
                 }))
             }));
@@ -154,11 +190,11 @@ export default function App() {
                 status: p.status as any,
                 accounts: (p.provider_accounts || []).map((a: any) => ({
                     id: a.id, providerId: a.provider_id, condition: a.condition, holder: a.holder,
-                    identifierAlias: a.identifier_alias, 
-                    identifierCBU: a.identifier_cbu, 
-                    metaAmount: Number(a.meta_amount || 0), 
-                    currentAmount: Number(a.current_amount || 0), 
-                    pendingAmount: Number(a.pending_amount || 0), 
+                    identifier_alias: a.identifier_alias, 
+                    identifier_cbu: a.identifier_cbu, 
+                    meta_amount: a.meta_amount, 
+                    current_amount: Number(a.current_amount || 0), 
+                    pending_amount: Number(a.pending_amount || 0), 
                     status: a.status
                 }))
             }));
@@ -181,9 +217,9 @@ export default function App() {
                 id: t.id, displayId: t.display_id, name: t.name, status: t.status as any,
                 driverName: t.driver_name, date: t.date_text, route: t.route,
                 clients: (t.trip_clients || []).map((c: any) => ({
-                    id: c.id, name: c.name, address: c.address, previousBalance: Number(c.previous_balance || 0),
-                    currentInvoiceAmount: Number(c.current_invoice_amount || 0), paymentCash: Number(c.payment_cash || 0),
-                    paymentTransfer: Number(c.payment_transfer || 0), isTransferExpected: !!c.is_transfer_expected,
+                    id: c.id, name: c.name, address: c.address, previous_balance: Number(c.previous_balance || 0),
+                    currentInvoiceAmount: Number(c.current_invoice_amount || 0), payment_cash: Number(c.payment_cash || 0),
+                    payment_transfer: Number(c.payment_transfer || 0), is_transfer_expected: !!c.is_transfer_expected,
                     status: c.status as any
                 })),
                 expenses: (t.trip_expenses || []).map((e: any) => ({
@@ -272,7 +308,7 @@ export default function App() {
             if (error) throw error;
             pId = data.id;
         } else {
-            const { error } = await supabase.from('providers').update(payload).eq('id', provider.id);
+            const { error = null } = await supabase.from('providers').update(payload).eq('id', provider.id);
             if (error) throw error;
         }
         for (const acc of provider.accounts) {
@@ -317,7 +353,7 @@ export default function App() {
         const tripPayload = { display_id: trip.displayId, name: trip.name, status: trip.status, driver_name: trip.driverName, date_text: trip.date, route: trip.route };
         let tId = trip.id;
         if (isNew) {
-            const { data, error } = await supabase.from('trips').insert([tripPayload]).select().single();
+            const { data, error = null } = await supabase.from('trips').insert([tripPayload]).select().single();
             if (error) throw error;
             tId = data.id;
         } else {
@@ -378,21 +414,45 @@ export default function App() {
     let finalOrder = updatedOrder;
     if (shouldAdvance) finalOrder = advanceOrderStatus(updatedOrder, currentUser);
     try {
-        await supabase.from('orders').update({
+        // 1. Actualizar metadatos del pedido
+        const { error: orderUpdateErr } = await supabase.from('orders').update({
             total: finalOrder.total, observations: finalOrder.observations, status: finalOrder.status, 
             payment_method: finalOrder.paymentMethod, assembler_id: finalOrder.assemblerId, 
             assembler_name: finalOrder.assemblerName, controller_id: finalOrder.controllerId, 
             controller_name: finalOrder.controllerName, history: finalOrder.history
         }).eq('id', finalOrder.id);
-        for (const p of finalOrder.products) {
-            await supabase.from('order_items').update({ 
-                quantity: p.quantity, shipped_quantity: p.shippedQuantity, 
-                unit_price: p.unitPrice, subtotal: p.subtotal, is_checked: p.isChecked 
-            }).eq('order_id', finalOrder.id).eq('code', p.code);
-        }
+        
+        if (orderUpdateErr) throw orderUpdateErr;
+
+        // 2. Sincronizar items: Borrar y Re-insertar para manejar agregados manuales y eliminaciones
+        const itemsToInsert = finalOrder.products.map(p => ({ 
+            order_id: finalOrder.id, 
+            code: p.code, 
+            name: p.name, 
+            original_quantity: p.originalQuantity, 
+            quantity: p.quantity, 
+            shipped_quantity: p.shippedQuantity,
+            unit_price: p.unitPrice, 
+            subtotal: p.subtotal, 
+            is_checked: p.isChecked 
+        }));
+
+        // Eliminamos los items actuales
+        const { error: deleteErr } = await supabase.from('order_items').delete().eq('order_id', finalOrder.id);
+        if (deleteErr) throw deleteErr;
+
+        // Insertamos la nueva lista completa (incluye agregados manuales)
+        const { error: insertErr } = await supabase.from('order_items').insert(itemsToInsert);
+        if (insertErr) throw insertErr;
+
         setSelectedOrderForAssembly(null);
         await fetchAllData();
-    } catch (err) { console.error(err); setIsDataLoading(false); }
+    } catch (err) { 
+        console.error("Error al guardar pedido:", err); 
+        alert("Error al sincronizar con el servidor. Intente nuevamente.");
+    } finally { 
+        setIsDataLoading(false); 
+    }
   };
 
   const handleAdvanceOrder = async (order: DetailedOrder) => {
@@ -416,6 +476,15 @@ export default function App() {
         }
         await fetchAllData();
     } catch (err) { console.error(err); } finally { setIsDataLoading(false); }
+  };
+
+  const handleUpdateProfile = async (newName: string, avatarUrl?: string) => {
+      if (!currentUser) return;
+      const payload: any = { name: newName };
+      if (avatarUrl) payload.avatar_url = avatarUrl;
+
+      await supabase.from('profiles').update(payload).eq('id', currentUser.id);
+      await fetchProfile(currentUser.id);
   };
 
   if (isAuthChecking) return <div className="h-screen w-full flex items-center justify-center bg-background"><Loader2 className="animate-spin text-primary" size={48} /></div>;
@@ -450,6 +519,8 @@ export default function App() {
             onToggleTheme={() => setIsDarkMode(!isDarkMode)} 
             currentUser={currentUser} 
             onLogout={() => supabase.auth.signOut()} 
+            showInstallBtn={!!deferredPrompt}
+            onInstallApp={handleInstallApp}
         />
         <div className="flex-1 overflow-y-auto p-4 md:p-8">
             <div className="mx-auto max-w-7xl">
@@ -484,6 +555,7 @@ export default function App() {
                     />
                 )}
                 {currentView === View.INV_INBOUNDS && <InventoryInbounds currentUser={currentUser} />}
+                {currentView === View.INV_SUPPLIER_ORDERS && <SupplierOrders currentUser={currentUser} />}
                 {currentView === View.INV_ADJUSTMENTS && <InventoryAdjustments currentUser={currentUser} />}
                 {currentView === View.INV_TRANSFERS && <InventoryTransfers currentUser={currentUser} />}
                 {currentView === View.INV_HISTORY && <InventoryHistory currentUser={currentUser} />}
@@ -495,8 +567,9 @@ export default function App() {
                 {currentView === View.ETIQUETADOR && <Etiquetador />}
                 {currentView === View.PRESUPUESTADOR && <Presupuestador />}
                 {currentView === View.LISTA_CHINA && <ListaChina />}
+                {currentView === View.STOCK_CONTROL && <StockControl currentUser={currentUser} />}
                 {currentView === View.SQL_EDITOR && <SqlEditor currentUser={currentUser} />}
-                {currentView === View.SETTINGS && <Settings currentUser={currentUser} onUpdateProfile={async (n) => { await supabase.from('profiles').update({name: n}).eq('id', currentUser.id); fetchProfile(currentUser.id); }} />}
+                {currentView === View.SETTINGS && <Settings currentUser={currentUser} onUpdateProfile={handleUpdateProfile} />}
             </div>
         </div>
       </main>

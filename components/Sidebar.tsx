@@ -31,6 +31,7 @@ import {
   ClipboardCheck
 } from 'lucide-react';
 import { NavItem, View, User } from '../types';
+import { SYSTEM_NAV_STRUCTURE } from '../logic';
 
 interface SidebarProps {
   currentView: View;
@@ -40,67 +41,32 @@ interface SidebarProps {
   onClose?: () => void;
 }
 
-const NAV_STRUCTURE: NavItem[] = [
-  { 
-    id: View.DASHBOARD, 
-    label: 'Tablero', 
-    icon: <LayoutDashboard size={20} />,
-    permission: 'dashboard.view'
-  },
-  { 
-    id: View.ORDERS, 
-    label: 'Pedidos', 
-    icon: <ShoppingBag size={20} />,
-    subItems: [
-        { id: View.ORDERS, label: 'Gestión de pedidos', icon: <List size={16} />, permission: 'orders.view' },
-        { id: View.ORDER_SHEET, label: 'Planilla de Viajes', icon: <Table size={16} />, permission: 'orders.sheet' },
-    ]
-  },
-  { 
-    id: View.PAYMENTS_OVERVIEW, 
-    label: 'Gestión de pagos', 
-    icon: <CreditCard size={20} />,
-    subItems: [
-        { id: View.PAYMENTS_OVERVIEW, label: 'Vista general', icon: <CreditCard size={16} />, permission: 'payments.view' },
-        { id: View.PAYMENTS_PROVIDERS, label: 'Proveedores Pagos', icon: <Users size={16} />, permission: 'payments.providers' },
-        { id: View.PAYMENTS_HISTORY, label: 'Historial', icon: <FileText size={16} />, permission: 'payments.history' },
-    ]
-  },
-  {
-    id: View.INV_INBOUNDS,
-    label: 'Inventario',
-    icon: <Warehouse size={20} />,
-    subItems: [
-        { id: View.INV_INBOUNDS, label: 'Ingresos', icon: <Truck size={16} />, permission: 'inventory.inbounds' },
-        { id: View.INV_ADJUSTMENTS, label: 'Ajustes', icon: <Calculator size={16} />, permission: 'inventory.adjustments' },
-        { id: View.INV_TRANSFERS, label: 'Transferencias', icon: <ArrowRightLeft size={16} />, permission: 'inventory.transfers' },
-        { id: View.INV_HISTORY, label: 'Seguimiento', icon: <ClipboardList size={16} />, permission: 'inventory.history' },
-    ]
-  },
-  { 
-    id: View.CATALOG, 
-    label: 'Maestros', 
-    icon: <Library size={20} />,
-    subItems: [
-        { id: View.CATALOG, label: 'Artículos', icon: <Boxes size={16} />, permission: 'catalog.products' },
-        { id: View.CLIENTS_MASTER, label: 'Clientes', icon: <Contact2 size={16} />, permission: 'catalog.clients' },
-        { id: View.SUPPLIERS_MASTER, label: 'Proveedores', icon: <Truck size={16} />, permission: 'catalog.suppliers' },
-    ]
-  },
-  { 
-    id: View.PRESUPUESTADOR,
-    label: 'Herramientas', 
-    icon: <Wrench size={20} />,
-    subItems: [
-        { id: View.PRESUPUESTADOR, label: 'Presupuestador', icon: <Calculator size={16} />, permission: 'tools.presupuestador' },
-        { id: View.ETIQUETADOR, label: 'Etiquetador', icon: <Tag size={16} />, permission: 'tools.etiquetador' },
-        { id: View.EXPIRATIONS, label: 'Vencimientos', icon: <AlertTriangle size={16} />, permission: 'tools.expirations' },
-        { id: View.LISTA_CHINA, label: 'Lista china', icon: <MessageSquareQuote size={16} />, permission: 'tools.lista_china' },
-        { id: View.SQL_EDITOR, label: 'Editor SQL', icon: <Database size={16} />, permission: 'tools.sql_editor' },
-    ]
-  },
-  { id: View.HISTORY, label: 'Historial', icon: <History size={20} />, permission: 'history.view' },
-];
+// Mapeo manual de iconos para la estructura dinámica
+const ICON_MAP: Record<string, React.ReactNode> = {
+    [View.DASHBOARD]: <LayoutDashboard size={20} />,
+    [View.ORDERS]: <ShoppingBag size={20} />,
+    [View.PAYMENTS_OVERVIEW]: <CreditCard size={20} />,
+    [View.INV_INBOUNDS]: <Warehouse size={20} />,
+    [View.CATALOG]: <Library size={20} />,
+    [View.PRESUPUESTADOR]: <Wrench size={20} />,
+    [View.HISTORY]: <History size={20} />,
+    'list': <List size={16} />,
+    'table': <Table size={16} />,
+    'credit-card': <CreditCard size={16} />,
+    'users': <Users size={16} />,
+    'file-text': <FileText size={16} />,
+    'truck': <Truck size={16} />,
+    'calculator': <Calculator size={16} />,
+    'arrow-right-left': <ArrowRightLeft size={16} />,
+    'clipboard-list': <ClipboardList size={16} />,
+    'boxes': <Boxes size={16} />,
+    'contact-2': <Contact2 size={16} />,
+    'clipboard-check': <ClipboardCheck size={16} />,
+    'tag': <Tag size={16} />,
+    'alert-triangle': <AlertTriangle size={16} />,
+    'message-square-quote': <MessageSquareQuote size={16} />,
+    'database': <Database size={16} />
+};
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, currentUser, isOpen = false, onClose }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -117,7 +83,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, curre
       return (currentUser.permissions || []).includes(permissionKey);
   };
 
-  const filteredNav = NAV_STRUCTURE.map(item => {
+  const filteredNav = SYSTEM_NAV_STRUCTURE.map(item => {
     const allowedSubItems = item.subItems ? item.subItems.filter(sub => hasPermission(sub.permission)) : undefined;
     return { ...item, subItems: allowedSubItems };
   }).filter(item => {
@@ -169,6 +135,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, curre
             const hasSubItems = !!item.subItems && item.subItems.length > 0;
             const isParentOfActive = item.subItems?.some(sub => sub.id === currentView);
             const isExpanded = expandedMenu === item.label;
+            const icon = ICON_MAP[item.id] || <Wrench size={20} />;
             
             return (
               <div key={item.id} className="relative group shrink-0">
@@ -184,7 +151,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, curre
                       }}
                       className={`flex items-center gap-3 px-3 py-3 flex-1 text-left outline-none ${isCollapsed ? 'lg:justify-center' : ''}`}
                     >
-                          <span className={`${isParentOfActive ? 'text-primary' : 'text-muted group-hover:text-text'} transition-colors`}>{item.icon}</span>
+                          <span className={`${isParentOfActive ? 'text-primary' : 'text-muted group-hover:text-text'} transition-colors`}>{icon}</span>
                           {(!isCollapsed || isOpen) && <span className="whitespace-nowrap font-bold text-xs uppercase tracking-wide">{item.label}</span>}
                     </button>
                     {(!isCollapsed || isOpen) && hasSubItems && (
@@ -197,11 +164,32 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, curre
                 {(!isCollapsed || isOpen) && hasSubItems && (
                     <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-80 opacity-100 mt-1' : 'max-h-0 opacity-0'}`}>
                         <div className="flex flex-col gap-1 pl-10 pr-2 pb-2">
-                          {item.subItems!.map((sub) => (
-                              <button key={sub.id} onClick={() => onNavigate(sub.id)} className={`text-left text-[11px] font-black uppercase py-2 px-3 rounded-lg transition-colors flex items-center gap-2 ${currentView === sub.id ? 'text-primary bg-primary/5' : 'text-muted hover:text-text hover:bg-surfaceHighlight/50'}`}>
-                                  {sub.icon} {sub.label}
-                              </button>
-                          ))}
+                          {item.subItems!.map((sub) => {
+                              // Mapeo simple de iconos para subitems basado en su ID o palabra clave
+                              let subIcon = <List size={14} />;
+                              if (sub.id === View.ORDER_SHEET) subIcon = <Table size={14} />;
+                              if (sub.id === View.PAYMENTS_PROVIDERS) subIcon = <Users size={14} />;
+                              if (sub.id === View.PAYMENTS_HISTORY) subIcon = <FileText size={14} />;
+                              if (sub.id === View.INV_INBOUNDS) subIcon = <Truck size={14} />;
+                              if (sub.id === View.INV_ADJUSTMENTS) subIcon = <Calculator size={14} />;
+                              if (sub.id === View.INV_TRANSFERS) subIcon = <ArrowRightLeft size={14} />;
+                              if (sub.id === View.INV_HISTORY) subIcon = <ClipboardList size={14} />;
+                              if (sub.id === View.CATALOG) subIcon = <Boxes size={14} />;
+                              if (sub.id === View.CLIENTS_MASTER) subIcon = <Contact2 size={14} />;
+                              if (sub.id === View.SUPPLIERS_MASTER) subIcon = <Truck size={14} />;
+                              if (sub.id === View.STOCK_CONTROL) subIcon = <ClipboardCheck size={14} />;
+                              if (sub.id === View.PRESUPUESTADOR) subIcon = <Calculator size={14} />;
+                              if (sub.id === View.ETIQUETADOR) subIcon = <Tag size={14} />;
+                              if (sub.id === View.EXPIRATIONS) subIcon = <AlertTriangle size={14} />;
+                              if (sub.id === View.LISTA_CHINA) subIcon = <MessageSquareQuote size={14} />;
+                              if (sub.id === View.SQL_EDITOR) subIcon = <Database size={14} />;
+
+                              return (
+                                <button key={sub.id} onClick={() => onNavigate(sub.id)} className={`text-left text-[11px] font-black uppercase py-2 px-3 rounded-lg transition-colors flex items-center gap-2 ${currentView === sub.id ? 'text-primary bg-primary/5' : 'text-muted hover:text-text hover:bg-surfaceHighlight/50'}`}>
+                                    {subIcon} {sub.label}
+                                </button>
+                              );
+                          })}
                         </div>
                     </div>
                 )}

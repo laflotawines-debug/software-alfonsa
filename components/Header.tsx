@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Menu, LogOut, Sun, Moon, Users, DownloadCloud } from 'lucide-react';
+import { Menu, LogOut, Sun, Moon, Users, DownloadCloud, User as UserIcon } from 'lucide-react';
 import { User } from '../types';
 
 interface HeaderProps {
@@ -82,12 +82,18 @@ export const Header: React.FC<HeaderProps> = ({
             <p className="text-text text-sm font-bold leading-none capitalize">{currentUser.name}</p>
             <p className="text-muted text-xs font-normal mt-1 capitalize">{currentUser.role}</p>
           </div>
-          <div className="h-10 w-10 rounded-full bg-surfaceHighlight border-2 border-surfaceHighlight overflow-hidden">
-             <img 
-               src="https://picsum.photos/100/100" 
-               alt="User" 
-               className="h-full w-full object-cover opacity-90"
-             />
+          <div className="h-10 w-10 rounded-full bg-surfaceHighlight border-2 border-surfaceHighlight overflow-hidden flex items-center justify-center">
+             {currentUser.avatar_url ? (
+                <img 
+                  src={currentUser.avatar_url} 
+                  alt="User" 
+                  className="h-full w-full object-cover"
+                />
+             ) : (
+                <div className="h-full w-full bg-primary/10 flex items-center justify-center text-primary">
+                    <UserIcon size={20} />
+                </div>
+             )}
           </div>
         </div>
 

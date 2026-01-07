@@ -22,11 +22,13 @@ export enum View {
     SETTINGS = 'SETTINGS',
     TOOLS = 'TOOLS',
     SQL_EDITOR = 'SQL_EDITOR',
+    STOCK_CONTROL = 'STOCK_CONTROL',
     // --- INVENTORY VIEWS ---
     INV_INBOUNDS = 'INV_INBOUNDS',
     INV_ADJUSTMENTS = 'INV_ADJUSTMENTS',
     INV_TRANSFERS = 'INV_TRANSFERS',
-    INV_HISTORY = 'INV_HISTORY'
+    INV_HISTORY = 'INV_HISTORY',
+    INV_SUPPLIER_ORDERS = 'INV_SUPPLIER_ORDERS'
 }
 
 export interface NavItem {
@@ -35,6 +37,55 @@ export interface NavItem {
     icon: React.ReactNode;
     subItems?: NavItem[];
     permission?: string; // Nueva propiedad para control dinámico
+}
+
+// --- SUPPLIER ORDERS DOMAIN ---
+export interface SupplierOrder {
+    id: string;
+    supplier_code: string;
+    supplier_name?: string;
+    estimated_arrival: string;
+    status: 'pendiente' | 'confirmado';
+    pdf_url?: string;
+    created_at: string;
+    created_by: string;
+    items?: SupplierOrderItem[];
+}
+
+export interface SupplierOrderItem {
+    id: string;
+    order_id: string;
+    codart: string;
+    desart?: string;
+    quantity: number;
+    units_per_box?: number;
+}
+
+// --- STOCK CONTROL DOMAIN ---
+export interface StockControlSession {
+    id: string;
+    name: string;
+    warehouse_id: string;
+    warehouse_name?: string;
+    status: 'active' | 'finished';
+    created_by: string;
+    created_at: string;
+    item_count?: number;
+    assigned_users?: string[]; // IDs de armadores que han participado
+}
+
+export interface StockControlItem {
+    id: string;
+    session_id: string;
+    codart: string;
+    desart?: string;
+    system_qty: number;
+    corrected_qty?: number;
+    counts: {
+        user_id: string;
+        user_name: string;
+        qty: number;
+    }[];
 }
 
 // --- PERMISSIONS DOMAIN ---
@@ -124,6 +175,7 @@ export interface MasterProduct {
     pventa_2: number;
     pventa_3: number;
     pventa_4: number;
+    units_per_box?: number;
     unicom?: string;
     unidad?: string;
     coeficient?: number;
@@ -196,6 +248,7 @@ export interface User {
     name: string;
     role: UserRole;
     permissions: string[]; // Lista de keys concedidas
+    avatar_url?: string;
 }
 export enum OrderStatus {
     EN_ARMADO = 'en_armado',

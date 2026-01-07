@@ -91,6 +91,8 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         (order.status === OrderStatus.ARMADO && order.controllerId && order.controllerId !== currentUser.id)
     );
 
+    // Permisos de edición de productos: 
+    // Vale puede siempre antes de entregado. Armador solo en sus pasos correspondientes.
     const canEditProducts = !isFinishedStep && !selfControlBlocked && !occupiedByOther && (
         isVale || 
         (currentUser.role === 'armador' && order.status === OrderStatus.EN_ARMADO) ||
@@ -167,8 +169,6 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
             currentY += 5;
         }
 
-        // Lógica corregida para detectar faltantes: 
-        // Si no hay shippedQuantity (paso facturación), comparamos contra quantity
         const shortages = order.products.filter(p => p.originalQuantity > (p.shippedQuantity ?? p.quantity));
         if (shortages.length > 0) {
             currentY += 10;
@@ -388,7 +388,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                  </div>
              )}
 
-             {canEditProducts || isTransitStep || isReadyForTransit || isInvoiceControlStep ? (
+             {!isFinishedStep && !occupiedByOther ? (
                 <>
                     {canPrint && isVale && (
                         <button 
@@ -449,7 +449,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                         </button>
                     </div>
                     
-                    {isVale && !isFinishedStep && onDeleteOrder && (
+                    {isVale && onDeleteOrder && (
                         <button 
                             type="button"
                             onClick={handleDeleteOrderClick}
@@ -614,7 +614,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                             <div className={selfControlBlocked || occupiedByOther ? 'opacity-40 grayscale pointer-events-none' : ''}>
                                 <div className="flex justify-between items-center mb-4">
                                     <h3 className="text-lg font-bold text-text">Detalle de Productos</h3>
-                                    {isVale && !isAddingProduct && !isFinishedStep && !isTransitStep && !isReadyForTransit && !isInvoiceControlStep && (
+                                    {isVale && !isAddingProduct && !isFinishedStep && (
                                         <button 
                                             onClick={() => setIsAddingProduct(true)}
                                             className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surfaceHighlight border border-surfaceHighlight hover:border-primary/50 text-text text-xs font-bold transition-all"
@@ -671,7 +671,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                 )}
                                 
                                 <div className="hidden md:flex items-center gap-4 px-4 py-2 text-xs font-bold text-muted uppercase tracking-wider border-b border-surfaceHighlight mb-2">
-                                     {!isBillingStep && !isTransitStep && !isFinishedStep && <div className="w-5"></div>}
+                                     {!isFinishedStep && <div className="w-5"></div>}
                                      <div className="w-16 text-center">Código</div>
                                      <div className="flex-1">Artículo</div>
                                      <div className="w-20 text-center">Cant.</div>
@@ -681,7 +681,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                             <div className="w-32 text-right">Subtotal</div>
                                         </>
                                      )}
-                                     {!isBillingStep && !isTransitStep && !isFinishedStep && <div className="w-10 text-center">Acción</div>}
+                                     {!isFinishedStep && <div className="w-10 text-center">Acción</div>}
                                 </div>
 
                                 <div className="flex flex-col gap-3">
@@ -704,7 +704,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                                         : 'bg-surface border border-surfaceHighlight shadow-sm'
                                                 }`}
                                             >
-                                                {!isBillingStep && !isTransitStep && !isFinishedStep && (
+                                                {!isFinishedStep && (
                                                     <div className="pt-1 md:pt-0 w-5 flex-shrink-0">
                                                         <input 
                                                             type="checkbox"
@@ -832,7 +832,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                                     </>
                                                 )}
 
-                                                {!isBillingStep && !isTransitStep && !isFinishedStep && (
+                                                {!isFinishedStep && (
                                                     <div className="w-10 flex-shrink-0 flex items-center justify-center">
                                                         {isVale && onRemoveProduct && (
                                                             <button 

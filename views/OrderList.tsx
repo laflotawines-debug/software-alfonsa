@@ -82,7 +82,10 @@ export const OrderList: React.FC<OrderListProps> = ({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <button className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-surface text-text border border-surfaceHighlight hover:border-primary/50 transition-all text-sm font-bold shadow-sm">
+          <button 
+            onClick={() => onNavigate(View.STOCK_CONTROL)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-surface text-text border border-surfaceHighlight hover:border-primary/50 transition-all text-sm font-bold shadow-sm"
+          >
             <Box size={18} /> Control de Stock
           </button>
           <button className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-surface text-text border border-surfaceHighlight hover:border-primary/50 transition-all text-sm font-bold shadow-sm">
