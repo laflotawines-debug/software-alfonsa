@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   User as UserIcon, 
   MapPin, 
@@ -11,10 +11,13 @@ import {
   ArrowLeft,
   Save,
   Loader2,
-  Compass
+  Compass,
+  Search,
+  Check
 } from 'lucide-react';
-import { View, Product, OrderStatus, DetailedOrder, User, OrderZone } from '../types';
+import { View, Product, OrderStatus, DetailedOrder, User, OrderZone, ClientMaster } from '../types';
 import { parseOrderText } from '../logic';
+import { supabase } from '../supabase';
 
 interface CreateBudgetProps {
   onNavigate: (view: View) => void;
@@ -29,6 +32,61 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
   const [products, setProducts] = useState<Product[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Estados para búsqueda de clientes
+  const [clientSearchResults, setClientSearchResults] = useState<ClientMaster[]>([]);
+  const [isSearchingClient, setIsSearchingClient] = useState(false);
+  const [showClientDropdown, setShowClientDropdown] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Manejar clics fuera del dropdown para cerrarlo
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowClientDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleSearchClient = async (val: string) => {
+    setClientName(val);
+    if (val.trim().length < 2) {
+      setClientSearchResults([]);
+      setShowClientDropdown(false);
+      return;
+    }
+
+    setIsSearchingClient(true);
+    setShowClientDropdown(true);
+
+    try {
+      const { data, error } = await supabase
+        .from('clients_master')
+        .select('*')
+        .or(`nombre.ilike.%${val}%,codigo.ilike.%${val}%`)
+        .limit(6);
+
+      if (error) throw error;
+      setClientSearchResults(data || []);
+    } catch (err) {
+      console.error("Error buscando clientes:", err);
+    } finally {
+      setIsSearchingClient(false);
+    }
+  };
+
+  const selectClient = (client: ClientMaster) => {
+    setClientName(client.nombre);
+    setShowClientDropdown(false);
+    
+    // Intento de auto-selección de zona basado en localidad
+    const loc = (client.localidad || '').toLowerCase();
+    if (loc.includes('mercedes')) setSelectedZone('V. Mercedes');
+    else if (loc.includes('san luis')) setSelectedZone('San Luis');
+    else if (loc.includes('norte')) setSelectedZone('Norte');
+  };
 
   // Computed total
   const totalAmount = products.reduce((sum, p) => sum + p.subtotal, 0);
@@ -89,7 +147,6 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
         };
 
         await onCreateOrder(newOrder);
-        // La navegación ya ocurre dentro de handleCreateOrder en App.tsx para asegurar sincronía
     } catch (err) {
         console.error(err);
     } finally {
@@ -113,13 +170,13 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
            <p className="text-muted text-sm">Complete la información para generar un nuevo pedido.</p>
         </div>
         <div className="ml-auto flex gap-3">
-             <button className="px-5 py-2.5 rounded-full border border-surfaceHighlight text-text font-bold text-sm hover:bg-surfaceHighlight transition-colors">
+             <button className="hidden sm:block px-5 py-2.5 rounded-full border border-surfaceHighlight text-text font-bold text-sm hover:bg-surfaceHighlight transition-colors">
                 Guardar Borrador
              </button>
              <button 
                 onClick={handleSaveOrder}
                 disabled={isSaving}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary hover:bg-primaryHover text-white font-bold text-sm shadow-lg shadow-primary/20 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary hover:bg-primaryHover text-white font-bold text-sm shadow-lg shadow-primary/20 transition-all disabled:opacity-50 disabled:cursor-wait"
              >
                 {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
                 {isSaving ? 'Guardando...' : 'Crear Pedido'}
@@ -133,21 +190,65 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
             Datos del Cliente
         </h3>
         
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-            <div className="flex flex-col gap-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-2">
+            <div className="flex flex-col gap-2 relative" ref={dropdownRef}>
                 <label className="text-xs font-bold text-muted uppercase tracking-wider flex items-center gap-1">
                     Nombre del Cliente <span className="text-red-500">*</span>
                 </label>
                 <div className="relative">
-                    <UserIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                    <UserIcon className={`absolute left-3 top-1/2 -translate-y-1/2 transition-colors ${isSearchingClient ? 'text-primary animate-pulse' : 'text-muted'}`} size={18} />
                     <input 
                         type="text" 
                         value={clientName}
-                        onChange={(e) => setClientName(e.target.value)}
-                        placeholder="Nombre completo"
-                        className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3 pl-10 pr-4 text-sm text-text focus:border-primary outline-none transition-colors shadow-sm font-bold uppercase"
+                        onChange={(e) => handleSearchClient(e.target.value)}
+                        onFocus={() => clientName.length >= 2 && setShowClientDropdown(true)}
+                        placeholder="Buscar por nombre o código..."
+                        className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3.5 pl-10 pr-4 text-sm text-text focus:border-primary outline-none transition-colors shadow-sm font-bold uppercase"
+                        autoComplete="off"
                     />
+                    {isSearchingClient && (
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                        <Loader2 className="animate-spin text-primary" size={16} />
+                      </div>
+                    )}
                 </div>
+
+                {/* Dropdown de Búsqueda de Clientes */}
+                {showClientDropdown && (
+                  <div className="absolute top-full left-0 w-full bg-surface border border-primary/30 rounded-2xl shadow-2xl mt-2 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
+                    {clientSearchResults.length > 0 ? (
+                      <div className="flex flex-col">
+                        <div className="px-4 py-2 bg-primary/5 border-b border-primary/10 text-[9px] font-black text-primary uppercase tracking-widest">Resultados del Maestro</div>
+                        {clientSearchResults.map((client) => (
+                          <button
+                            key={client.codigo}
+                            onClick={() => selectClient(client)}
+                            className="w-full p-4 hover:bg-primary/5 text-left border-b border-surfaceHighlight last:border-none flex justify-between items-center group transition-all"
+                          >
+                            <div className="flex flex-col">
+                              <span className="text-xs font-black text-text group-hover:text-primary transition-colors">{client.nombre}</span>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-[9px] font-mono text-muted bg-surfaceHighlight px-1.5 rounded">#{client.codigo}</span>
+                                {client.localidad && <span className="text-[9px] font-bold text-muted uppercase italic">{client.localidad}</span>}
+                              </div>
+                            </div>
+                            <Check className="text-primary opacity-0 group-hover:opacity-100 transition-opacity" size={16} />
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="p-6 text-center">
+                        {!isSearchingClient && (
+                          <>
+                            <Search className="mx-auto text-muted/20 mb-2" size={24} />
+                            <p className="text-[10px] font-bold text-muted uppercase">No se encontraron coincidencias</p>
+                            <p className="text-[9px] text-primary font-black mt-1 uppercase">Se guardará como cliente nuevo</p>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
             </div>
             
             <div className="flex flex-col gap-2">
@@ -159,13 +260,12 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
                     <select 
                         value={selectedZone}
                         onChange={(e) => setSelectedZone(e.target.value as OrderZone)}
-                        className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3 pl-10 pr-4 text-sm text-text focus:border-primary outline-none transition-colors appearance-none cursor-pointer shadow-sm font-bold"
+                        className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3.5 pl-10 pr-4 text-sm text-text focus:border-primary outline-none transition-colors appearance-none cursor-pointer shadow-sm font-bold"
                     >
                         <option value="V. Mercedes">V. Mercedes</option>
                         <option value="San Luis">San Luis</option>
                         <option value="Norte">Norte</option>
                     </select>
-                    {/* Visual hint of selection */}
                     <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
                          <span className={`block w-3 h-3 rounded-full ${
                              selectedZone === 'V. Mercedes' ? 'bg-cyan-500' :
@@ -236,7 +336,6 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
                         <th className="py-3 px-6 text-xs font-bold text-muted uppercase tracking-wider w-24">Código</th>
                         <th className="py-3 px-6 text-xs font-bold text-muted uppercase tracking-wider">Producto</th>
                         <th className="py-3 px-6 text-xs font-bold text-muted uppercase tracking-wider w-32 text-center">Cantidad</th>
-                        {/* Only show price headers if currentUserRole is 'vale' */}
                         {currentUser.role === 'vale' && (
                             <>
                                 <th className="py-3 px-6 text-xs font-bold text-muted uppercase tracking-wider w-40 text-right">P. Unitario</th>

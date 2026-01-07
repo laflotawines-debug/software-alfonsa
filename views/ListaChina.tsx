@@ -18,7 +18,8 @@ import {
     HelpCircle,
     Info,
     Sparkles,
-    Eye
+    Eye,
+    MessageCircle
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { MasterProduct } from '../types';
@@ -29,7 +30,7 @@ const FAMILY_EMOJIS: Record<string, string> = {
     'REPELENTES': '🦟', 'SNACKS': '🥨', 'YERBAS E INFUSIONES': '🌿',
     'BEBIDAS': '🥂', 'CERVEZAS': '🍻', 'CHAMPAGNE & ESPUMANTES': '🍾',
     'GIN Y GINEBRAS': '🍸', 'GRAPAS': '🍇', 'LICORES': '🥃',
-    'MINIATURAS Y PETACAS': '✨', 'RON': 'RON', 'SIDRAS': '🍏',
+    'MINIATURAS Y PETACAS': '✨', 'RON': '🥃', 'SIDRAS': '🍏',
     'SIN ALCOHOL / ENERGIZANTES / GASEOSAS': '🧃', 'VODKAS': '🧊',
     'WHISKY': '🥃', 'VINOS': '🍷'
 };
@@ -53,8 +54,6 @@ export const ListaChina: React.FC = () => {
         if (!isSilent) setIsLoading(true);
         setDbError(null);
         try {
-            console.log(">>> [FETCH] Iniciando carga paginada...");
-            
             const PAGE_SIZE = 1000;
             let from = 0;
             let allProducts: MasterProduct[] = [];
@@ -119,7 +118,7 @@ export const ListaChina: React.FC = () => {
     useEffect(() => { fetchData(); }, [fetchData]);
 
     const generateListText = useCallback(() => {
-        if (products.length === 0) return "Cargando catálogo...";
+        if (products.length === 0) return "";
         
         const baseExists = Object.keys(snapshotMap).length > 0;
 
@@ -215,6 +214,16 @@ export const ListaChina: React.FC = () => {
         } catch (err) { console.error(err); }
     };
 
+    const handleWhatsAppShare = () => {
+        if (!generatedText || isLoading) return;
+        // Limpiamos el texto de cualquier carácter extraño que pudiera haberse colado
+        const cleanText = generatedText.normalize('NFC').trim();
+        const encodedText = encodeURIComponent(cleanText);
+        // Usamos la URL de la API oficial que maneja mejor UTF-8
+        const url = `https://api.whatsapp.com/send?text=${encodedText}`;
+        window.open(url, '_blank');
+    };
+
     const newItemsCount = products.filter(p => snapshotMap[p.codart] === undefined && Object.keys(snapshotMap).length > 0).length;
 
     return (
@@ -238,7 +247,7 @@ export const ListaChina: React.FC = () => {
                     </p>
                 </div>
                 
-                <div className="flex items-center gap-3 w-full md:w-auto">
+                <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
                     <button onClick={() => fetchData()} disabled={isLoading || isSaving} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-4 rounded-2xl bg-surface border border-surfaceHighlight text-muted hover:text-primary transition-all font-black text-[10px] uppercase shadow-sm">
                         <RefreshCw size={18} className={isLoading ? 'animate-spin' : ''} />
                     </button>
@@ -248,7 +257,7 @@ export const ListaChina: React.FC = () => {
                             onClick={() => setShowConfirm(true)}
                             disabled={isSaving || isLoading || products.length === 0}
                             className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-6 py-4 rounded-2xl border transition-all font-black text-[10px] uppercase shadow-md active:scale-95 
-                                ${saveSuccess ? 'bg-green-600 text-white' : 'bg-surface border-surfaceHighlight text-muted hover:text-green-500'}`}
+                                ${saveSuccess ? 'bg-green-600 text-white' : 'bg-surface border border-surfaceHighlight text-muted hover:text-green-500'}`}
                         >
                             {isSaving ? <Loader2 size={18} className="animate-spin" /> : saveSuccess ? <CheckCircle2 size={18} /> : <Save size={18} />}
                             {isSaving ? 'Fijando...' : saveSuccess ? '¡Listo!' : 'Fijar Actual'}
@@ -271,10 +280,26 @@ export const ListaChina: React.FC = () => {
                         </div>
                     )}
 
-                    <button onClick={handleCopy} disabled={!generatedText || isLoading} className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-10 py-4 rounded-2xl font-black text-sm uppercase transition-all shadow-xl active:scale-95 ${copied ? 'bg-green-600 text-white shadow-green-500/20' : 'bg-primary text-white hover:bg-primaryHover shadow-primary/20'}`}>
-                        {copied ? <Check size={20} /> : <Copy size={20} />}
-                        {copied ? 'Copiado' : 'Copiar'}
-                    </button>
+                    <div className="flex gap-2 flex-1 md:flex-none">
+                        <button 
+                            onClick={handleWhatsAppShare} 
+                            disabled={!generatedText || isLoading} 
+                            className="flex-1 md:flex-none flex items-center justify-center gap-2 px-6 py-4 rounded-2xl font-black text-sm uppercase transition-all shadow-xl active:scale-95 bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-500/20"
+                            title="Enviar por WhatsApp"
+                        >
+                            <MessageCircle size={20} />
+                            <span className="hidden sm:inline">WhatsApp</span>
+                        </button>
+                        
+                        <button 
+                            onClick={handleCopy} 
+                            disabled={!generatedText || isLoading} 
+                            className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-8 py-4 rounded-2xl font-black text-sm uppercase transition-all shadow-xl active:scale-95 ${copied ? 'bg-green-600 text-white shadow-green-500/20' : 'bg-primary text-white hover:bg-primaryHover shadow-primary/20'}`}
+                        >
+                            {copied ? <Check size={20} /> : <Copy size={20} />}
+                            {copied ? 'Copiado' : 'Copiar'}
+                        </button>
+                    </div>
                 </div>
             </div>
 
