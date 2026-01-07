@@ -41,7 +41,6 @@ interface SidebarProps {
   onClose?: () => void;
 }
 
-// Mapeo manual de iconos para la estructura dinámica
 const ICON_MAP: Record<string, React.ReactNode> = {
     [View.DASHBOARD]: <LayoutDashboard size={20} />,
     [View.ORDERS]: <ShoppingBag size={20} />,
@@ -106,7 +105,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, curre
       `}>
         
         <div className="lg:hidden flex items-center justify-between p-6 border-b border-surfaceHighlight bg-surface shrink-0">
-            <span className="font-black text-lg text-text uppercase italic tracking-widest">Menú</span>
+            <img src="icon.png" alt="Logo" className="h-8 w-8 object-contain" />
             <button onClick={onClose} className="p-2 text-muted rounded-xl hover:bg-surfaceHighlight transition-colors">
                 <X size={24} />
             </button>
@@ -119,18 +118,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, curre
             {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
         </button>
 
-        <div className={`p-6 flex items-center ${isCollapsed ? 'lg:justify-center' : ''} h-24 shrink-0`}>
+        <div className={`p-6 flex items-center ${isCollapsed ? 'lg:justify-center' : ''} h-28 shrink-0`}>
           {isCollapsed ? (
-              <div className="h-10 w-10 rounded-lg bg-primary/20 text-primary flex items-center justify-center font-bold text-xl">A</div>
+              <img src="icon.png" alt="Logo" className="h-10 w-10 object-contain" />
           ) : (
-              <div className="animate-in fade-in duration-200">
-                  <h1 className="text-2xl font-black text-text tracking-tight italic uppercase">Alfonsa</h1>
-                  <p className="text-muted text-[10px] font-black uppercase tracking-widest mt-1">Panel Administrativo</p>
+              <div className="flex items-center gap-4 animate-in fade-in duration-300">
+                  <img src="icon.png" alt="Logo" className="h-14 w-14 object-contain drop-shadow-md" />
+                  <div className="flex flex-col">
+                      <h1 className="text-xl font-black text-text tracking-tighter uppercase italic leading-none">Alfonsa</h1>
+                      <p className="text-primary text-[9px] font-black uppercase tracking-[0.2em] mt-1">Management</p>
+                  </div>
               </div>
           )}
         </div>
 
-        <nav className="flex flex-col gap-2 flex-1 px-3 overflow-y-auto overflow-x-hidden pt-4 scroll-smooth">
+        <nav className="flex flex-col gap-1 flex-1 px-3 overflow-y-auto overflow-x-hidden pt-2 scroll-smooth">
           {filteredNav.map((item) => {
             const hasSubItems = !!item.subItems && item.subItems.length > 0;
             const isParentOfActive = item.subItems?.some(sub => sub.id === currentView);
@@ -165,7 +167,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, curre
                     <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-80 opacity-100 mt-1' : 'max-h-0 opacity-0'}`}>
                         <div className="flex flex-col gap-1 pl-10 pr-2 pb-2">
                           {item.subItems!.map((sub) => {
-                              // Mapeo simple de iconos para subitems basado en su ID o palabra clave
                               let subIcon = <List size={14} />;
                               if (sub.id === View.ORDER_SHEET) subIcon = <Table size={14} />;
                               if (sub.id === View.PAYMENTS_PROVIDERS) subIcon = <Users size={14} />;

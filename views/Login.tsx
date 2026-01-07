@@ -44,11 +44,11 @@ export const Login: React.FC<LoginProps> = ({ isDarkMode, onToggleTheme }) => {
 
             <div className="w-full max-w-md z-10">
                 <div className="text-center mb-10 animate-in fade-in slide-in-from-top-4 duration-700">
-                    <div className="inline-flex items-center justify-center h-20 w-20 rounded-3xl bg-primary text-white mb-6 shadow-2xl shadow-primary/30 transform hover:rotate-6 transition-transform">
-                        <Lock size={36} fill="white" />
+                    <div className="inline-flex items-center justify-center h-28 w-28 rounded-[2rem] bg-white mb-6 shadow-2xl overflow-hidden p-3 transform hover:scale-105 transition-transform duration-500">
+                        <img src="icon.png" alt="Alfonsa Logo" className="w-full h-full object-contain" />
                     </div>
-                    <h1 className="text-4xl font-black text-text tracking-tight mb-2">Alfonsa Software</h1>
-                    <p className="text-muted font-medium uppercase tracking-widest text-xs">Acceso al Panel Administrativo</p>
+                    <h1 className="text-4xl font-black text-text tracking-tighter mb-2 uppercase italic">Alfonsa</h1>
+                    <p className="text-muted font-black uppercase tracking-[0.3em] text-[10px]">Panel Administrativo</p>
                 </div>
 
                 <div className="bg-surface border border-surfaceHighlight rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-500 relative">
@@ -106,8 +106,8 @@ export const Login: React.FC<LoginProps> = ({ isDarkMode, onToggleTheme }) => {
                     </form>
                 </div>
 
-                <div className="mt-8 text-center text-muted text-[10px] font-black uppercase tracking-[0.2em]">
-                    Alfonsa Distribuidora v2.6.0
+                <div className="mt-8 text-center text-muted text-[9px] font-black uppercase tracking-[0.3em]">
+                    Alfonsa Distribuidora &copy; 2025
                 </div>
             </div>
         </div>
