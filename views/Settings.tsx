@@ -35,7 +35,10 @@ import {
     AlertTriangle,
     MessageSquareQuote,
     RefreshCcw,
-    Camera
+    Camera,
+    Sun,
+    Moon,
+    Monitor
 } from 'lucide-react';
 import { User, MasterProduct, AppPermission, View } from '../types';
 import { supabase } from '../supabase';
@@ -45,11 +48,13 @@ import * as XLSX from 'xlsx';
 interface SettingsProps {
     currentUser: User;
     onUpdateProfile: (newName: string, avatarUrl?: string) => Promise<void>;
+    isDarkMode: boolean;
+    onToggleTheme: () => void;
 }
 
 type Tab = 'profile' | 'catalog_prices' | 'catalog_stock' | 'permissions';
 
-export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile }) => {
+export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile, isDarkMode, onToggleTheme }) => {
     const [name, setName] = useState(currentUser.name);
     const [avatarUrl, setAvatarUrl] = useState(currentUser.avatar_url || '');
     const [activeTab, setActiveTab] = useState<Tab>('profile');
@@ -92,7 +97,6 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
             
             if (profRes.data) setAllProfiles(profRes.data as any);
             if (dictRes.data) {
-                // Filtramos el Editor SQL de la lista visual para que sea "totalmente oculto" de los permisos
                 const filteredDict = dictRes.data.filter(p => p.key !== 'tools.sql_editor');
                 setPermDict(filteredDict);
                 
@@ -115,7 +119,6 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
         try {
             const keysToSync: any[] = [];
             SYSTEM_NAV_STRUCTURE.forEach(item => {
-                // Filtramos tools.sql_editor para que no se guarde en la tabla de permisos configurables
                 if (item.permission && item.permission !== 'tools.sql_editor') {
                     keysToSync.push({ key: item.permission, module: item.module, label: item.label });
                 }
@@ -373,58 +376,97 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
 
                 <div className="md:col-span-3">
                     {activeTab === 'profile' && (
-                        <section className="bg-surface border border-surfaceHighlight rounded-3xl p-8 shadow-sm animate-in fade-in">
-                            <div className="flex items-center justify-between mb-8">
-                                <h3 className="text-xl font-black text-text flex items-center gap-3 uppercase tracking-tight italic">
-                                    <UserIcon size={24} className="text-primary" /> Mi Perfil
-                                </h3>
-                            </div>
-                            <div className="space-y-8">
-                                <div className="flex flex-col items-center sm:flex-row gap-8">
-                                    <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
-                                        <div className="h-28 w-28 rounded-full border-4 border-surfaceHighlight overflow-hidden bg-background relative shadow-lg">
-                                            {avatarUrl ? (
-                                                <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
-                                            ) : (
-                                                <div className="h-full w-full flex items-center justify-center text-muted">
-                                                    <UserIcon size={48} />
+                        <div className="flex flex-col gap-6">
+                            <section className="bg-surface border border-surfaceHighlight rounded-3xl p-8 shadow-sm animate-in fade-in">
+                                <div className="flex items-center justify-between mb-8">
+                                    <h3 className="text-xl font-black text-text flex items-center gap-3 uppercase tracking-tight italic">
+                                        <UserIcon size={24} className="text-primary" /> Mi Perfil
+                                    </h3>
+                                </div>
+                                <div className="space-y-8">
+                                    <div className="flex flex-col items-center sm:flex-row gap-8">
+                                        <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+                                            <div className="h-28 w-28 rounded-full border-4 border-surfaceHighlight overflow-hidden bg-background relative shadow-lg">
+                                                {avatarUrl ? (
+                                                    <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+                                                ) : (
+                                                    <div className="h-full w-full flex items-center justify-center text-muted">
+                                                        <UserIcon size={48} />
+                                                    </div>
+                                                )}
+                                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                                    <Camera className="text-white" size={24} />
                                                 </div>
-                                            )}
-                                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                                                <Camera className="text-white" size={24} />
+                                            </div>
+                                            <div className="absolute -bottom-1 -right-1 p-2 bg-primary text-white rounded-full border-4 border-surface shadow-md">
+                                                <Camera size={14} />
+                                            </div>
+                                            <input 
+                                                ref={fileInputRef} 
+                                                type="file" 
+                                                accept="image/*" 
+                                                className="hidden" 
+                                                onChange={handleFileChange} 
+                                            />
+                                        </div>
+                                        <div className="flex-1 space-y-4 w-full">
+                                            <div className="space-y-2">
+                                                <label className="text-[10px] font-black uppercase text-muted tracking-widest ml-1">Nombre Visual</label>
+                                                <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-background border border-surfaceHighlight rounded-2xl py-4 px-5 text-sm font-bold text-text outline-none focus:border-primary shadow-inner" />
+                                            </div>
+                                            <div className="p-4 bg-background/50 rounded-2xl border border-surfaceHighlight">
+                                                <p className="text-[9px] font-black text-muted uppercase">Rol de Usuario</p>
+                                                <p className="text-xs font-bold text-text mt-1 uppercase tracking-widest">{currentUser.role}</p>
                                             </div>
                                         </div>
-                                        <div className="absolute -bottom-1 -right-1 p-2 bg-primary text-white rounded-full border-4 border-surface shadow-md">
-                                            <Camera size={14} />
-                                        </div>
-                                        <input 
-                                            ref={fileInputRef} 
-                                            type="file" 
-                                            accept="image/*" 
-                                            className="hidden" 
-                                            onChange={handleFileChange} 
-                                        />
                                     </div>
-                                    <div className="flex-1 space-y-4 w-full">
-                                        <div className="space-y-2">
-                                            <label className="text-[10px] font-black uppercase text-muted tracking-widest ml-1">Nombre Visual</label>
-                                            <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-background border border-surfaceHighlight rounded-2xl py-4 px-5 text-sm font-bold text-text outline-none focus:border-primary shadow-inner" />
-                                        </div>
-                                        <div className="p-4 bg-background/50 rounded-2xl border border-surfaceHighlight">
-                                            <p className="text-[9px] font-black text-muted uppercase">Rol de Usuario</p>
-                                            <p className="text-xs font-bold text-text mt-1 uppercase tracking-widest">{currentUser.role}</p>
-                                        </div>
+                                    <div className="flex justify-end items-center gap-4 pt-4 border-t border-surfaceHighlight">
+                                        {showSuccess && <span className="text-xs font-bold text-green-500 uppercase flex items-center gap-1"><CheckCircle2 size={14}/> Perfil actualizado</span>}
+                                        <button onClick={handleSaveProfile} disabled={isSaving} className="flex items-center gap-3 px-8 py-4 rounded-2xl font-black text-sm uppercase tracking-widest bg-primary text-white shadow-xl hover:bg-primaryHover transition-all active:scale-95 disabled:opacity-50">
+                                            {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                                            Guardar Cambios
+                                        </button>
                                     </div>
                                 </div>
-                                <div className="flex justify-end items-center gap-4 pt-4 border-t border-surfaceHighlight">
-                                    {showSuccess && <span className="text-xs font-bold text-green-500 uppercase flex items-center gap-1"><CheckCircle2 size={14}/> Perfil actualizado</span>}
-                                    <button onClick={handleSaveProfile} disabled={isSaving} className="flex items-center gap-3 px-8 py-4 rounded-2xl font-black text-sm uppercase tracking-widest bg-primary text-white shadow-xl hover:bg-primaryHover transition-all active:scale-95 disabled:opacity-50">
-                                        {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
-                                        Guardar Cambios
+                            </section>
+
+                            <section className="bg-surface border border-surfaceHighlight rounded-3xl p-8 shadow-sm animate-in fade-in">
+                                <div className="flex items-center justify-between mb-8">
+                                    <h3 className="text-xl font-black text-text flex items-center gap-3 uppercase tracking-tight italic">
+                                        <Monitor size={24} className="text-primary" /> Apariencia y Tema
+                                    </h3>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <button 
+                                        onClick={() => isDarkMode && onToggleTheme()}
+                                        className={`flex flex-col items-center gap-4 p-6 rounded-3xl border-2 transition-all group ${!isDarkMode ? 'bg-primary/5 border-primary shadow-md' : 'bg-background border-surfaceHighlight hover:border-primary/30'}`}
+                                    >
+                                        <div className={`p-4 rounded-2xl transition-all ${!isDarkMode ? 'bg-primary text-white scale-110' : 'bg-surfaceHighlight text-muted group-hover:text-primary'}`}>
+                                            <Sun size={32} />
+                                        </div>
+                                        <div className="text-center">
+                                            <p className={`text-sm font-black uppercase ${!isDarkMode ? 'text-primary' : 'text-text'}`}>Modo Claro</p>
+                                            <p className="text-[10px] text-muted font-bold uppercase mt-1">Interfaz luminosa estándar</p>
+                                        </div>
+                                        {!isDarkMode && <div className="h-1.5 w-1.5 bg-primary rounded-full animate-ping"></div>}
+                                    </button>
+
+                                    <button 
+                                        onClick={() => !isDarkMode && onToggleTheme()}
+                                        className={`flex flex-col items-center gap-4 p-6 rounded-3xl border-2 transition-all group ${isDarkMode ? 'bg-primary/5 border-primary shadow-md' : 'bg-background border-surfaceHighlight hover:border-primary/30'}`}
+                                    >
+                                        <div className={`p-4 rounded-2xl transition-all ${isDarkMode ? 'bg-primary text-white scale-110' : 'bg-surfaceHighlight text-muted group-hover:text-primary'}`}>
+                                            <Moon size={32} />
+                                        </div>
+                                        <div className="text-center">
+                                            <p className={`text-sm font-black uppercase ${isDarkMode ? 'text-primary' : 'text-text'}`}>Modo Oscuro</p>
+                                            <p className="text-[10px] text-muted font-bold uppercase mt-1">Interfaz optimizada para noche</p>
+                                        </div>
+                                        {isDarkMode && <div className="h-1.5 w-1.5 bg-primary rounded-full animate-ping"></div>}
                                     </button>
                                 </div>
-                            </div>
-                        </section>
+                            </section>
+                        </div>
                     )}
 
                     {activeTab === 'permissions' && isVale && (

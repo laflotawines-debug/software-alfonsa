@@ -1,0 +1,85 @@
+{
+    "tech_stack": [
+        "TypeScript",
+        "React",
+        "Vite",
+        "Supabase",
+        "TailwindCSS"
+    ],
+    "features": [
+        {
+            "name": "Authentication",
+            "description": "User login and session management using Supabase Auth.",
+            "files": [
+                "views/Login.tsx",
+                "supabase.ts",
+                "App.tsx"
+            ]
+        },
+        {
+            "name": "Dashboard",
+            "description": "Main dashboard view showing high-level metrics.",
+            "files": [
+                "views/Dashboard.tsx",
+                "components/Header.tsx",
+                "components/Sidebar.tsx"
+            ]
+        },
+        {
+            "name": "Order Management",
+            "description": "Create, view, assemble, and manage orders.",
+            "files": [
+                "views/OrderList.tsx",
+                "views/OrderSheet.tsx",
+                "views/CreateBudget.tsx",
+                "components/OrderAssemblyModal.tsx",
+                "logic.ts",
+                "types.ts"
+            ]
+        },
+        {
+            "name": "Inventory Management",
+            "description": "Track stock, inbounds, adjustments, and transfers.",
+            "files": [
+                "views/InventoryInbounds.tsx",
+                "views/InventoryAdjustments.tsx",
+                "views/InventoryTransfers.tsx",
+                "views/InventoryHistory.tsx",
+                "views/StockControl.tsx",
+                "views/Expirations.tsx",
+                "views/SupplierOrders.tsx"
+            ]
+        },
+        {
+            "name": "Finance & Payments",
+            "description": "Manage provider payments, transfers, and account statements.",
+            "files": [
+                "views/PaymentsOverview.tsx",
+                "views/PaymentsHistory.tsx",
+                "views/PaymentsProviders.tsx",
+                "views/AccountStatements.tsx"
+            ]
+        },
+        {
+            "name": "Master Data",
+            "description": "Management of clients, suppliers, products, and prices.",
+            "files": [
+                "views/ClientsMaster.tsx",
+                "views/SuppliersMaster.tsx",
+                "views/Catalog.tsx",
+                "views/PriceManagement.tsx"
+            ]
+        },
+        {
+            "name": "Tools & Utilities",
+            "description": "Various tools like SQL editor, Label maker, Price estimator.",
+            "files": [
+                "views/SqlEditor.tsx",
+                "views/Etiquetador.tsx",
+                "views/Presupuestador.tsx",
+                "views/ListaChina.tsx",
+                "views/Settings.tsx"
+            ]
+        }
+    ]
+}

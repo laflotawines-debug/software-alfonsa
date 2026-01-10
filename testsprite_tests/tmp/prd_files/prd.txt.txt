@@ -1,0 +1,74 @@
+PRD: Alfonsa Software - Gestión Administrativa Interna
+1. Overview
+Alfonsa Software es una plataforma web de gestión administrativa y operativa diseñada para centralizar los procesos de una distribuidora. El sistema permite el control de pedidos, la gestión de inventario multidepósito, el seguimiento financiero de pagos a proveedores y la administración de maestros de datos (clientes, artículos y proveedores).
+2. Objetivos del Sistema
+Gestión del Ciclo de Vida del Pedido: Administrar desde la creación del pedido hasta su cobro final.
+Control de Stock Físico: Supervisar ingresos, egresos, transferencias entre depósitos y auditorías (controles ciegos).
+Conciliación Financiera: Monitorear el progreso de pagos y transferencias hacia proveedores según metas preestablecidas.
+Herramientas Operativas: Facilitar la generación de etiquetas, presupuestos transitorios y listas de precios para difusión.
+3. Alcance (Scope)
+Usuarios: Personal administrativo (Rol: "Vale") y personal operativo (Rol: "Armador").
+Plataforma: Aplicación web responsiva (PWA) con soporte para escritorio y dispositivos móviles.
+Persistencia: Integración con base de datos relacional (Supabase) y almacenamiento de archivos (PDF).
+4. Funcionalidades Existentes
+4.1. Autenticación y Perfiles
+Acceso restringido mediante Email y Contraseña.
+Gestión de perfiles de usuario con nombre, avatar y rol.
+Sistema de permisos granulares asignables por el administrador a los armadores.
+4.2. Dashboard Informativo
+Visualización de KPIs: Pedidos Totales, Pagos Pendientes, Ingresos Realizados y Vencimientos Críticos.
+Gráfico de tendencia de pedidos por semana.
+Listado de vencimientos de productos próximos y pedidos recientes.
+Filtros temporales por mes y año.
+4.3. Gestión de Pedidos (Workflow)
+Buscador: Lógica "Keywords Match" (coincidencia de todas las palabras clave ingresadas).
+Creación: Carga manual o mediante procesador de texto (parsing) de líneas de pedido.
+Estados del Pedido:
+En Armado: El armador selecciona productos.
+Armado: Finalización del picking.
+Controlado / Facturado: Validación de cantidades y emisión de comprobante.
+En Reparto: Asignación a logística.
+Entregado / Pagado: Cierre del ciclo comercial.
+Regla de Control: Un armador no puede controlar un pedido que él mismo armó (bloqueo por ID de usuario).
+4.4. Gestión de Inventario
+Depósitos: Manejo de dos ubicaciones físicas: LLERENA y BETBEDER.
+Ingresos (Inbounds): Registro de arribo de mercadería por proveedor y comprobante. Requiere revisión y aprobación para impactar stock.
+Ajustes: Correcciones manuales por merma, rotura o error de carga. Soporta importación de diferencias detectadas en auditorías.
+Transferencias: Movimiento de stock entre depósitos con validación de existencia en origen.
+Auditorías (Stock Control): Creación de sesiones de conteo "ciego". Permite la participación de hasta dos armadores para conciliación por el administrador.
+4.5. Gestión Financiera (Pagos a Proveedores)
+Perfiles de Proveedor: Configuración de metas de cobro, prioridad y cuentas bancarias (Alias/CBU).
+Transferencias: Registro de pagos realizados por clientes con destino a cuentas de proveedores.
+Estados de Pago: Pendiente, Realizado, Archivado.
+Conciliación: Barra de progreso dual (Realizado vs. Pendiente) respecto a la meta global del proveedor.
+4.6. Maestros y Herramientas
+Catálogo: CRUD de artículos con gestión de 4 listas de precios y empaque (unidades por caja).
+Clientes: CRUD de clientes con historial de estados de cuenta (Debe/Haber).
+Gestión Masiva de Precios: Actualización porcentual por lista con redondeo comercial automático.
+Etiquetador: Generación de PDF de etiquetas con precios y descuentos configurables.
+Lista China: Generación de snapshot de precios de "Lista 4" formateada para compartir en servicios de mensajería.
+5. Funcionalidades No Existentes (Exclusiones)
+Integración directa con pasarelas de pago (Checkout automático).
+Emisión de facturas fiscales ante entes gubernamentales (AFIP/etc.).
+Seguimiento por GPS en tiempo real de repartidores.
+Módulo de RRHH o liquidación de sueldos.
+6. Reglas de Negocio
+6.1. Operativas
+Redondeo de Precios: Todos los precios calculados deben redondearse al múltiplo de 50 más cercano (Ej: 1024 -> 1000, 1026 -> 1050).
+Validación de Picking: No se puede avanzar un pedido a "Controlado" si existen ítems sin el "check" de verificado.
+Faltantes: El sistema debe registrar la diferencia entre la cantidad pedida originalmente y la cantidad realmente enviada/facturada.
+6.2. Inventario
+Stock Negativo: El sistema no debe permitir transferencias entre depósitos si la cantidad supera el disponible en origen.
+Aprobación de Ingresos: Los ingresos de mercadería no suman stock automáticamente; requieren la acción de "Aprobar" por un usuario con rol Vale.
+6.3. Búsqueda
+Algoritmo: Todas las búsquedas del sistema (clientes, productos, pedidos) deben separar el string de entrada por espacios y buscar la presencia de cada término en los campos clave (AND lógico).
+7. Criterios de Aceptación para Testing
+7.1. Seguridad y Acceso
+Un usuario con rol "Armador" no debe visualizar el módulo "Editor SQL" ni la pestaña de "Precios" en la configuración.
+El sistema debe redirigir al login si no existe una sesión activa.
+7.2. Integridad de Datos
+Al eliminar un proveedor, se deben eliminar en cascada sus perfiles de pago vinculados (si aplica según RLS).
+Cualquier cambio de estado en un pedido debe generar una entrada automática en el arreglo history con timestamp y ID de usuario.
+7.3. Exportación
+La generación de PDFs (Facturas, Etiquetas, Estados de Cuenta) debe incluir los montos formateados correctamente con separadores de miles y decimales estándar (es-AR).
+La exportación a Excel debe mantener la integridad de los códigos de producto (evitar conversión a notación científica).

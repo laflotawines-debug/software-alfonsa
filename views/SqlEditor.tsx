@@ -5,7 +5,7 @@ import { User } from '../types';
 
 export const SqlEditor: React.FC<{ currentUser: User }> = ({ currentUser }) => {
     const [query, setQuery] = useState(`-- ========================================================
--- SCRIPT DE REPARACIÓN: GESTIÓN DE PRECIOS Y PERMISOS
+-- SCRIPT DE REPARACIÓN: GESTIÓN DE PRECIOS, TEMAS Y PERMISOS
 -- ========================================================
 
 -- 1. Asegurar que codart sea la Primary Key (Necesario para upsert)
@@ -29,18 +29,28 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_list_snapshot (
     created_at timestamptz DEFAULT now()
 );
 
--- 5. Insertar permisos fundamentales de herramientas
+-- 5. Agregar soporte para Preferencia de Tema en Perfiles
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profiles' AND column_name='theme_preference') THEN
+        ALTER TABLE public.profiles ADD COLUMN theme_preference text DEFAULT 'light';
+    END IF;
+END $$;
+
+-- 6. Insertar permisos fundamentales de herramientas
 INSERT INTO public.app_permissions (key, module, label)
 VALUES 
     ('tools.price_management', 'Herramientas', 'Gestión de Precios'),
     ('tools.stock_control', 'Herramientas', 'Gestión de Stock'),
     ('tools.presupuestador', 'Herramientas', 'Presupuestador'),
-    ('tools.etiquetador', 'Herramientas', 'Etiquetador')
+    ('tools.etiquetador', 'Herramientas', 'Etiquetador'),
+    ('tools.lista_china', 'Herramientas', 'Lista China'),
+    ('catalog.statements', 'Clientes', 'Estados de Cuenta')
 ON CONFLICT (key) DO NOTHING;`);
 
     const copyToClipboard = () => {
         navigator.clipboard.writeText(query);
-        alert("Script copiado. Ejecútalo en el SQL Editor de Supabase para activar los permisos de gestión de stock.");
+        alert("Script copiado. Ejecútalo en el SQL Editor de Supabase para activar los permisos de gestión de stock y preferencias de tema.");
     };
 
     return (

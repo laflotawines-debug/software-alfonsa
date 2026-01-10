@@ -1,0 +1,18 @@
+{
+  "status": "commited",
+  "type": "frontend",
+  "scope": "codebase",
+  "localEndpoint": "http://localhost:3000",
+  "loginUser": "fernandoist98@gmail.com",
+  "loginPassword": "caca2017",
+  "executionArgs": {
+    "projectName": "software-alfonsa",
+    "projectPath": "c:\\Users\\cachini\\Desktop\\alfonsa-software\\software-alfonsa",
+    "testIds": [],
+    "additionalInstruction": "",
+    "envs": {
+      "API_KEY": "sk-user-p6AnHspAYm_uGEGjbd9mj0HYo0x5HbjPMDfC5sR5L0rvstGtc02vRocfISA7_jF35e_a65QaOWsuvGea09zsrSFA13jcCJng9ffZF_LmoWGTKYRjWpb2vTUPYRkUAWBOAd4"
+    }
+  },
+  "proxy": "http://53e4cd7e-74d0-4d5b-ac82-30544682969a:psETXi4kvrIxc8u5CD480fDG5IqZWWvS@tun.testsprite.com:8080"
+}

@@ -1,0 +1,469 @@
+[
+  {
+    "id": "TC001",
+    "title": "User Authentication Success",
+    "description": "Verify that a user can successfully log in with valid email and password credentials and appropriate role-based access is granted.",
+    "category": "functional",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to the login page"
+      },
+      {
+        "type": "action",
+        "description": "Enter valid email and password"
+      },
+      {
+        "type": "action",
+        "description": "Click the login button"
+      },
+      {
+        "type": "assertion",
+        "description": "User is successfully logged in and redirected to dashboard with UI elements visible according to their role (Vale or Armador)"
+      }
+    ]
+  },
+  {
+    "id": "TC002",
+    "title": "User Authentication Failure",
+    "description": "Verify that login fails if incorrect email or password is entered and appropriate error message is shown.",
+    "category": "error handling",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to the login page"
+      },
+      {
+        "type": "action",
+        "description": "Enter invalid email or password"
+      },
+      {
+        "type": "action",
+        "description": "Click the login button"
+      },
+      {
+        "type": "assertion",
+        "description": "Login attempt fails and error message is displayed without granting access"
+      }
+    ]
+  },
+  {
+    "id": "TC003",
+    "title": "Dashboard KPI Display",
+    "description": "Verify that the dashboard correctly displays KPIs including total orders, pending payments, revenue, expiration alerts, and trends with correct filters.",
+    "category": "functional",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as user with dashboard access"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to the dashboard page"
+      },
+      {
+        "type": "assertion",
+        "description": "Check that total orders, pending payments, revenue, and expirations are correctly displayed"
+      },
+      {
+        "type": "action",
+        "description": "Apply different temporal filters to KPIs"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify that trend graphs update accordingly with filtered data"
+      }
+    ]
+  },
+  {
+    "id": "TC004",
+    "title": "Order Creation and Keyword Search",
+    "description": "Verify users can create orders and use keyword-based search with AND logic across multiple fields to find existing orders.",
+    "category": "functional",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as order handler"
+      },
+      {
+        "type": "action",
+        "description": "Access order creation interface and create a new order with valid data"
+      },
+      {
+        "type": "assertion",
+        "description": "New order is created and visible in order list"
+      },
+      {
+        "type": "action",
+        "description": "Use keyword search input with multiple tokens"
+      },
+      {
+        "type": "assertion",
+        "description": "Results include orders matching all input keywords across relevant fields"
+      }
+    ]
+  },
+  {
+    "id": "TC005",
+    "title": "Order Workflow State Transitions",
+    "description": "Validate order state progression through states: In Assembly -> Assembled -> Controlled/Invoiced -> In Dispatch -> Delivered/Paid with all business rules and conflict of interest checks enforced.",
+    "category": "functional",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Create or select an order in 'In Assembly' state"
+      },
+      {
+        "type": "action",
+        "description": "Attempt to advance order to 'Assembled' without complete picking"
+      },
+      {
+        "type": "assertion",
+        "description": "Advance prevented with validation error on incomplete picking"
+      },
+      {
+        "type": "action",
+        "description": "Complete picking and advance order to 'Assembled'"
+      },
+      {
+        "type": "action",
+        "description": "Advance order to 'Controlled/Invoiced' ensuring no conflict of interest in control"
+      },
+      {
+        "type": "assertion",
+        "description": "Order state changes successfully with audit log including user and timestamp"
+      },
+      {
+        "type": "action",
+        "description": "Advance order through 'In Dispatch' to 'Delivered/Paid' and record payment status"
+      },
+      {
+        "type": "assertion",
+        "description": "Order completion is logged and payment discrepancies are flagged as needed"
+      }
+    ]
+  },
+  {
+    "id": "TC006",
+    "title": "Inventory Inbound Approval Process",
+    "description": "Verify inventory inbounds can be registered and require approval before stock levels are updated.",
+    "category": "functional",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as inventory manager"
+      },
+      {
+        "type": "action",
+        "description": "Register a new inbound shipment at LLERENA warehouse"
+      },
+      {
+        "type": "assertion",
+        "description": "Inbound shows as pending approval and does not affect stock immediately"
+      },
+      {
+        "type": "action",
+        "description": "Approve inbound shipment"
+      },
+      {
+        "type": "assertion",
+        "description": "Stock levels are updated accordingly and approval is logged"
+      }
+    ]
+  },
+  {
+    "id": "TC007",
+    "title": "Inventory Manual Stock Adjustment",
+    "description": "Validate manual stock adjustments can be performed for discrepancies with proper validations and audit trail.",
+    "category": "functional",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as inventory manager"
+      },
+      {
+        "type": "action",
+        "description": "Select stock item in BETBEDER warehouse and perform manual stock adjustment with positive and negative values"
+      },
+      {
+        "type": "assertion",
+        "description": "Stock is adjusted accordingly and adjustment reason and user details are logged"
+      },
+      {
+        "type": "action",
+        "description": "Attempt to adjust stock resulting in negative stock quantity"
+      },
+      {
+        "type": "assertion",
+        "description": "Adjustment prevented with validation error"
+      }
+    ]
+  },
+  {
+    "id": "TC008",
+    "title": "Inter-Warehouse Stock Transfer with Validation",
+    "description": "Verify transfer between LLERENA and BETBEDER validates availability and updates stocks correctly.",
+    "category": "functional",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as inventory manager"
+      },
+      {
+        "type": "action",
+        "description": "Initiate transfer of stock item from LLERENA to BETBEDER exceeding available quantity"
+      },
+      {
+        "type": "assertion",
+        "description": "Transfer blocked due to insufficient stock"
+      },
+      {
+        "type": "action",
+        "description": "Initiate valid stock transfer within available limits"
+      },
+      {
+        "type": "assertion",
+        "description": "Stock levels updated correctly in both warehouses with transaction logged"
+      }
+    ]
+  },
+  {
+    "id": "TC009",
+    "title": "Blind Stock Audit with Dual Participants",
+    "description": "Ensure blind stock audits require two participants and prevent audit completion if data is inconsistent.",
+    "category": "functional",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as inventory manager"
+      },
+      {
+        "type": "action",
+        "description": "Start blind stock audit requiring two participants"
+      },
+      {
+        "type": "action",
+        "description": "First participant enters stock counts"
+      },
+      {
+        "type": "action",
+        "description": "Second participant enters stock counts"
+      },
+      {
+        "type": "assertion",
+        "description": "System compares both entries and flags discrepancies"
+      },
+      {
+        "type": "action",
+        "description": "Attempt to complete audit despite unresolved discrepancies"
+      },
+      {
+        "type": "assertion",
+        "description": "Audit completion blocked until conflicts are resolved"
+      }
+    ]
+  },
+  {
+    "id": "TC010",
+    "title": "Financial Payment Record and Progress Tracking",
+    "description": "Verify financial staff can update payments to suppliers and monitor payment progress against targets with priority and profile rules.",
+    "category": "functional",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as financial staff"
+      },
+      {
+        "type": "action",
+        "description": "Update payment state for supplier invoices"
+      },
+      {
+        "type": "assertion",
+        "description": "Payment state updated and reflected in progress tracking dashboards"
+      },
+      {
+        "type": "action",
+        "description": "Modify payment priorities and bank account details"
+      },
+      {
+        "type": "assertion",
+        "description": "System uses updated priorities to order payment processing and stores bank details securely"
+      }
+    ]
+  },
+  {
+    "id": "TC011",
+    "title": "Master Data CRUD Operations and Bulk Price Updates",
+    "description": "Validate CRUD functions for clients, suppliers, articles, and price lists and test bulk price updates with commercial rounding.",
+    "category": "functional",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as user with master data permissions"
+      },
+      {
+        "type": "action",
+        "description": "Create, edit, view, and delete a client record"
+      },
+      {
+        "type": "assertion",
+        "description": "Operations succeed and data consistency is maintained"
+      },
+      {
+        "type": "action",
+        "description": "Perform bulk price updates on multiple articles applying commercial rounding rules to nearest 50"
+      },
+      {
+        "type": "assertion",
+        "description": "Prices updated correctly with verified rounding"
+      }
+    ]
+  },
+  {
+    "id": "TC012",
+    "title": "Operational Utilities Access and Usage",
+    "description": "Verify access restrictions on SQL editor and usability of label maker, budget estimator, price list snapshot, and settings management.",
+    "category": "security",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as normal operational user"
+      },
+      {
+        "type": "action",
+        "description": "Attempt to access SQL editor"
+      },
+      {
+        "type": "assertion",
+        "description": "Access denied or hidden if role lacks permission"
+      },
+      {
+        "type": "action",
+        "description": "Access label maker, generate labels with configurable prices and discounts"
+      },
+      {
+        "type": "assertion",
+        "description": "Labels generated correctly and exportable as PDF"
+      },
+      {
+        "type": "action",
+        "description": "Use budget estimator with valid inputs"
+      },
+      {
+        "type": "assertion",
+        "description": "Estimates match expected calculations"
+      },
+      {
+        "type": "action",
+        "description": "Generate price list snapshot formatted for messaging"
+      },
+      {
+        "type": "assertion",
+        "description": "Snapshot data matches current prices and is formatted properly"
+      },
+      {
+        "type": "action",
+        "description": "Update app settings and save changes"
+      },
+      {
+        "type": "assertion",
+        "description": "Settings persist and take effect correctly"
+      }
+    ]
+  },
+  {
+    "id": "TC013",
+    "title": "Role-Based Access Control Enforcement",
+    "description": "Verify module and UI visibility matches user role permissions and unauthorized actions are blocked.",
+    "category": "security",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as Vale role"
+      },
+      {
+        "type": "assertion",
+        "description": "Modules and features allowed for Vale are visible and accessible; others are hidden or disabled"
+      },
+      {
+        "type": "action",
+        "description": "Login as Armador role"
+      },
+      {
+        "type": "assertion",
+        "description": "Modules and features allowed for Armador are visible and accessible; others are hidden or disabled"
+      },
+      {
+        "type": "action",
+        "description": "Attempt to access unauthorized modules by URL hacking"
+      },
+      {
+        "type": "assertion",
+        "description": "Access denied or redirected to error page"
+      }
+    ]
+  },
+  {
+    "id": "TC014",
+    "title": "Data Integrity with Cascading Deletions and History Logging",
+    "description": "Ensure deletions cascade correctly on related entities and order state changes log history with user and timestamp.",
+    "category": "functional",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Delete a client that has associated orders"
+      },
+      {
+        "type": "assertion",
+        "description": "Cascade deletion or proper restriction prevents orphaned data"
+      },
+      {
+        "type": "action",
+        "description": "Change order state through workflow"
+      },
+      {
+        "type": "assertion",
+        "description": "History record created with state, user info, and timestamp"
+      }
+    ]
+  },
+  {
+    "id": "TC015",
+    "title": "UI Export Functions Produce Proper PDF and Excel Files",
+    "description": "Verify export functionality for reports and labels produces correctly formatted PDF and Excel respecting locale and data formatting.",
+    "category": "functional",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Generate export of price list snapshot to PDF"
+      },
+      {
+        "type": "assertion",
+        "description": "PDF file downloads properly formatted with correct locale number and date formats"
+      },
+      {
+        "type": "action",
+        "description": "Export financial reports to Excel"
+      },
+      {
+        "type": "assertion",
+        "description": "Excel file contains accurate data and formatting consistent with locale rules"
+      }
+    ]
+  }
+]

@@ -1,0 +1,128 @@
+{
+  "meta": {
+    "project": "Alfonsa Software - Gestión Administrativa Interna",
+    "date": "2026-01-09",
+    "prepared_by": "Software Development Manager"
+  },
+  "product_overview": "Alfonsa Software is a comprehensive web platform designed to centralize and streamline administrative and operational processes of a distribution company. It enables efficient order lifecycle management, multi-warehouse inventory control, financial tracking of supplier payments, and master data administration including clients, products, and suppliers.",
+  "core_goals": [
+    "Manage the full lifecycle of orders from creation to final payment.",
+    "Maintain accurate physical stock control across multiple warehouses with inbound approvals, adjustments, transfers, and blind stock audits.",
+    "Provide financial reconciliation tools to monitor and manage payments to suppliers, meeting predefined collection goals.",
+    "Offer operational tools that facilitate label generation, provisional budgeting, and price list dissemination.",
+    "Ensure secure user access with role-based permissions for administrative and operational personnel.",
+    "Deliver a responsive web app supporting both desktop and mobile platforms integrated with a relational database and PDF storage."
+  ],
+  "key_features": [
+    "User Authentication and Profile Management with granular permission controls for different roles (e.g., Vale and Armador).",
+    "Dashboard displaying KPIs including total orders, pending payments, revenue, and critical expiration alerts with temporal filters and trend graphs.",
+    "Order Management workflow with keyword-based search, multiple order states (In Assembly, Assembled, Controlled/Invoiced, In Dispatch, Delivered/Paid), and rules preventing conflict of interest in order control.",
+    "Inventory Management across two physical warehouses (LLERENA and BETBEDER) including inbound approval, manual stock adjustments, inter-warehouse transfers with validation, and dual-participant blind stock audits.",
+    "Financial Management of supplier payments, including payment profiles, priority settings, bank account management, payment states, and progress tracking against targets.",
+    "Master Data CRUD operations for clients, suppliers, articles, and price lists with bulk price updates implementing commercial rounding rules.",
+    "Operational utilities including SQL editor (role-restricted), PDF label maker with configurable pricing and discounts, snapshot generation of price lists formatted for messaging, and in-app settings management."
+  ],
+  "user_flow_summary": [
+    "Users authenticate via email and password and gain access based on their role (Vale or Armador).",
+    "From the dashboard, users review key metrics and access modules based on permissions.",
+    "Order handlers create and manage orders using keyword searches, update order states through defined workflows, and finalize orders ensuring verification checks.",
+    "Inventory managers handle inbound shipments by registering arrivals requiring approval, perform stock adjustments for discrepancies, and execute stock transfers validated against warehouse availability.",
+    "Financial staff update payment records, manage supplier accounts and goals, and monitor payment progress using visual indicators.",
+    "Users manage catalogs, client and supplier master data with full CRUD operations and apply bulk price modifications with rounding logic.",
+    "Operational users access specialized tools such as the label generator, budget estimators, SQL editor (if permitted), and generate snapshots of current price lists for external sharing."
+  ],
+  "validation_criteria": [
+    "Role-based access control enforced with appropriate module visibility and session management.",
+    "Data integrity ensured by cascading deletions, automatic history logging on order state changes with user and timestamp, and prevention of invalid stock operations.",
+    "UI export functions produce properly formatted PDFs and Excel files respecting locale conventions and data formatting rules.",
+    "Price calculations conform to commercial rounding to nearest multiple of 50.",
+    "Order processing validates complete picking before advancing state and registers quantity discrepancies as required.",
+    "Inventory inbounds require approval before affecting stock levels.",
+    "Search functionalities implement AND logic splitting input terms to match across key entity fields."
+  ],
+  "code_summary": {
+    "tech_stack": [
+      "TypeScript",
+      "React",
+      "Vite",
+      "Supabase",
+      "TailwindCSS"
+    ],
+    "features": [
+      {
+        "name": "Authentication",
+        "description": "User login and session management using Supabase Auth.",
+        "files": [
+          "views/Login.tsx",
+          "supabase.ts",
+          "App.tsx"
+        ]
+      },
+      {
+        "name": "Dashboard",
+        "description": "Main dashboard view showing high-level metrics.",
+        "files": [
+          "views/Dashboard.tsx",
+          "components/Header.tsx",
+          "components/Sidebar.tsx"
+        ]
+      },
+      {
+        "name": "Order Management",
+        "description": "Create, view, assemble, and manage orders.",
+        "files": [
+          "views/OrderList.tsx",
+          "views/OrderSheet.tsx",
+          "views/CreateBudget.tsx",
+          "components/OrderAssemblyModal.tsx",
+          "logic.ts",
+          "types.ts"
+        ]
+      },
+      {
+        "name": "Inventory Management",
+        "description": "Track stock, inbounds, adjustments, and transfers.",
+        "files": [
+          "views/InventoryInbounds.tsx",
+          "views/InventoryAdjustments.tsx",
+          "views/InventoryTransfers.tsx",
+          "views/InventoryHistory.tsx",
+          "views/StockControl.tsx",
+          "views/Expirations.tsx",
+          "views/SupplierOrders.tsx"
+        ]
+      },
+      {
+        "name": "Finance & Payments",
+        "description": "Manage provider payments, transfers, and account statements.",
+        "files": [
+          "views/PaymentsOverview.tsx",
+          "views/PaymentsHistory.tsx",
+          "views/PaymentsProviders.tsx",
+          "views/AccountStatements.tsx"
+        ]
+      },
+      {
+        "name": "Master Data",
+        "description": "Management of clients, suppliers, products, and prices.",
+        "files": [
+          "views/ClientsMaster.tsx",
+          "views/SuppliersMaster.tsx",
+          "views/Catalog.tsx",
+          "views/PriceManagement.tsx"
+        ]
+      },
+      {
+        "name": "Tools & Utilities",
+        "description": "Various tools like SQL editor, Label maker, Price estimator.",
+        "files": [
+          "views/SqlEditor.tsx",
+          "views/Etiquetador.tsx",
+          "views/Presupuestador.tsx",
+          "views/ListaChina.tsx",
+          "views/Settings.tsx"
+        ]
+      }
+    ]
+  }
+}
