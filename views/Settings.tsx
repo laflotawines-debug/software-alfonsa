@@ -92,10 +92,13 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
             
             if (profRes.data) setAllProfiles(profRes.data as any);
             if (dictRes.data) {
-                setPermDict(dictRes.data);
+                // Filtramos el Editor SQL de la lista visual para que sea "totalmente oculto" de los permisos
+                const filteredDict = dictRes.data.filter(p => p.key !== 'tools.sql_editor');
+                setPermDict(filteredDict);
+                
                 if (!selectedModule) {
-                    const hasTools = dictRes.data.some(p => p.module.toLowerCase() === 'herramientas');
-                    setSelectedModule(hasTools ? 'Herramientas' : dictRes.data[0]?.module || null);
+                    const hasTools = filteredDict.some(p => p.module.toLowerCase() === 'herramientas');
+                    setSelectedModule(hasTools ? 'Herramientas' : filteredDict[0]?.module || null);
                 }
             }
         } catch (e) { 
@@ -106,16 +109,21 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
     };
 
     const handleSyncPermissions = async () => {
-        if (!confirm("¿Deseas sincronizar los permisos?")) return;
+        if (!confirm("¿Deseas sincronizar el diccionario de permisos? (Esto activará Gestión de Precios en la lista)")) return;
         
         setIsPermsLoading(true);
         try {
             const keysToSync: any[] = [];
             SYSTEM_NAV_STRUCTURE.forEach(item => {
-                if (item.permission) keysToSync.push({ key: item.permission, module: item.module, label: item.label });
+                // Filtramos tools.sql_editor para que no se guarde en la tabla de permisos configurables
+                if (item.permission && item.permission !== 'tools.sql_editor') {
+                    keysToSync.push({ key: item.permission, module: item.module, label: item.label });
+                }
                 if (item.subItems) {
                     item.subItems.forEach(sub => {
-                        if (sub.permission) keysToSync.push({ key: sub.permission, module: item.module, label: sub.label });
+                        if (sub.permission && sub.permission !== 'tools.sql_editor') {
+                            keysToSync.push({ key: sub.permission, module: item.module, label: sub.label });
+                        }
                     });
                 }
             });
@@ -211,7 +219,6 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
         setIsExporting(true);
         setSyncLog([`Generando archivo de ${type === 'prices' ? 'Artículos' : 'Stock'}...`]);
         
-        // Helper para convertir 0 en celda vacía para el Excel
         const emptyIfZero = (val: any) => {
             const n = Number(val || 0);
             return n === 0 ? "" : n;
@@ -427,6 +434,7 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                                     <h3 className="text-xl font-black text-text flex items-center gap-3 uppercase tracking-tight italic">
                                         <ShieldCheck size={24} className="text-primary" /> Gestión de Permisos Globales
                                     </h3>
+                                    <p className="text-[10px] font-bold text-muted uppercase mt-1">Configura el acceso para armadores. (Editor SQL excluido por seguridad)</p>
                                 </div>
                                 <button onClick={handleSyncPermissions} className="p-3 bg-surfaceHighlight rounded-2xl text-muted hover:text-primary transition-all">
                                     <RefreshCcw size={20} className={isPermsLoading ? 'animate-spin' : ''} />

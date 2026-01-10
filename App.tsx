@@ -17,9 +17,11 @@ import { Presupuestador } from './views/Presupuestador';
 import { ListaChina } from './views/ListaChina';
 import { SuppliersMaster } from './views/SuppliersMaster';
 import { ClientsMaster } from './views/ClientsMaster'; 
+import { AccountStatements } from './views/AccountStatements'; // Importación
 import { Login } from './views/Login';
 import { Catalog } from './views/Catalog';
 import { StockControl } from './views/StockControl';
+import { PriceManagement } from './views/PriceManagement';
 // INVENTORY VIEWS
 import { InventoryInbounds } from './views/InventoryInbounds';
 import { InventoryAdjustments } from './views/InventoryAdjustments';
@@ -75,7 +77,7 @@ export default function App() {
   const [orders, setOrders] = useState<DetailedOrder[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
-  const [transfers, setTransfers] = useState<Transfer[]>([]);
+  const [transfers, setSetTransfers] = useState<Transfer[]>([]);
   const [expirations, setExpirations] = useState<ProductExpiration[]>([]);
   const [selectedOrderForAssembly, setSelectedOrderForAssembly] = useState<DetailedOrder | null>(null);
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
@@ -119,15 +121,9 @@ export default function App() {
 
   const handleInstallApp = async () => {
     if (!deferredPrompt) return;
-    
-    // Mostrar el prompt nativo
     deferredPrompt.prompt();
-    
-    // Esperar la respuesta del usuario
     const { outcome } = await deferredPrompt.userChoice;
     console.log(`Usuario respondió a la instalación: ${outcome}`);
-    
-    // Limpiar el prompt ya usado
     setDeferredPrompt(null);
   };
 
@@ -176,7 +172,8 @@ export default function App() {
                 productCount: o.order_items?.length || 0,
                 products: (o.order_items || []).map((item: any) => ({
                     code: item.code, name: item.name, originalQuantity: item.original_quantity, 
-                    quantity: item.quantity, shipped_quantity: item.shipped_quantity, 
+                    quantity: item.quantity, 
+                    shippedQuantity: item.shipped_quantity, 
                     unitPrice: Number(item.unit_price || 0), subtotal: Number(item.subtotal || 0), isChecked: item.is_checked
                 }))
             }));
@@ -190,11 +187,11 @@ export default function App() {
                 status: p.status as any,
                 accounts: (p.provider_accounts || []).map((a: any) => ({
                     id: a.id, providerId: a.provider_id, condition: a.condition, holder: a.holder,
-                    identifier_alias: a.identifier_alias, 
-                    identifier_cbu: a.identifier_cbu, 
-                    meta_amount: a.meta_amount, 
-                    current_amount: Number(a.current_amount || 0), 
-                    pending_amount: Number(a.pending_amount || 0), 
+                    identifierAlias: a.identifier_alias, 
+                    identifierCBU: a.identifier_cbu, 
+                    metaAmount: a.meta_amount, 
+                    currentAmount: Number(a.current_amount || 0), 
+                    pendingAmount: Number(a.pending_amount || 0), 
                     status: a.status
                 }))
             }));
@@ -208,7 +205,7 @@ export default function App() {
                 providerId: t.provider_id, accountId: t.account_id, notes: t.notes, 
                 status: t.status as any, isLoadedInSystem: t.is_loaded_in_system
             }));
-            setTransfers(mappedTransfers.sort((a, b) => b.id.localeCompare(a.id)));
+            setSetTransfers(mappedTransfers.sort((a, b) => b.id.localeCompare(a.id)));
         }
 
         const { data: dbTrips } = await supabase.from('trips').select('*, trip_clients(*), trip_expenses(*)');
@@ -217,9 +214,12 @@ export default function App() {
                 id: t.id, displayId: t.display_id, name: t.name, status: t.status as any,
                 driverName: t.driver_name, date: t.date_text, route: t.route,
                 clients: (t.trip_clients || []).map((c: any) => ({
-                    id: c.id, name: c.name, address: c.address, previous_balance: Number(c.previous_balance || 0),
-                    currentInvoiceAmount: Number(c.current_invoice_amount || 0), payment_cash: Number(c.payment_cash || 0),
-                    payment_transfer: Number(c.payment_transfer || 0), is_transfer_expected: !!c.is_transfer_expected,
+                    id: c.id, name: c.name, address: c.address, 
+                    previousBalance: Number(c.previous_balance || 0),
+                    currentInvoiceAmount: Number(c.current_invoice_amount || 0), 
+                    paymentCash: Number(c.payment_cash || 0),
+                    paymentTransfer: Number(c.payment_transfer || 0), 
+                    isTransferExpected: !!c.is_transfer_expected,
                     status: c.status as any
                 })),
                 expenses: (t.trip_expenses || []).map((e: any) => ({
@@ -414,7 +414,6 @@ export default function App() {
     let finalOrder = updatedOrder;
     if (shouldAdvance) finalOrder = advanceOrderStatus(updatedOrder, currentUser);
     try {
-        // 1. Actualizar metadatos del pedido
         const { error: orderUpdateErr } = await supabase.from('orders').update({
             total: finalOrder.total, observations: finalOrder.observations, status: finalOrder.status, 
             payment_method: finalOrder.paymentMethod, assembler_id: finalOrder.assemblerId, 
@@ -424,7 +423,6 @@ export default function App() {
         
         if (orderUpdateErr) throw orderUpdateErr;
 
-        // 2. Sincronizar items: Borrar y Re-insertar para manejar agregados manuales y eliminaciones
         const itemsToInsert = finalOrder.products.map(p => ({ 
             order_id: finalOrder.id, 
             code: p.code, 
@@ -437,11 +435,9 @@ export default function App() {
             is_checked: p.isChecked 
         }));
 
-        // Eliminamos los items actuales
         const { error: deleteErr } = await supabase.from('order_items').delete().eq('order_id', finalOrder.id);
         if (deleteErr) throw deleteErr;
 
-        // Insertamos la nueva lista completa (incluye agregados manuales)
         const { error: insertErr } = await supabase.from('order_items').insert(itemsToInsert);
         if (insertErr) throw insertErr;
 
@@ -501,7 +497,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Sidebar Desktop y Móvil */}
       <Sidebar 
         currentUser={currentUser} 
         currentView={currentView} 
@@ -562,12 +557,14 @@ export default function App() {
                 
                 {currentView === View.CATALOG && <Catalog currentUser={currentUser} />}
                 {currentView === View.CLIENTS_MASTER && <ClientsMaster currentUser={currentUser} />}
+                {currentView === View.CLIENT_STATEMENTS && <AccountStatements />}
                 {currentView === View.SUPPLIERS_MASTER && <SuppliersMaster currentUser={currentUser} />}
                 {currentView === View.EXPIRATIONS && <Expirations />}
                 {currentView === View.ETIQUETADOR && <Etiquetador />}
                 {currentView === View.PRESUPUESTADOR && <Presupuestador />}
                 {currentView === View.LISTA_CHINA && <ListaChina />}
                 {currentView === View.STOCK_CONTROL && <StockControl currentUser={currentUser} />}
+                {currentView === View.PRICE_MANAGEMENT && <PriceManagement currentUser={currentUser} />}
                 {currentView === View.SQL_EDITOR && <SqlEditor currentUser={currentUser} />}
                 {currentView === View.SETTINGS && <Settings currentUser={currentUser} onUpdateProfile={handleUpdateProfile} />}
             </div>

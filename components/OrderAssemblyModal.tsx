@@ -134,7 +134,6 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     const finalTotal = order.total;
     const refundTotal = originalInvoiceTotal - finalTotal;
 
-    // --- FUNCIÓN MAESTRA DE GENERACIÓN DE PDF ---
     const buildInvoicePDF = () => {
         const doc = new jsPDF();
         const primaryColor = [228, 124, 0]; 
@@ -244,25 +243,31 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         try {
             const doc = buildInvoicePDF();
             const pdfBlob = doc.output('blob');
-            const fileName = `factura-${order.displayId}.pdf`;
+            const fileName = `Factura-${order.clientName.replace(/\s+/g, '-')}-${order.displayId}.pdf`;
             const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
 
-            // Mensaje de texto que acompaña al archivo
             const message = `Hola ${order.clientName}, adjuntamos el detalle de tu pedido #${order.displayId}. Total: $${order.total.toLocaleString('es-AR')}. ¡Muchas gracias!`;
 
-            // 1. Intentar usar la API Nativa de Compartir (Ideal para móviles Android/iOS)
-            if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+            // DETECCION DE MOVIL (iOS o Android)
+            const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+            // Solo usamos navigator.share en MOVILES (donde sí funciona WhatsApp bien)
+            if (isMobile && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
                 await navigator.share({
                     files: [file],
                     title: 'Factura Alfonsa',
                     text: message,
                 });
             } else {
-                // 2. Fallback para Escritorio (Desktop): Descarga automática + Abre WhatsApp Web
+                // EN COMPUTADORAS: Forzamos descarga y abrimos WhatsApp Web directamente para evitar el cartel de Windows
                 doc.save(fileName);
                 const encodedMsg = encodeURIComponent(message);
-                window.open(`https://api.whatsapp.com/send?phone=${clientPhone}&text=${encodedMsg}`, '_blank');
-                alert("En computadoras: El PDF se ha descargado. Por favor, adjúntalo manualmente en la ventana de WhatsApp que se acaba de abrir.");
+                const whatsappUrl = `https://api.whatsapp.com/send?phone=${clientPhone}&text=${encodedMsg}`;
+                window.open(whatsappUrl, '_blank');
+                // Un pequeño aviso solo para PC
+                if (!isMobile) {
+                    alert("PC DETECTADA: La factura se descargó. Se abrió el chat del cliente; por favor arrastra el PDF al chat para enviarlo.");
+                }
             }
         } catch (err) {
             console.error("Error compartiendo factura:", err);
@@ -657,6 +662,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                 <div className="flex flex-col gap-3">
                                     {order.products.map((product) => {
                                         const isEditingQty = editingProductCode === product.code;
+                                        const isEditingPrice = editingPriceCode === product.code;
                                         const baseline = product.shippedQuantity ?? product.quantity;
                                         const missingAmount = Math.max(0, product.originalQuantity - baseline);
                                         const isShortage = missingAmount > 0;

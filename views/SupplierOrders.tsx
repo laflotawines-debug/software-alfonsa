@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
     Truck, 
@@ -85,11 +86,12 @@ export const SupplierOrders: React.FC<SupplierOrdersProps> = ({ currentUser }) =
     useEffect(() => { fetchOrders(); }, []);
 
     const filteredOrders = useMemo(() => {
-        return orders.filter(o => 
-            o.status === tab && 
-            (o.supplier_name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-             o.id.includes(searchTerm))
-        );
+        const keywords = searchTerm.toLowerCase().split(/\s+/).filter(k => k.length > 0);
+        return orders.filter(o => {
+            if (o.status !== tab) return false;
+            const textToSearch = `${o.supplier_name} ${o.id}`.toLowerCase();
+            return keywords.every(k => textToSearch.includes(k));
+        });
     }, [orders, tab, searchTerm]);
 
     const groupedOrders = useMemo(() => {

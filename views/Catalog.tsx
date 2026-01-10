@@ -101,13 +101,17 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
     }, [products]);
 
     const filteredProducts = useMemo(() => {
-        const lowerSearch = searchTerm.toLowerCase();
+        // Lógica de búsqueda tipo Google: todas las palabras ingresadas deben estar presentes
+        const keywords = searchTerm.toLowerCase().split(/\s+/).filter(k => k.length > 0);
+        
         return products.filter(p => {
-            const matchesSearch = p.desart.toLowerCase().includes(lowerSearch) || 
-                                 p.codart.toLowerCase().includes(lowerSearch);
+            const textToSearch = `${p.desart} ${p.codart}`.toLowerCase();
+            const matchesSearch = keywords.every(k => textToSearch.includes(k));
+            
             const matchesFamily = familyFilter === 'TODAS' || p.familia === familyFilter;
             const matchesSubfamily = subfamilyFilter === 'TODAS' || p.nsubf === subfamilyFilter;
             const matchesProvider = providerFilter === 'TODOS' || p.nomprov === providerFilter;
+            
             return matchesSearch && matchesFamily && matchesSubfamily && matchesProvider;
         });
     }, [products, searchTerm, familyFilter, subfamilyFilter, providerFilter]);
@@ -206,7 +210,6 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
                                 <tr><td colSpan={6} className="p-20 text-center text-muted font-bold italic uppercase">No se encontraron artículos con los filtros aplicados.</td></tr>
                             ) : filteredProducts.map((p) => {
                                 const officialName = p.codprove ? suppliersMap.get(p.codprove) : null;
-                                
                                 return (
                                     <tr 
                                         key={p.codart} 
@@ -227,7 +230,6 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
                                                             {p.nsubf}
                                                         </span>
                                                     )}
-                                                    
                                                     {officialName ? (
                                                         <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded border border-green-500/20 bg-green-500/5 text-green-600 flex items-center gap-1 shadow-sm" title="Vínculo con Maestro Oficial">
                                                             <ShieldCheck size={10} />

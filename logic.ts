@@ -11,7 +11,7 @@ import {
 } from './types';
 
 // ==========================================
-// 1. NAVIGATION STRUCTURE (Moved for sync)
+// 1. NAVIGATION STRUCTURE
 // ==========================================
 
 export const SYSTEM_NAV_STRUCTURE = [
@@ -53,12 +53,20 @@ export const SYSTEM_NAV_STRUCTURE = [
     ]
   },
   { 
+    id: View.CLIENTS_MASTER, 
+    label: 'Clientes', 
+    module: 'Clientes',
+    subItems: [
+        { id: View.CLIENTS_MASTER, label: 'Gestión de clientes', permission: 'catalog.clients' },
+        { id: View.CLIENT_STATEMENTS, label: 'Estados de Cuenta', permission: 'catalog.statements' },
+    ]
+  },
+  { 
     id: View.CATALOG, 
     label: 'Maestros', 
     module: 'Maestros',
     subItems: [
         { id: View.CATALOG, label: 'Artículos', permission: 'catalog.products' },
-        { id: View.CLIENTS_MASTER, label: 'Clientes', permission: 'catalog.clients' },
         { id: View.SUPPLIERS_MASTER, label: 'Proveedores', permission: 'catalog.suppliers' },
     ]
   },
@@ -67,7 +75,8 @@ export const SYSTEM_NAV_STRUCTURE = [
     label: 'Herramientas', 
     module: 'Herramientas',
     subItems: [
-        { id: View.STOCK_CONTROL, label: 'Control de Stock', permission: 'tools.stock_control' },
+        { id: View.PRICE_MANAGEMENT, label: 'Gestión de Precios', permission: 'tools.price_management' },
+        { id: View.STOCK_CONTROL, label: 'Gestión de Stock', permission: 'tools.stock_control' },
         { id: View.PRESUPUESTADOR, label: 'Presupuestador', permission: 'tools.presupuestador' },
         { id: View.ETIQUETADOR, label: 'Etiquetador', permission: 'tools.etiquetador' },
         { id: View.EXPIRATIONS, label: 'Vencimientos', permission: 'tools.expirations' },
@@ -79,7 +88,28 @@ export const SYSTEM_NAV_STRUCTURE = [
 ];
 
 // ==========================================
-// 2. PAYMENT UTILITIES
+// 2. PRICING & ROUNDING LOGIC
+// ==========================================
+
+/**
+ * Redondeo Comercial Estricto (Regla de los 50):
+ * Redondea al múltiplo de 50 o 100 más cercano.
+ * Ejemplo: 5194 -> 5200 | 5453 -> 5450
+ */
+export const roundToCommercial = (val: number): number => {
+    if (!val || isNaN(val)) return 0;
+    return Math.round(val / 50) * 50;
+};
+
+/**
+ * Mantenemos alias para compatibilidad de componentes, 
+ * pero ambos usan la misma lógica de redondeo comercial de 50 en 50.
+ */
+export const roundPriceList1 = (val: number): number => roundToCommercial(val);
+export const roundPriceOtherLists = (val: number): number => roundToCommercial(val);
+
+// ==========================================
+// 3. PAYMENT UTILITIES
 // ==========================================
 
 export const getProviderProgress = (providerId: string, transfers: any[]) => {
@@ -102,7 +132,7 @@ export const reorder = <T>(list: T[], startIndex: number, endIndex: number): T[]
 };
 
 // ==========================================
-// 3. ORDER LOGIC
+// 4. ORDER LOGIC
 // ==========================================
 
 export const ORDER_WORKFLOW: Record<OrderStatus, { label: string; next?: OrderStatus }> = {

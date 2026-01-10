@@ -1,5 +1,5 @@
 
-import React from "react";
+import React from 'react';
 
 // --- UI / NAVIGATION TYPES ---
 export enum View {
@@ -12,6 +12,7 @@ export enum View {
     PAYMENTS_HISTORY = 'PAYMENTS_HISTORY',
     CATALOG = 'CATALOG',
     CLIENTS_MASTER = 'CLIENTS_MASTER', 
+    CLIENT_STATEMENTS = 'CLIENT_STATEMENTS', // Nueva vista
     SUPPLIERS_MASTER = 'SUPPLIERS_MASTER',
     PROVIDERS = 'PROVIDERS',
     EXPIRATIONS = 'EXPIRATIONS',
@@ -19,6 +20,7 @@ export enum View {
     LISTA_CHINA = 'LISTA_CHINA', 
     PRESUPUESTADOR = 'PRESUPUESTADOR', 
     ETIQUETADOR = 'ETIQUETADOR',
+    PRICE_MANAGEMENT = 'PRICE_MANAGEMENT',
     SETTINGS = 'SETTINGS',
     TOOLS = 'TOOLS',
     SQL_EDITOR = 'SQL_EDITOR',
@@ -37,6 +39,35 @@ export interface NavItem {
     icon: React.ReactNode;
     subItems?: NavItem[];
     permission?: string; // Nueva propiedad para control dinámico
+}
+
+// --- ACCOUNT STATEMENTS DOMAIN ---
+export interface AccountMovement {
+    id: string;
+    date: string;
+    concept: string;
+    debit: number;  // Debe
+    credit: number; // Haber
+    balance: number; // Saldo acumulado
+    observations: string;
+}
+
+// --- BUDGETS DOMAIN ---
+export interface SavedBudget {
+    id: string;
+    client_code: string;
+    total: number;
+    created_at: string;
+    items?: SavedBudgetItem[];
+}
+
+export interface SavedBudgetItem {
+    id: string;
+    budget_id: string;
+    codart: string;
+    name: string;
+    quantity: number;
+    unit_price: number;
 }
 
 // --- SUPPLIER ORDERS DOMAIN ---

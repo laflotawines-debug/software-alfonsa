@@ -46,6 +46,7 @@ const ICON_MAP: Record<string, React.ReactNode> = {
     [View.ORDERS]: <ShoppingBag size={20} />,
     [View.PAYMENTS_OVERVIEW]: <CreditCard size={20} />,
     [View.INV_INBOUNDS]: <Warehouse size={20} />,
+    [View.CLIENTS_MASTER]: <Contact2 size={20} />,
     [View.CATALOG]: <Library size={20} />,
     [View.PRESUPUESTADOR]: <Wrench size={20} />,
     [View.HISTORY]: <History size={20} />,

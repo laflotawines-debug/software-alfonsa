@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
     ClipboardList, Search, RefreshCw, Loader2, Info,
@@ -114,15 +115,12 @@ export const InventoryHistory: React.FC<{ currentUser: UserType }> = ({ currentU
         setExpandedProviders(next);
     };
 
-    // Tipado explícito para el filtrado principal
+    // Filtro principal por palabras clave
     const filteredMovements = useMemo<MovementExtended[]>(() => {
+        const keywords = searchTerm.toLowerCase().split(/\s+/).filter(k => k.length > 0);
         return movements.filter(m => {
-            const searchLower = searchTerm.toLowerCase();
-            const matchesSearch = 
-                (m.desart?.toLowerCase() || '').includes(searchLower) || 
-                (m.codart?.toLowerCase() || '').includes(searchLower) ||
-                (m.inbound_info?.supplier_name?.toLowerCase() || '').includes(searchLower) ||
-                (m.inbound_info?.observations?.toLowerCase() || '').includes(searchLower);
+            const textToSearch = `${m.desart} ${m.codart} ${m.inbound_info?.supplier_name || ''} ${m.inbound_info?.observations || ''}`.toLowerCase();
+            const matchesSearch = keywords.every(k => textToSearch.includes(k));
             
             const matchesWarehouse = warehouseFilter === 'TODOS' || m.warehouse_name === warehouseFilter;
             const matchesType = typeFilter === 'TODOS' || m.type === typeFilter;

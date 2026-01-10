@@ -187,12 +187,11 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
     };
 
     const filteredClients = useMemo(() => {
-        const lower = searchTerm.toLowerCase();
-        return clients.filter(c => 
-            (c.nombre || '').toLowerCase().includes(lower) || 
-            (c.codigo || '').toLowerCase().includes(lower) ||
-            (c.localidad || '').toLowerCase().includes(lower)
-        );
+        const keywords = searchTerm.toLowerCase().split(/\s+/).filter(k => k.length > 0);
+        return clients.filter(c => {
+            const textToSearch = `${c.nombre} ${c.codigo} ${c.localidad || ''} ${c.domicilio || ''}`.toLowerCase();
+            return keywords.every(k => textToSearch.includes(k));
+        });
     }, [clients, searchTerm]);
 
     if (currentUser.role !== 'vale') {
@@ -238,7 +237,7 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
                     <input 
                         type="text" 
-                        placeholder="Buscar por nombre, código o localidad..." 
+                        placeholder="Búsqueda inteligente: Ej 'fer satti'..." 
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         className="w-full bg-background border border-surfaceHighlight rounded-xl py-3.5 pl-12 pr-4 text-sm font-bold text-text outline-none focus:border-primary transition-all shadow-inner uppercase"
@@ -411,7 +410,7 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
 
             {/* MODAL DE CONFIRMACIÓN DE ELIMINACIÓN */}
             {clientToDelete && (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-200">
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm animate-in fade-in duration-200">
                     <div className="bg-surface w-full max-w-sm rounded-3xl border border-red-500/30 shadow-2xl p-8 flex flex-col items-center text-center gap-6">
                         <div className="p-4 bg-red-500/10 rounded-full text-red-500">
                             <AlertTriangle size={48} />

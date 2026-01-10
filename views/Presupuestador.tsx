@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
     Search, 
     Plus, 
@@ -15,10 +15,13 @@ import {
     Loader2,
     RefreshCw,
     AlertTriangle,
-    ChevronLeft
+    ChevronLeft,
+    Save,
+    User as UserIcon,
+    Check
 } from 'lucide-react';
 import { supabase } from '../supabase';
-import { MasterProduct } from '../types';
+import { MasterProduct, ClientMaster } from '../types';
 import { jsPDF } from 'jspdf';
 
 interface CartItem {
@@ -29,11 +32,20 @@ interface CartItem {
 export const Presupuestador: React.FC = () => {
     const [products, setProducts] = useState<MasterProduct[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [isSavingBudget, setIsSavingBudget] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [activeList, setActiveList] = useState<number>(1);
     const [selectedFamily, setSelectedFamily] = useState<string>('TODAS');
     const [cart, setCart] = useState<CartItem[]>([]);
+    
+    // Estados para selección de cliente
     const [clientName, setClientName] = useState('');
+    const [selectedClient, setSelectedClient] = useState<ClientMaster | null>(null);
+    const [clientSearchResults, setClientSearchResults] = useState<ClientMaster[]>([]);
+    const [showClientDropdown, setShowClientDropdown] = useState(false);
+    const [isSearchingClient, setIsSearchingClient] = useState(false);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+
     const [isCartOpenMobile, setIsCartOpenMobile] = useState(false);
 
     const fetchData = async () => {
@@ -68,7 +80,44 @@ export const Presupuestador: React.FC = () => {
 
     useEffect(() => {
         fetchData();
+        const handleClickOutside = (event: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setShowClientDropdown(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
+
+    const handleSearchClient = async (val: string) => {
+        setClientName(val);
+        const trimmed = val.trim();
+        if (trimmed.length < 2) {
+            setClientSearchResults([]);
+            setShowClientDropdown(false);
+            return;
+        }
+        setIsSearchingClient(true);
+        setShowClientDropdown(true);
+        try {
+            // Lógica de búsqueda tipo Google: separar por palabras y buscar que el nombre contenga todas
+            const words = trimmed.split(/\s+/).filter(w => w.length > 0);
+            let query = supabase.from('clients_master').select('*');
+            
+            words.forEach(word => {
+                query = query.ilike('nombre', `%${word}%`);
+            });
+
+            const { data } = await query.limit(5);
+            setClientSearchResults(data || []);
+        } catch (e) { console.error(e); } finally { setIsSearchingClient(false); }
+    };
+
+    const selectClient = (client: ClientMaster) => {
+        setSelectedClient(client);
+        setClientName(client.nombre);
+        setShowClientDropdown(false);
+    };
 
     const getProductPrice = (product: MasterProduct, list: number) => {
         switch (list) {
@@ -86,9 +135,10 @@ export const Presupuestador: React.FC = () => {
     }, [products]);
 
     const filteredProducts = useMemo(() => {
+        const keywords = searchTerm.toLowerCase().split(/\s+/).filter(k => k.length > 0);
         return products.filter(p => {
-            const matchesSearch = p.desart.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                                 p.codart.toLowerCase().includes(searchTerm.toLowerCase());
+            const prodText = `${p.desart} ${p.codart}`.toLowerCase();
+            const matchesSearch = keywords.every(k => prodText.includes(k));
             const matchesFamily = selectedFamily === 'TODAS' || p.familia === selectedFamily;
             return matchesSearch && matchesFamily;
         });
@@ -97,17 +147,12 @@ export const Presupuestador: React.FC = () => {
     const addToCart = (codart: string, qty: number) => {
         const product = products.find(p => p.codart === codart);
         if (!product) return;
-
         const maxStock = product.stock_llerena || 0;
-
         setCart(prev => {
             const existing = prev.find(item => item.codart === codart);
             if (existing) {
                 const newTotalQty = existing.qty + qty;
                 const limitedQty = Math.min(newTotalQty, maxStock);
-                if (newTotalQty > maxStock) {
-                    alert(`Solo hay ${maxStock} unidades disponibles de ${product.desart}. Se ha ajustado al máximo.`);
-                }
                 return prev.map(item => item.codart === codart ? { ...item, qty: limitedQty } : item);
             }
             const safeQty = Math.min(qty, maxStock);
@@ -122,16 +167,9 @@ export const Presupuestador: React.FC = () => {
     const updateCartQty = (codart: string, newQty: number) => {
         const product = products.find(p => p.codart === codart);
         if (!product) return;
-
         const maxStock = product.stock_llerena || 0;
-        
         if (newQty <= 0) { removeFromCart(codart); return; }
-        
         const safeQty = Math.min(newQty, maxStock);
-        if (newQty > maxStock) {
-            alert(`Stock insuficiente. El máximo disponible es ${maxStock}.`);
-        }
-
         setCart(prev => prev.map(item => item.codart === codart ? { ...item, qty: safeQty } : item));
     };
 
@@ -145,6 +183,43 @@ export const Presupuestador: React.FC = () => {
     }, [cart, products, activeList]);
 
     const totalBudget = cartDetails.reduce((acc, item) => acc + (item?.subtotal || 0), 0);
+
+    const handleSaveBudget = async () => {
+        if (!selectedClient) return alert("Seleccione un cliente registrado para guardar.");
+        if (cart.length === 0) return alert("Agregue productos al presupuesto.");
+        
+        setIsSavingBudget(true);
+        try {
+            const { data: budget, error: bErr } = await supabase
+                .from('saved_budgets')
+                .insert({
+                    client_code: selectedClient.codigo,
+                    total: totalBudget
+                }).select().single();
+
+            if (bErr) throw bErr;
+
+            const itemsToSave = cartDetails.map(item => ({
+                budget_id: budget.id,
+                codart: item!.codart,
+                name: item!.desart,
+                quantity: item!.qty,
+                unit_price: item!.price
+            }));
+
+            const { error: iErr } = await supabase.from('saved_budget_items').insert(itemsToSave);
+            if (iErr) throw iErr;
+
+            alert("Presupuesto guardado exitosamente. Ahora está disponible en la creación de pedidos.");
+            setCart([]);
+            setClientName('');
+            setSelectedClient(null);
+        } catch (e: any) {
+            alert("Error al guardar: " + e.message);
+        } finally {
+            setIsSavingBudget(false);
+        }
+    };
 
     const generatePDF = () => {
         if (cartDetails.length === 0) return;
@@ -163,7 +238,7 @@ export const Presupuestador: React.FC = () => {
         doc.setFont('helvetica', 'normal');
         cartDetails.forEach(item => {
             if (y > 270) { doc.addPage(); y = 20; }
-            doc.text(item!.desart.substring(0, 45), 20, y);
+            doc.text(item!.desart.substring(0, 45).toUpperCase(), 20, y);
             doc.text(item!.qty.toString(), 120, y);
             doc.text(`$ ${item!.price.toLocaleString('es-AR')}`, 150, y, { align: 'right' });
             doc.text(`$ ${item!.subtotal.toLocaleString('es-AR')}`, 190, y, { align: 'right' });
@@ -188,10 +263,10 @@ export const Presupuestador: React.FC = () => {
                         <div className="flex flex-col sm:flex-row items-center gap-2 flex-1 w-full">
                             <div className="relative flex-1 w-full">
                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
-                                <input type="text" placeholder="Buscar artículo..." className="w-full bg-background border border-surfaceHighlight rounded-xl py-2.5 pl-10 pr-4 text-sm outline-none focus:border-primary shadow-inner" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                                <input type="text" placeholder="Buscar por nombre o código..." className="w-full bg-background border border-surfaceHighlight rounded-xl py-2.5 pl-10 pr-4 text-sm outline-none focus:border-primary shadow-inner uppercase" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                             </div>
                             <div className="relative w-full sm:w-auto">
-                                <select value={selectedFamily} onChange={(e) => setSelectedFamily(e.target.value)} className="w-full appearance-none bg-surface border border-surfaceHighlight rounded-xl py-2.5 pl-10 pr-10 text-sm font-bold text-muted focus:text-primary outline-none cursor-pointer transition-all sm:min-w-[160px]">
+                                <select value={selectedFamily} onChange={(e) => setSelectedFamily(e.target.value)} className="w-full appearance-none bg-surface border border-surfaceHighlight rounded-xl py-2.5 pl-10 pr-10 text-sm font-bold text-muted focus:text-primary outline-none cursor-pointer transition-all sm:min-w-[160px] uppercase">
                                     {families.map(f => <option key={f} value={f}>{f}</option>)}
                                 </select>
                                 <Filter size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
@@ -270,12 +345,6 @@ export const Presupuestador: React.FC = () => {
                                             <p className="text-sm font-black text-text">$ {item.subtotal.toLocaleString('es-AR')}</p>
                                         </div>
                                     </div>
-                                    <div className="flex justify-between items-center px-1">
-                                        <span className="text-[9px] font-bold text-muted italic">Máximo: {item.stock_llerena} unid.</span>
-                                        {item.qty >= (item.stock_llerena || 0) && (
-                                            <span className="text-[8px] font-black text-orange-500 uppercase tracking-widest">Límite alcanzado</span>
-                                        )}
-                                    </div>
                                 </div>
                             ))}
                         </div>
@@ -287,10 +356,42 @@ export const Presupuestador: React.FC = () => {
                         <span className="text-[10px] font-black text-muted uppercase">Total Estimado</span>
                         <span className="text-3xl font-black text-primary tracking-tighter">$ {totalBudget.toLocaleString('es-AR')}</span>
                     </div>
-                    <input type="text" placeholder="Nombre Cliente..." className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3 px-4 text-sm outline-none focus:border-primary font-bold shadow-sm" value={clientName} onChange={(e) => setClientName(e.target.value)} />
+                    
+                    <div className="relative" ref={dropdownRef}>
+                        <UserIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
+                        <input 
+                            type="text" 
+                            placeholder="Nombre Cliente o Código..." 
+                            className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3.5 pl-10 pr-4 text-sm outline-none focus:border-primary font-bold shadow-sm uppercase" 
+                            value={clientName} 
+                            onChange={(e) => handleSearchClient(e.target.value)} 
+                        />
+                        {showClientDropdown && (
+                            <div className="absolute bottom-full left-0 w-full bg-surface border border-surfaceHighlight rounded-2xl shadow-2xl mb-2 z-50 overflow-hidden">
+                                {clientSearchResults.map(c => (
+                                    <button 
+                                        key={c.codigo} 
+                                        onClick={() => selectClient(c)}
+                                        className="w-full p-4 text-left border-b border-surfaceHighlight last:border-none hover:bg-primary/5 flex justify-between items-center group"
+                                    >
+                                        <div>
+                                            <p className="text-xs font-black text-text group-hover:text-primary transition-colors">{c.nombre}</p>
+                                            <p className="text-[9px] font-mono text-muted">#{c.codigo}</p>
+                                        </div>
+                                        <Check size={14} className="text-primary opacity-0 group-hover:opacity-100" />
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
                     <div className="grid grid-cols-2 gap-3">
-                        <button onClick={generatePDF} disabled={cart.length === 0} className="flex items-center justify-center gap-2 py-3.5 rounded-xl bg-slate-600 text-white font-black text-[11px] uppercase disabled:opacity-50"><FileText size={16} /> PDF</button>
-                        <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(clientName)}`, '_blank')} disabled={cart.length === 0} className="flex items-center justify-center gap-2 py-3.5 rounded-xl bg-green-600 text-white font-black text-[11px] uppercase disabled:opacity-50"><MessageCircle size={16} /> WA</button>
+                        <button onClick={handleSaveBudget} disabled={isSavingBudget || !selectedClient || cart.length === 0} className="col-span-2 flex items-center justify-center gap-2 py-4 rounded-xl bg-slate-900 text-white font-black text-[11px] uppercase tracking-widest shadow-lg shadow-black/20 hover:bg-black transition-all active:scale-95 disabled:opacity-50">
+                            {isSavingBudget ? <Loader2 className="animate-spin" size={16}/> : <Save size={16} />}
+                            {isSavingBudget ? "Guardando..." : "Guardar Presupuesto Transitorio"}
+                        </button>
+                        <button onClick={generatePDF} disabled={cart.length === 0} className="flex items-center justify-center gap-2 py-3.5 rounded-xl bg-slate-600 text-white font-black text-[11px] uppercase disabled:opacity-50"><FileText size={16} /> Descargar PDF</button>
+                        <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(clientName)}`, '_blank')} disabled={cart.length === 0} className="flex items-center justify-center gap-2 py-3.5 rounded-xl bg-green-600 text-white font-black text-[11px] uppercase disabled:opacity-50"><MessageCircle size={16} /> Compartir WA</button>
                     </div>
                 </div>
             </div>
@@ -316,17 +417,15 @@ const ProductCard: React.FC<{
 
     return (
         <div className={`bg-surface border border-surfaceHighlight rounded-2xl p-4 flex flex-col gap-3 hover:shadow-lg transition-all group relative overflow-hidden ${availableToOrder <= 0 ? 'opacity-70' : ''}`}>
-            {/* Header: Stock y Familia */}
             <div className="flex items-center justify-between gap-2 mb-1">
                 <span className="text-[9px] font-black text-primary uppercase truncate flex-1">
                     {product.familia || 'Sin Familia'}
                 </span>
                 <span className={`px-2 py-0.5 rounded text-[8px] font-black border shrink-0 ${availableToOrder <= 0 ? 'bg-red-500/10 text-red-500 border-red-500/20' : 'bg-green-500/10 text-green-500 border-green-500/20'}`}>
-                    {stock} LLERENA
+                    {stock} LLE
                 </span>
             </div>
             
-            {/* Cuerpo: Nombre y Código */}
             <div className="flex-1">
                 <h4 className="text-xs font-black text-text leading-tight uppercase min-h-[32px] line-clamp-2">
                     {product.desart}
@@ -334,16 +433,14 @@ const ProductCard: React.FC<{
                 <p className="text-[9px] font-mono text-muted mt-1 opacity-50">#{product.codart}</p>
             </div>
 
-            {/* Precio */}
             <div className="flex flex-col items-end">
-                <span className="text-[8px] font-black text-muted uppercase tracking-wider">Precio Lista {activeList}</span>
+                <span className="text-[8px] font-black text-muted uppercase tracking-wider">L{activeList}</span>
                 <div className="flex items-baseline gap-1">
                     <span className="text-[10px] font-black text-muted">$</span>
                     <span className="text-2xl font-black text-primary tracking-tighter">{currentPrice.toLocaleString('es-AR')}</span>
                 </div>
             </div>
 
-            {/* Controles de Cantidad */}
             <div className="flex gap-2 pt-1">
                 <input 
                     type="number" 
@@ -355,7 +452,7 @@ const ProductCard: React.FC<{
                         const val = parseInt(e.target.value) || 0;
                         setQty(Math.min(val, availableToOrder));
                     }} 
-                    className="w-16 bg-background border border-surfaceHighlight rounded-xl py-2.5 text-center text-xs font-black outline-none focus:border-primary shadow-inner disabled:cursor-not-allowed" 
+                    className="w-16 bg-background border border-surfaceHighlight rounded-xl py-2.5 text-center text-xs font-black outline-none focus:border-primary shadow-inner disabled:opacity-50" 
                 />
                 <button 
                     onClick={() => { 
@@ -368,12 +465,9 @@ const ProductCard: React.FC<{
                     className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-black text-[10px] uppercase transition-all active:scale-95 disabled:bg-muted disabled:cursor-not-allowed ${availableToOrder <= 0 ? 'text-muted' : 'bg-primary text-white'}`}
                 >
                     <Plus size={14} /> 
-                    {availableToOrder <= 0 ? 'Sin Stock' : 'Agregar'}
+                    {availableToOrder <= 0 ? 'S/S' : 'Agregar'}
                 </button>
             </div>
-            {availableToOrder > 0 && availableToOrder < stock && (
-                <p className="text-[9px] text-muted text-center font-bold">Quedan {availableToOrder} disponibles</p>
-            )}
         </div>
     );
 };

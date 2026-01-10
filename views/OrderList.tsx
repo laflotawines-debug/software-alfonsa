@@ -66,7 +66,11 @@ export const OrderList: React.FC<OrderListProps> = ({
   let currentList = currentTab === 'active' ? activeOrders : currentTab === 'delivered' ? deliveredOrders : unpaidOrders;
 
   const filteredOrders = currentList.filter(order => {
-      const matchesSearch = order.clientName.toLowerCase().includes(searchTerm.toLowerCase()) || order.displayId.toLowerCase().includes(searchTerm.toLowerCase());
+      // Búsqueda inteligente por palabras clave
+      const keywords = searchTerm.toLowerCase().split(/\s+/).filter(k => k.length > 0);
+      const textToSearch = `${order.clientName} ${order.displayId}`.toLowerCase();
+      const matchesSearch = keywords.every(k => textToSearch.includes(k));
+      
       const matchesZone = zoneFilter ? order.zone === zoneFilter : true;
       return matchesSearch && matchesZone;
   });
@@ -93,7 +97,7 @@ export const OrderList: React.FC<OrderListProps> = ({
           </button>
           {currentUser.role === 'vale' && (
               <button onClick={() => onNavigate(View.CREATE_BUDGET)} className="flex items-center gap-2 bg-primary hover:bg-primaryHover text-white px-6 py-3 rounded-full text-sm font-black transition-all shadow-lg shadow-primary/20 active:scale-95">
-                <Plus size={18} /> Nuevo Presupuesto
+                <Plus size={18} /> Nuevo Pedido
               </button>
           )}
         </div>
