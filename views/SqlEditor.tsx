@@ -5,52 +5,63 @@ import { User } from '../types';
 
 export const SqlEditor: React.FC<{ currentUser: User }> = ({ currentUser }) => {
     const [query, setQuery] = useState(`-- ========================================================
--- SCRIPT DE REPARACIÓN: GESTIÓN DE PRECIOS, TEMAS Y PERMISOS
+-- SCRIPT DE REPARACIÓN OBLIGATORIO (EJECUTAR EN SUPABASE)
 -- ========================================================
 
--- 1. Asegurar que codart sea la Primary Key (Necesario para upsert)
-ALTER TABLE public.master_products ADD PRIMARY KEY (codart);
+-- 1. FUNCIÓN PARA FIJAR CANTIDAD ENVIADA (REPARTO)
+-- Soluciona el error PGRST202 al pasar a reparto
+CREATE OR REPLACE FUNCTION public.set_shipped_quantity_for_order(p_order_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  -- Al pasar a reparto, fijamos que lo enviado (shipped_quantity) 
+  -- es igual a lo que hay cargado actualmente (quantity)
+  UPDATE public.order_items
+  SET shipped_quantity = quantity
+  WHERE order_id = p_order_id;
+END;
+$$;
 
--- 2. Habilitar RLS (Row Level Security)
-ALTER TABLE public.master_products ENABLE ROW LEVEL SECURITY;
+-- 2. ASEGURAR COLUMNA DE CANTIDAD ENVIADA (NOTA DE CRÉDITO)
+ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS shipped_quantity integer;
 
--- 3. Crear política de actualización para usuarios autenticados
-DROP POLICY IF EXISTS "Permitir actualización masiva a vales" ON public.master_products;
-CREATE POLICY "Permitir actualización masiva a vales" ON public.master_products
-    FOR ALL
-    USING (true)
-    WITH CHECK (true);
-
--- 4. Asegurar tabla de snapshot para Lista China
-CREATE TABLE IF NOT EXISTS public.whatsapp_list_snapshot (
-    codart text PRIMARY KEY REFERENCES public.master_products(codart),
-    desart text,
-    last_price numeric,
-    created_at timestamptz DEFAULT now()
+-- 3. ASIGNAR ROL "VALE" (ADMIN) A USUARIOS ESPECÍFICOS
+UPDATE public.profiles
+SET role = 'vale'
+WHERE id IN (
+  SELECT id FROM auth.users 
+  WHERE LOWER(email) IN ('sanchezgerman515@gmail.com', 'sattipablo@gmail.com')
 );
 
--- 5. Agregar soporte para Preferencia de Tema en Perfiles
-DO $$ 
-BEGIN 
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profiles' AND column_name='theme_preference') THEN
-        ALTER TABLE public.profiles ADD COLUMN theme_preference text DEFAULT 'light';
-    END IF;
-END $$;
-
--- 6. Insertar permisos fundamentales de herramientas
+-- 4. INSERTAR PERMISOS FUNDAMENTALES
 INSERT INTO public.app_permissions (key, module, label)
 VALUES 
+    ('orders.view', 'Pedidos', 'Ver Gestión de Pedidos'),
+    ('orders.create', 'Pedidos', 'Crear Nuevo Pedido'),
+    ('orders.sheet', 'Pedidos', 'Ver Planilla de Viajes'),
+    ('orders.sheet_manage', 'Pedidos', 'Gestionar/Borrar Viajes'),
+    ('orders.view_financials', 'Pedidos', 'Ver Montos en Tarjetas'),
     ('tools.price_management', 'Herramientas', 'Gestión de Precios'),
     ('tools.stock_control', 'Herramientas', 'Gestión de Stock'),
     ('tools.presupuestador', 'Herramientas', 'Presupuestador'),
     ('tools.etiquetador', 'Herramientas', 'Etiquetador'),
     ('tools.lista_china', 'Herramientas', 'Lista China'),
-    ('catalog.statements', 'Clientes', 'Estados de Cuenta')
-ON CONFLICT (key) DO NOTHING;`);
+    ('catalog.statements', 'Clientes', 'Estados de Cuenta'),
+    ('inventory.inbounds', 'Inventario', 'Gestionar Ingresos')
+ON CONFLICT (key) DO UPDATE 
+SET label = EXCLUDED.label, module = EXCLUDED.module;
+
+-- 5. POLÍTICAS RLS (PERMITIR ELIMINACIÓN)
+DROP POLICY IF EXISTS "Permitir borrado a vales" ON public.clients_master;
+CREATE POLICY "Permitir borrado a vales" ON public.clients_master
+    FOR DELETE
+    USING (true);`);
 
     const copyToClipboard = () => {
         navigator.clipboard.writeText(query);
-        alert("Script copiado. Ejecútalo en el SQL Editor de Supabase para activar los permisos de gestión de stock y preferencias de tema.");
+        alert("Script copiado. Pégalo en el SQL Editor de Supabase y presiona RUN.");
     };
 
     return (
@@ -68,6 +79,7 @@ ON CONFLICT (key) DO NOTHING;`);
                     <span className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-2">
                         <Terminal size={14} className="text-primary" /> Scripts de Configuración
                     </span>
+                    <span className="text-[9px] font-bold text-orange-500 uppercase bg-orange-500/10 px-2 py-1 rounded">Fix: Reparto & Nota de Crédito</span>
                 </div>
                 <textarea 
                     value={query}

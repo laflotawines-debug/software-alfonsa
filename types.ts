@@ -12,7 +12,7 @@ export enum View {
     PAYMENTS_HISTORY = 'PAYMENTS_HISTORY',
     CATALOG = 'CATALOG',
     CLIENTS_MASTER = 'CLIENTS_MASTER', 
-    CLIENT_STATEMENTS = 'CLIENT_STATEMENTS', // Nueva vista
+    CLIENT_STATEMENTS = 'CLIENT_STATEMENTS',
     SUPPLIERS_MASTER = 'SUPPLIERS_MASTER',
     PROVIDERS = 'PROVIDERS',
     EXPIRATIONS = 'EXPIRATIONS',
@@ -25,6 +25,7 @@ export enum View {
     TOOLS = 'TOOLS',
     SQL_EDITOR = 'SQL_EDITOR',
     STOCK_CONTROL = 'STOCK_CONTROL',
+    ATTENDANCE = 'ATTENDANCE',
     // --- INVENTORY VIEWS ---
     INV_INBOUNDS = 'INV_INBOUNDS',
     INV_ADJUSTMENTS = 'INV_ADJUSTMENTS',
@@ -38,21 +39,36 @@ export interface NavItem {
     label: string;
     icon: React.ReactNode;
     subItems?: NavItem[];
-    permission?: string; // Nueva propiedad para control dinámico
+    permission?: string;
 }
 
-// --- ACCOUNT STATEMENTS DOMAIN ---
+// --- ATTENDANCE DOMAIN ---
+export interface WorkerAttendanceConfig {
+    user_id: string;
+    hourly_rate: number;
+    work_days: string[]; 
+    entry_time: string; 
+    exit_time: string;
+    location: string;
+}
+
+export interface GlobalAttendanceSettings {
+    location: string;
+    bonus_1: number;
+    bonus_2: number;
+}
+
+// --- REST OF DOMAIN MODELS ---
 export interface AccountMovement {
     id: string;
     date: string;
     concept: string;
-    debit: number;  // Debe
-    credit: number; // Haber
-    balance: number; // Saldo acumulado
+    debit: number;
+    credit: number;
+    balance: number;
     observations: string;
 }
-
-// --- BUDGETS DOMAIN ---
+// ... resto de interfaces se mantienen iguales
 export interface SavedBudget {
     id: string;
     client_code: string;
@@ -70,7 +86,6 @@ export interface SavedBudgetItem {
     unit_price: number;
 }
 
-// --- SUPPLIER ORDERS DOMAIN ---
 export interface SupplierOrder {
     id: string;
     supplier_code: string;
@@ -92,7 +107,6 @@ export interface SupplierOrderItem {
     units_per_box?: number;
 }
 
-// --- STOCK CONTROL DOMAIN ---
 export interface StockControlSession {
     id: string;
     name: string;
@@ -102,7 +116,7 @@ export interface StockControlSession {
     created_by: string;
     created_at: string;
     item_count?: number;
-    assigned_users?: string[]; // IDs de armadores que han participado
+    assigned_users?: string[];
 }
 
 export interface StockControlItem {
@@ -119,14 +133,12 @@ export interface StockControlItem {
     }[];
 }
 
-// --- PERMISSIONS DOMAIN ---
 export interface AppPermission {
     key: string;
     module: string;
     label: string;
 }
 
-// --- CLIENT DOMAIN ---
 export interface ClientMaster {
     codigo: string;
     nombre: string;
@@ -138,7 +150,6 @@ export interface ClientMaster {
     created_at?: string;
 }
 
-// --- INVENTORY DOMAIN ---
 export type WarehouseCode = 'LLERENA' | 'BETBEDER';
 export type InboundStatus = 'borrador' | 'enviado' | 'aprobado' | 'anulado';
 export type MovementType = 'ingreso' | 'ajuste' | 'transferencia' | 'reverso';
@@ -171,6 +182,7 @@ export interface StockInboundItem {
     codart: string;
     desart?: string;
     quantity: number;
+    expiry_date?: string;
 }
 
 export interface StockMovement {
@@ -190,7 +202,6 @@ export interface StockMovement {
     inbound_display_number?: number;
 }
 
-// --- REST OF DOMAIN MODELS ---
 export interface MasterProduct {
     codart: string;
     codprove?: string;
@@ -278,7 +289,7 @@ export interface User {
     id: string;
     name: string;
     role: UserRole;
-    permissions: string[]; // Lista de keys concedidas
+    permissions: string[];
     avatar_url?: string;
 }
 export enum OrderStatus {

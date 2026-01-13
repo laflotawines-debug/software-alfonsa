@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -27,6 +26,7 @@ import { InventoryAdjustments } from './views/InventoryAdjustments';
 import { InventoryTransfers } from './views/InventoryTransfers';
 import { InventoryHistory } from './views/InventoryHistory';
 import { SupplierOrders } from './views/SupplierOrders';
+import { Attendance } from './views/Attendance';
 
 import { OrderAssemblyModal } from './components/OrderAssemblyModal';
 import { Loader2 } from 'lucide-react';
@@ -42,7 +42,8 @@ import {
     ProductExpiration, 
     ExpirationStatus, 
     Order,
-    Product
+    Product,
+    PaymentMethod
 } from './types';
 import { supabase } from './supabase';
 import { 
@@ -52,7 +53,8 @@ import {
     advanceOrderStatus,
     addProductToOrder,
     updateProductPrice,
-    removeProductFromOrder
+    removeProductFromOrder,
+    ORDER_WORKFLOW
 } from './logic';
 
 export default function App() {
@@ -158,7 +160,7 @@ export default function App() {
             const mappedOrders: DetailedOrder[] = dbOrders.map(o => ({
                 id: o.id, displayId: o.display_id, clientName: o.client_name, zone: o.zone, 
                 status: o.status as OrderStatus, createdDate: new Date(o.created_at).toLocaleDateString('es-AR'), 
-                total: Number(o.total || 0), observations: o.observations, paymentMethod: o.payment_method, 
+                total: Number(o.total || 0), observations: o.observations, payment_method: o.payment_method, 
                 assemblerId: o.assembler_id, assemblerName: o.assembler_name, controllerId: o.controller_id, 
                 controllerName: o.controller_name, invoicerName: o.invoicer_name, history: o.history || [], 
                 productCount: o.order_items?.length || 0,
@@ -242,205 +244,322 @@ export default function App() {
 
   useEffect(() => { if (currentUser) fetchAllData(); }, [currentUser]);
 
-  const handleDeleteTransfer = async (id: string) => {
-    setIsDataLoading(true);
-    await supabase.from('transfers').delete().eq('id', id);
-    await fetchAllData();
-  };
-
-  const handleClearHistory = async () => {
-    setIsDataLoading(true);
-    await supabase.from('transfers').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    await fetchAllData();
-  };
-
-  const handleDeleteProvider = async (id: string) => {
-    if (id.startsWith('p-')) return;
+  const handleAdvanceOrder = async (order: DetailedOrder) => {
+    const nextStatus = ORDER_WORKFLOW[order.status]?.next;
+    if (!nextStatus) return;
+    
     setIsDataLoading(true);
     try {
-        const { error } = await supabase.from('providers').delete().eq('id', id);
-        if (error) { await supabase.from('providers').update({ status: 'Desactivado' }).eq('id', id); }
-        await fetchAllData();
-    } catch (err: any) { alert("Error al eliminar: " + err.message); } finally { setIsDataLoading(false); }
-  };
-
-  const handleResetProvider = async (providerId: string) => {
-    setIsDataLoading(true);
-    try {
-        const { error: updateError } = await supabase.from('transfers').update({ status: 'Archivado' }).eq('provider_id', providerId).in('status', ['Realizado', 'Pendiente']);
-        if (updateError) throw updateError;
-        await fetchAllData();
-        alert("¡Nuevo ciclo iniciado!");
-    } catch (err: any) { alert("Error al reiniciar ciclo: " + err.message); } finally { setIsDataLoading(false); }
-  };
-
-  const handleUpdateProvider = async (provider: Provider) => {
-    setIsDataLoading(true);
-    const isNew = provider.id.startsWith('p-');
-    const payload = { name: provider.name, goal_amount: provider.goalAmount, priority: provider.priority, status: provider.status };
-    let pId = provider.id;
-    try {
-        if (isNew) {
-            const { data, error } = await supabase.from('providers').insert([payload]).select().single();
-            if (error) throw error;
-            pId = data.id;
-        } else {
-            const { error = null } = await supabase.from('providers').update(payload).eq('id', provider.id);
-            if (error) throw error;
+        const updates: any = { status: nextStatus };
+        
+        if (nextStatus === OrderStatus.EN_TRANSITO) {
+            const { error: itemsErr } = await supabase
+                .rpc('set_shipped_quantity_for_order', { p_order_id: order.id });
+            
+            if (itemsErr) {
+                if (itemsErr.code === 'PGRST202') {
+                    throw new Error("ERROR DE SISTEMA: La función de reparto no existe. Por favor, ve al 'Editor SQL', copia el script de reparación y ejecútalo en Supabase para activar esta función.");
+                }
+                throw itemsErr;
+            }
         }
-        for (const acc of provider.accounts) {
-            const isNewAcc = acc.id.toString().startsWith('acc-');
-            const accPayload = { 
-                provider_id: pId, condition: acc.condition, holder: acc.holder, 
-                identifier_alias: acc.identifierAlias, 
-                identifier_cbu: acc.identifierCBU, 
-                meta_amount: acc.metaAmount, 
-                status: acc.status 
+
+        const { error } = await supabase.from('orders').update(updates).eq('id', order.id);
+        if (error) throw error;
+        await fetchAllData();
+    } catch (e: any) {
+        console.error(e);
+        alert(e.message);
+    } finally {
+        setIsDataLoading(false);
+    }
+  };
+
+  const handleSaveAssembly = async (updatedOrder: Order, shouldAdvance: boolean) => {
+    setIsDataLoading(true);
+    try {
+        const finalStatus = shouldAdvance ? (ORDER_WORKFLOW[updatedOrder.status]?.next || updatedOrder.status) : updatedOrder.status;
+        
+        const { error: ordErr } = await supabase.from('orders').update({
+            status: finalStatus,
+            total: updatedOrder.total,
+            observations: updatedOrder.observations,
+            payment_method: updatedOrder.paymentMethod
+        }).eq('id', updatedOrder.id);
+        
+        if (ordErr) throw ordErr;
+
+        const updateItemPromises = updatedOrder.products.map(p => {
+            const itemUpdates: any = {
+                quantity: p.quantity,
+                subtotal: p.subtotal,
+                is_checked: p.isChecked
             };
-            if (isNewAcc) await supabase.from('provider_accounts').insert([accPayload]);
-            else await supabase.from('provider_accounts').update(accPayload).eq('id', acc.id);
+            
+            if (shouldAdvance && finalStatus === OrderStatus.EN_TRANSITO) {
+                itemUpdates.shipped_quantity = p.quantity;
+            }
+
+            return supabase
+                .from('order_items')
+                .update(itemUpdates)
+                .eq('order_id', updatedOrder.id)
+                .eq('code', p.code);
+        });
+
+        const itemResults = await Promise.all(updateItemPromises);
+        const itemErrors = itemResults.filter(res => res.error);
+        if (itemErrors.length > 0) {
+            console.error("Errores al actualizar items:", itemErrors);
+            alert("Algunos productos no pudieron actualizarse correctamente.");
         }
+        
+        setSelectedOrderForAssembly(null);
         await fetchAllData();
-    } catch (e: any) { alert("Error: " + e.message); setIsDataLoading(false); }
-  };
-
-  const handleSaveTransfer = async (transfer: Transfer) => {
-    setIsDataLoading(true);
-    const isNew = transfer.id.toString().startsWith('t-');
-    const payload = { 
-        client_name: transfer.clientName, amount: Number(transfer.amount), date_text: transfer.date, 
-        provider_id: transfer.providerId, account_id: transfer.accountId, notes: transfer.notes, 
-        status: transfer.status, is_loaded_in_system: transfer.isLoadedInSystem 
-    };
-    if (isNew) await supabase.from('transfers').insert([payload]);
-    else await supabase.from('transfers').update(payload).eq('id', transfer.id);
-    await fetchAllData();
-  };
-
-  const handleUpdateTransferStatus = async (id: string, status: any) => {
-    setIsDataLoading(true);
-    await supabase.from('transfers').update({ status }).eq('id', id);
-    await fetchAllData();
-  };
-
-  const handleSaveTrip = async (trip: Trip) => {
-    setIsDataLoading(true);
-    try {
-        const isNew = trip.id.startsWith('trip-') && !trips.find(t => t.id === trip.id);
-        const tripPayload = { display_id: trip.displayId, name: trip.name, status: trip.status, driver_name: trip.driverName, date_text: trip.date, route: trip.route };
-        let tId = trip.id;
-        if (isNew) {
-            const { data, error = null } = await supabase.from('trips').insert([tripPayload]).select().single();
-            if (error) throw error;
-            tId = data.id;
-        } else {
-            await supabase.from('trips').update(tripPayload).eq('id', trip.id);
-        }
-        for (const client of trip.clients) {
-            const isNewClient = client.id.startsWith('tc-');
-            const clientPayload = { 
-                trip_id: tId, name: client.name, address: client.address, previous_balance: client.previousBalance, 
-                current_invoice_amount: client.currentInvoiceAmount, payment_cash: client.paymentCash, 
-                payment_transfer: client.paymentTransfer, is_transfer_expected: client.isTransferExpected, status: client.status 
-            };
-            if (isNewClient) await supabase.from('trip_clients').insert([clientPayload]);
-            else await supabase.from('trip_clients').update(clientPayload).eq('id', client.id);
-        }
-        for (const exp of trip.expenses) {
-            const isNewExp = exp.id.startsWith('exp-') || exp.id.startsWith('e-');
-            const expPayload = { trip_id: tId, type: exp.type, amount: exp.amount, note: exp.note, timestamp: exp.timestamp.toISOString() };
-            if (isNewExp) await supabase.from('trip_expenses').insert([expPayload]);
-            else await supabase.from('trip_expenses').update(expPayload).eq('id', exp.id);
-        }
-        await fetchAllData();
-    } catch (err) { console.error(err); setIsDataLoading(false); }
-  };
-
-  const handleDeleteTrip = async (tripId: string) => {
-    setIsDataLoading(true);
-    await supabase.from('trips').delete().eq('id', tripId);
-    await fetchAllData();
+    } catch (e) {
+        console.error(e);
+        alert("Ocurrió un error al guardar los cambios.");
+    } finally {
+        setIsDataLoading(false);
+    }
   };
 
   const handleCreateOrder = async (newOrder: DetailedOrder) => {
     setIsDataLoading(true);
     try {
-        const { data: orderData, error: orderError } = await supabase.from('orders').insert([{
-            display_id: newOrder.displayId, client_name: newOrder.clientName, zone: newOrder.zone, 
-            status: newOrder.status, total: newOrder.total, observations: newOrder.observations || '', 
+        const { data, error } = await supabase.from('orders').insert({
+            display_id: newOrder.displayId,
+            client_name: newOrder.clientName,
+            zone: newOrder.zone,
+            status: newOrder.status,
+            total: newOrder.total,
             history: newOrder.history
-        }]).select().single();
-        if (orderError) throw orderError;
-        const itemsToInsert = newOrder.products.map(p => ({ 
-            order_id: orderData.id, 
-            code: p.code, 
-            name: p.name, 
-            original_quantity: p.originalQuantity, 
-            quantity: p.quantity, 
-            unit_price: p.unitPrice, 
-            subtotal: p.subtotal, 
-            is_checked: p.isChecked 
+        }).select().single();
+
+        if (error) throw error;
+
+        const items = newOrder.products.map(p => ({
+            order_id: data.id,
+            code: p.code,
+            name: p.name,
+            original_quantity: p.originalQuantity,
+            quantity: p.quantity,
+            unit_price: p.unitPrice,
+            subtotal: p.subtotal,
+            is_checked: p.isChecked
         }));
-        await supabase.from('order_items').insert(itemsToInsert);
-        await fetchAllData();
+
+        await supabase.from('order_items').insert(items);
         setCurrentView(View.ORDERS);
-    } catch (err) { console.error(err); setIsDataLoading(false); }
-  };
-
-  const handleSaveAssembly = async (updatedOrder: Order, shouldAdvance: boolean) => {
-    if (!currentUser) return;
-    setIsDataLoading(true);
-    let finalOrder = updatedOrder;
-    if (shouldAdvance) finalOrder = advanceOrderStatus(updatedOrder, currentUser);
-    try {
-        await supabase.from('orders').update({
-            total: finalOrder.total, observations: finalOrder.observations, status: finalOrder.status, 
-            payment_method: finalOrder.paymentMethod, assembler_id: finalOrder.assemblerId, 
-            assembler_name: finalOrder.assemblerName, controller_id: finalOrder.controllerId, 
-            controller_name: finalOrder.controllerName, history: finalOrder.history
-        }).eq('id', finalOrder.id);
-        const itemsToInsert = finalOrder.products.map(p => ({ 
-            order_id: finalOrder.id, 
-            code: p.code, 
-            name: p.name, 
-            original_quantity: p.originalQuantity, 
-            quantity: p.quantity, 
-            shipped_quantity: p.shippedQuantity, 
-            unit_price: p.unitPrice, 
-            subtotal: p.subtotal, 
-            is_checked: p.isChecked 
-        }));
-        await supabase.from('order_items').delete().eq('order_id', finalOrder.id);
-        await supabase.from('order_items').insert(itemsToInsert);
-        setSelectedOrderForAssembly(null);
         await fetchAllData();
-    } catch (err) { console.error(err); alert("Error al guardar pedido."); } finally { setIsDataLoading(false); }
+    } catch (e) {
+        console.error(e);
+    } finally {
+        setIsDataLoading(false);
+    }
   };
 
-  const handleAdvanceOrder = async (order: DetailedOrder) => {
-    if (!currentUser) return;
+  const handleSaveTrip = async (trip: Trip) => {
     setIsDataLoading(true);
-    const updated = advanceOrderStatus(order, currentUser);
     try {
-        await supabase.from('orders').update({
-            status: updated.status, history: updated.history, invoicer_name: updated.invoicerName,
-            controller_id: updated.controllerId, controller_name: updated.controllerName
-        }).eq('id', updated.id);
-        if (updated.status === OrderStatus.EN_TRANSITO) {
-            for (const p of updated.products) {
-                await supabase.from('order_items').update({ shipped_quantity: p.quantity }).eq('order_id', updated.id).eq('code', p.code);
-            }
+        let tripId = trip.id;
+        const tripData = {
+            display_id: trip.displayId,
+            name: trip.name,
+            status: trip.status,
+            driver_name: trip.driverName,
+            date_text: trip.date,
+            route: trip.route
+        };
+
+        if (!trip.id || trip.id.includes('trip-')) {
+            const { data, error } = await supabase.from('trips').insert(tripData).select().single();
+            if (error) throw error;
+            tripId = data.id;
+        } else {
+            const { error = null } = await supabase.from('trips').update(tripData).eq('id', trip.id);
+            if (error) throw error;
         }
+
+        await supabase.from('trip_clients').delete().eq('trip_id', tripId);
+        if (trip.clients && trip.clients.length > 0) {
+            const clientsToInsert = trip.clients.map(c => ({
+                trip_id: tripId,
+                name: c.name,
+                address: c.address,
+                previous_balance: c.previousBalance,
+                current_invoice_amount: c.currentInvoiceAmount,
+                payment_cash: c.paymentCash, 
+                payment_transfer: c.paymentTransfer, 
+                is_transfer_expected: c.isTransferExpected,
+                status: c.status
+            }));
+            await supabase.from('trip_clients').insert(clientsToInsert);
+        }
+
+        await supabase.from('trip_expenses').delete().eq('trip_id', tripId);
+        if (trip.expenses && trip.expenses.length > 0) {
+            const expensesToInsert = trip.expenses.map(e => ({
+                trip_id: tripId,
+                type: e.type,
+                amount: e.amount,
+                note: e.note,
+                timestamp: e.timestamp.toISOString()
+            }));
+            await supabase.from('trip_expenses').insert(expensesToInsert);
+        }
+
         await fetchAllData();
-    } catch (err) { console.error(err); } finally { setIsDataLoading(false); }
+    } catch (e: any) { 
+        console.error("Error al guardar viaje:", e.message); 
+        alert("Error al guardar viaje: " + e.message);
+    } finally { 
+        setIsDataLoading(false); 
+    }
+  };
+
+  const handleDeleteTrip = async (id: string) => {
+      setIsDataLoading(true);
+      try {
+          await supabase.from('trips').delete().eq('id', id);
+          await fetchAllData();
+      } catch (e) { console.error(e); } finally { setIsDataLoading(false); }
+  };
+
+  const handleDeleteProvider = async (id: string) => {
+    setIsDataLoading(true);
+    try {
+        await supabase.from('providers').delete().eq('id', id);
+        await fetchAllData();
+    } catch (e) { console.error(e); } finally { setIsDataLoading(false); }
+  };
+
+  const handleUpdateProvider = async (provider: Provider) => {
+    setIsDataLoading(true);
+    try {
+        const providerPayload: any = {
+            name: provider.name,
+            goal_amount: provider.goalAmount,
+            priority: provider.priority,
+            status: provider.status
+        };
+
+        const isNew = !provider.id || provider.id.startsWith('p-');
+        if (!isNew) {
+            providerPayload.id = provider.id;
+        }
+
+        const { data: savedProvider, error: pError } = await supabase
+            .from('providers')
+            .upsert(providerPayload)
+            .select()
+            .single();
+
+        if (pError) throw pError;
+
+        if (provider.accounts && provider.accounts.length > 0) {
+            const accountsPayload = provider.accounts.map(acc => {
+                const accData: any = {
+                    provider_id: savedProvider.id,
+                    condition: acc.condition,
+                    holder: acc.holder,
+                    identifier_alias: acc.identifierAlias,
+                    identifier_cbu: acc.identifierCBU,
+                    meta_amount: acc.metaAmount, 
+                    status: acc.status
+                };
+                if (acc.id && !acc.id.startsWith('acc-')) {
+                    accData.id = acc.id;
+                }
+                return accData;
+            });
+
+            const { error: accError } = await supabase
+                .from('provider_accounts')
+                .upsert(accountsPayload);
+            
+            if (accError) throw accError;
+        }
+
+        await fetchAllData();
+    } catch (e: any) { 
+        console.error("Error al actualizar proveedor:", e); 
+        alert("Error al guardar proveedor: " + e.message);
+    } finally { 
+        setIsDataLoading(false); 
+    }
+  };
+
+  const handleSaveTransfer = async (t: Transfer) => {
+      setIsDataLoading(true);
+      try {
+          const payload: any = {
+              client_name: t.clientName,
+              amount: t.amount,
+              date_text: t.date,
+              provider_id: t.providerId,
+              account_id: t.accountId,
+              notes: t.notes,
+              status: t.status,
+              is_loaded_in_system: t.isLoadedInSystem
+          };
+          
+          if (t.id && !t.id.startsWith('t-')) {
+              payload.id = t.id;
+          }
+
+          const { error } = await supabase.from('transfers').upsert(payload);
+          if (error) throw error;
+          
+          await fetchAllData();
+      } catch (e: any) { 
+          console.error("Error al guardar transferencia:", e); 
+          alert("Error de guardado: " + e.message);
+      } finally { 
+          setIsDataLoading(false); 
+      }
+  };
+
+  const handleUpdateTransferStatus = async (id: string, status: string) => {
+    setIsDataLoading(true);
+    try {
+        await supabase.from('transfers').update({ status }).eq('id', id);
+        await fetchAllData();
+    } catch (e) { console.error(e); } finally { setIsDataLoading(false); }
+  };
+
+  const handleDeleteTransfer = async (id: string) => {
+      setIsDataLoading(true);
+      try {
+          await supabase.from('transfers').delete().eq('id', id);
+          await fetchAllData();
+      } catch (e) { console.error(e); } finally { setIsDataLoading(false); }
+  };
+
+  const handleClearHistory = async () => {
+    if (!confirm("¿Deseas limpiar todo el historial?")) return;
+    setIsDataLoading(true);
+    try {
+        await supabase.from('transfers').delete().neq('id', '._.');
+        await fetchAllData();
+    } catch (e) { console.error(e); } finally { setIsDataLoading(false); }
+  };
+
+  const handleResetProvider = async (id: string) => {
+      setIsDataLoading(true);
+      try {
+          await supabase.from('transfers').delete().eq('provider_id', id);
+          await fetchAllData();
+      } catch (e) { console.error(e); } finally { setIsDataLoading(false); }
   };
 
   const handleUpdateProfile = async (newName: string, avatarUrl?: string) => {
       if (!currentUser) return;
-      const payload: any = { name: newName };
-      if (avatarUrl) payload.avatar_url = avatarUrl;
-      await supabase.from('profiles').update(payload).eq('id', currentUser.id);
-      await fetchProfile(currentUser.id);
+      setIsDataLoading(true);
+      try {
+          await supabase.from('profiles').update({ name: newName, avatar_url: avatarUrl }).eq('id', currentUser.id);
+          await fetchProfile(currentUser.id);
+      } catch (e) { console.error(e); } finally { setIsDataLoading(false); }
   };
 
   if (isAuthChecking) return <div className="h-screen w-full flex items-center justify-center bg-background"><Loader2 className="animate-spin text-primary" size={48} /></div>;
@@ -462,7 +581,7 @@ export default function App() {
       <main className="flex-1 flex flex-col h-full relative overflow-hidden bg-background">
         <Header 
             onMenuClick={() => setMobileMenuOpen(true)} 
-            title={currentView === View.DASHBOARD ? "Tablero" : currentView === View.ORDERS ? "Gestión de Pedidos" : currentView === View.ORDER_SHEET ? "Planilla" : currentView} 
+            title={currentView === View.DASHBOARD ? "Tablero" : currentView === View.ORDERS ? "Gestión de Pedidos" : currentView === View.ORDER_SHEET ? "Planilla" : currentView === View.ATTENDANCE ? "Asistencias" : currentView} 
             subtitle="Gestión Alfonsa" 
             isDarkMode={isDarkMode} 
             onToggleTheme={handleToggleTheme} 
@@ -485,9 +604,18 @@ export default function App() {
                 {currentView === View.ORDER_SHEET && (
                     <OrderSheet currentUser={currentUser} orders={orders} trips={trips} onSaveTrip={handleSaveTrip} onDeleteTrip={handleDeleteTrip} selectedTripId={selectedTripId} onSelectTrip={setSelectedTripId} />
                 )}
+                {currentView === View.ATTENDANCE && <Attendance />}
                 {currentView === View.CREATE_BUDGET && <CreateBudget onNavigate={setCurrentView} onCreateOrder={handleCreateOrder} currentUser={currentUser} />}
                 {currentView === View.PAYMENTS_OVERVIEW && (
-                    <PaymentsOverview providers={providers} onDeleteProvider={handleDeleteProvider} onUpdateProviders={handleUpdateProvider} transfers={transfers} onUpdateTransfers={handleSaveTransfer} onConfirmTransfer={handleUpdateTransferStatus} />
+                    <PaymentsOverview 
+                        providers={providers} 
+                        onDeleteProvider={handleDeleteProvider} 
+                        onUpdateProviders={handleUpdateProvider} 
+                        transfers={transfers} 
+                        onUpdateTransfers={handleSaveTransfer} 
+                        onConfirmTransfer={handleUpdateTransferStatus}
+                        onDeleteTransfer={handleDeleteTransfer}
+                    />
                 )}
                 {currentView === View.PAYMENTS_HISTORY && (
                     <PaymentsHistory transfers={transfers} onDeleteTransfer={handleDeleteTransfer} onClearHistory={handleClearHistory} onUpdateTransfers={handleSaveTransfer} onUpdateStatus={handleUpdateTransferStatus} providers={providers} />
@@ -519,7 +647,10 @@ export default function App() {
       </main>
       {selectedOrderForAssembly && (
           <OrderAssemblyModal 
-              order={selectedOrderForAssembly} currentUser={currentUser} onClose={() => setSelectedOrderForAssembly(null)} onSave={handleSaveAssembly}
+              order={selectedOrderForAssembly} 
+              currentUser={currentUser} 
+              onClose={() => setSelectedOrderForAssembly(null)} 
+              onSave={handleSaveAssembly}
               onUpdateProduct={(code, qty) => setSelectedOrderForAssembly(prev => prev ? { ...applyQuantityChange(prev, code, qty) } as any : null)}
               onToggleCheck={(code) => setSelectedOrderForAssembly(prev => prev ? { ...toggleProductCheck(prev, code) } as any : null)}
               onAddProduct={(p: Product) => setSelectedOrderForAssembly(prev => prev ? { ...addProductToOrder(prev, p) } as any : null)}

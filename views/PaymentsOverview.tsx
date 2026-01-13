@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { 
     Plus, 
@@ -18,7 +17,8 @@ import {
     XCircle,
     Wallet,
     CreditCard,
-    Hash
+    Hash,
+    RotateCcw
 } from 'lucide-react';
 import { Provider, ProviderAccount, Transfer } from '../types';
 
@@ -39,10 +39,11 @@ interface PaymentsOverviewProps {
     transfers: Transfer[];
     onUpdateTransfers: (transfer: Transfer) => void;
     onConfirmTransfer: (id: string, status: 'Pendiente' | 'Realizado') => void;
+    onDeleteTransfer: (id: string) => void;
 }
 
 export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({ 
-    providers, onDeleteProvider, onUpdateProviders, transfers, onUpdateTransfers, onConfirmTransfer 
+    providers, onDeleteProvider, onUpdateProviders, transfers, onUpdateTransfers, onConfirmTransfer, onDeleteTransfer
 }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [expandedProviders, setExpandedProviders] = useState<Record<string, boolean>>({});
@@ -52,7 +53,6 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
     const [preSelectedProviderId, setPreSelectedProviderId] = useState<string | null>(null);
     const [preSelectedAccountId, setPreSelectedAccountId] = useState<string | null>(null);
     
-    // Estado para confirmación de borrado
     const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
 
     const handleCopy = (id: string, text: string) => {
@@ -75,6 +75,12 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
         }
     };
 
+    const handleCancelTransfer = (t: Transfer) => {
+        if (window.confirm(`¿Realmente desea ELIMINAR el registro de pago de ${t.clientName} por $${t.amount.toLocaleString('es-AR')}? Esta acción es definitiva.`)) {
+            onDeleteTransfer(t.id);
+        }
+    };
+
     const openModal = (providerId?: string, accountId?: string) => {
         setPreSelectedProviderId(providerId || null);
         setPreSelectedAccountId(accountId || null);
@@ -90,18 +96,43 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
 
     return (
         <div className="flex flex-col gap-8 pb-20 animate-in fade-in">
+            {/* BANNER DE PAGOS PENDIENTES - DISEÑO COMPACTO CIRCULAR */}
             {pendingConfirmations.length > 0 && (
-                <div className="flex flex-col gap-3">
-                    {pendingConfirmations.slice(0, 2).map(t => (
-                        <div key={t.id} className="bg-orange-100 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800/50 rounded-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 shadow-sm">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 bg-orange-500 text-white rounded-full"><AlertCircle size={20} /></div>
-                                <div>
-                                    <h4 className="text-orange-700 dark:text-orange-300 font-bold text-sm">Pago Pendiente: {t.clientName}</h4>
-                                    <p className="text-xs text-orange-600/80 dark:text-orange-300/60 font-medium uppercase tracking-tight">Monto: $ {(Number(t.amount) || 0).toLocaleString('es-AR')} | Destino: {providers.find(p => p.id === t.providerId)?.name}</p>
+                <div className="flex flex-col gap-2 animate-in slide-in-from-top-4 duration-500">
+                    {pendingConfirmations.map(t => (
+                        <div key={t.id} className="bg-[#fff3e0] dark:bg-orange-950/40 border border-[#ffe0b2] dark:border-orange-800/40 rounded-2xl p-3 md:p-4 flex items-center justify-between gap-4 shadow-sm group">
+                            <div className="flex items-center gap-3 flex-1 min-w-0">
+                                <div className="p-2 bg-[#ff6d00] text-white rounded-full flex items-center justify-center shrink-0 shadow-sm">
+                                    <AlertCircle size={18} strokeWidth={3} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <h4 className="text-[#bf360c] dark:text-orange-400 font-black text-sm md:text-base tracking-tight truncate uppercase italic">
+                                        Pago: {t.clientName}
+                                    </h4>
+                                    <p className="text-[#e65100] dark:text-orange-300/80 text-[10px] font-black uppercase tracking-widest mt-0.5 truncate">
+                                        $ {(Number(t.amount) || 0).toLocaleString('es-AR')} → {providers.find(p => p.id === t.providerId)?.name || 'S/D'}
+                                    </p>
                                 </div>
                             </div>
-                            <button onClick={() => onConfirmTransfer(t.id, 'Realizado')} className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-lg active:scale-95 cursor-pointer">Confirmar</button>
+                            <div className="flex items-center gap-2 shrink-0">
+                                {/* BOTÓN CANCELAR (X) DIRECTO */}
+                                <button 
+                                    onClick={() => handleCancelTransfer(t)}
+                                    className="h-10 w-10 flex items-center justify-center bg-red-600 hover:bg-red-700 text-white rounded-full transition-all shadow-md active:scale-90 cursor-pointer"
+                                    title="Eliminar registro (Error)"
+                                >
+                                    <X size={20} strokeWidth={3} />
+                                </button>
+                                
+                                {/* BOTÓN CONFIRMAR (CHECK) */}
+                                <button 
+                                    onClick={() => onConfirmTransfer(t.id, 'Realizado')} 
+                                    className="h-10 w-10 flex items-center justify-center bg-[#1b5e20] hover:bg-[#2e7d32] text-white rounded-full transition-all shadow-lg active:scale-90 cursor-pointer"
+                                    title="Confirmar Pago"
+                                >
+                                    <Check size={20} strokeWidth={3} />
+                                </button>
+                            </div>
                         </div>
                     ))}
                 </div>
@@ -114,7 +145,7 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
                 </div>
                 <div className="relative w-full md:w-80">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
-                    <input type="text" placeholder="Buscar proveedor..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl py-2.5 pl-11 pr-4 text-sm text-text outline-none focus:border-primary transition-all shadow-sm font-bold" />
+                    <input type="text" placeholder="Buscar proveedor..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl py-2.5 pl-11 pr-4 text-sm text-text outline-none focus:border-primary transition-all shadow-sm font-bold uppercase" />
                 </div>
             </div>
 
@@ -152,7 +183,7 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
                                         <span className={`text-[10px] font-black uppercase tracking-wider ${isFrenado ? 'text-red-500' : 'text-blue-500'}`}>{provider.status}</span>
                                         <div className="flex flex-col mt-1">
                                             <span className="text-[10px] font-bold text-muted uppercase tracking-widest">Recolectado</span>
-                                            <p className="text-xl font-black text-green-500 tracking-tight">$ {totalRealized.toLocaleString('es-AR')} <span className="text-blue-500 text-sm font-bold">(+ $ {totalPending.toLocaleString('es-AR')})</span></p>
+                                            <p className="text-xl font-black text-green-500 tracking-tight">$ {totalRealized.toLocaleString('es-AR')} <span className="text-blue-500 text-sm font-bold ml-1">(+ $ {totalPending.toLocaleString('es-AR')})</span></p>
                                         </div>
                                     </div>
                                     <div className="text-right">
@@ -223,7 +254,6 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
                                                     )}
                                                 </div>
                                                 
-                                                {/* Sección de Datos de Cobro con Copiado de Alias y CBU */}
                                                 <div className="flex flex-col gap-2 pt-3 border-t border-surfaceHighlight">
                                                     <div className="flex items-center justify-between">
                                                         <div className="flex flex-col min-w-0">
@@ -274,7 +304,6 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
                 <Plus size={32} className="group-hover:rotate-90 transition-transform duration-300" />
             </button>
 
-            {/* Modal de confirmación de borrado */}
             {confirmingDeleteId && (
                 <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-in zoom-in-95 duration-200">
                     <div className="bg-surface w-full max-w-sm rounded-3xl border border-red-500/30 shadow-2xl p-8 flex flex-col items-center text-center gap-6">
@@ -351,7 +380,6 @@ const NewTransferModal: React.FC<{ providers: Provider[], transfers: Transfer[],
 
     const providerMeta = Number(selectedProvider?.goalAmount) || 1;
     
-    // Cálculo de saldo total actual del proveedor para la barra superior
     const currentProviderTotal = useMemo(() => {
         const pTransfers = transfers.filter(t => t.providerId === selectedProviderId && t.status !== 'Archivado');
         const realized = pTransfers.filter(t => t.status === 'Realizado').reduce((s, t) => s + t.amount, 0);
@@ -421,7 +449,6 @@ const NewTransferModal: React.FC<{ providers: Provider[], transfers: Transfer[],
                                     const isSel = selectedAccountId === acc.id;
                                     const accMeta = Number(acc.metaAmount) || 0;
                                     
-                                    // Cálculo en tiempo real de lo que ya se le pagó a ESTA cuenta
                                     const accTransfers = transfers.filter(t => t.accountId === acc.id && t.status !== 'Archivado');
                                     const accRealized = accTransfers.filter(t => t.status === 'Realizado').reduce((s, t) => s + t.amount, 0);
                                     const accPending = accTransfers.filter(t => t.status === 'Pendiente').reduce((s, t) => s + t.amount, 0);
@@ -454,7 +481,6 @@ const NewTransferModal: React.FC<{ providers: Provider[], transfers: Transfer[],
                                                 </div>
                                             </div>
                                             
-                                            {/* Barra de progreso miniatura del saldo de la cuenta */}
                                             {accMeta > 0 && (
                                                 <div className="space-y-1 mt-1">
                                                     <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-950 rounded-full overflow-hidden flex">

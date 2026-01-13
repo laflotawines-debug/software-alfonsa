@@ -1,4 +1,3 @@
-
 import React, { useMemo, useState } from 'react';
 import { 
   ShoppingBag, 
@@ -9,10 +8,13 @@ import {
   Filter,
   Download,
   MoreVertical,
-  CalendarDays
+  CalendarDays,
+  RotateCcw,
+  ArrowDownLeft
 } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Order, DetailedOrder, OrderStatus, View, ExpirationItem, ProductExpiration } from '../types';
+import { getOrderOriginalTotal, getOrderRefundTotal, getOrderShippedTotal } from '../logic';
 
 interface DashboardProps {
   orders: DetailedOrder[];
@@ -28,12 +30,9 @@ const MONTHS = [
 const YEARS = [2023, 2024, 2025];
 
 export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNavigate }) => {
-  // Por defecto "all" para ver todo el tiempo
   const [filterMonth, setFilterMonth] = useState<number | 'all'>('all');
   const [filterYear, setFilterYear] = useState<number | 'all'>('all');
 
-  // --- DINAMISMO DE DATOS FILTRADOS ---
-  
   const filteredOrders = useMemo(() => {
     return (orders || []).filter(order => {
       if (filterMonth === 'all' && filterYear === 'all') return true;
@@ -50,20 +49,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
     });
   }, [orders, filterMonth, filterYear]);
 
-  // Cálculo de datos para el gráfico de tendencia
   const dynamicChartData = useMemo(() => {
-    const counts = [0, 0, 0, 0]; // Semanas 1, 2, 3, 4+
-    
+    const counts = [0, 0, 0, 0];
     filteredOrders.forEach(order => {
       const parts = order.createdDate.split('/');
       const day = parseInt(parts[0]);
-      
       if (day <= 7) counts[0]++;
       else if (day <= 14) counts[1]++;
       else if (day <= 21) counts[2]++;
       else counts[3]++;
     });
-
     return [
       { name: 'Sem 1', value: counts[0] },
       { name: 'Sem 2', value: counts[1] },
@@ -72,27 +67,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
     ];
   }, [filteredOrders]);
 
-  // 1. Pedidos del Periodo
+  const financialSummary = useMemo(() => {
+      // Consideramos pedidos que ya pasaron por el proceso de facturación/reparto
+      const completedOrders = filteredOrders.filter(o => 
+        o.status === OrderStatus.ENTREGADO || 
+        o.status === OrderStatus.PAGADO || 
+        o.status === OrderStatus.EN_TRANSITO
+      );
+
+      const net = completedOrders.reduce((acc, o) => acc + (o.total || 0), 0);
+      const refunds = completedOrders.reduce((acc, o) => acc + getOrderRefundTotal(o), 0);
+      const gross = completedOrders.reduce((acc, o) => acc + getOrderShippedTotal(o), 0);
+      
+      return { gross, net, refunds };
+  }, [filteredOrders]);
+
   const totalOrdersCount = filteredOrders.length;
+  const pendingPaymentsCount = filteredOrders.filter(o => o.status === OrderStatus.ENTREGADO).length;
+  const criticalExpirationsCount = (expirations || []).filter(e => e.status === 'CRÍTICO').length;
 
-  // 2. Ingresos del Periodo
-  const monthlyIncome = useMemo(() => {
-    return filteredOrders
-      .filter(o => o.status === OrderStatus.ENTREGADO || o.status === OrderStatus.PAGADO)
-      .reduce((acc, current) => acc + (current.total || 0), 0);
-  }, [filteredOrders]);
-
-  // 3. Pagos Pendientes del Periodo
-  const pendingPaymentsCount = useMemo(() => {
-    return filteredOrders.filter(o => o.status === OrderStatus.ENTREGADO).length;
-  }, [filteredOrders]);
-
-  // 4. Vencimientos Críticos (Estos suelen ser globales, no dependen del filtro de pedidos)
-  const criticalExpirationsCount = useMemo(() => {
-    return (expirations || []).filter(e => e.status === 'CRÍTICO').length;
-  }, [expirations]);
-
-  // 5. Vencimientos próximos
   const dashboardExpirationsList: ExpirationItem[] = useMemo(() => {
     return (expirations || [])
       .filter(e => e.status === 'CRÍTICO' || e.status === 'PRÓXIMO')
@@ -108,7 +101,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
       }));
   }, [expirations]);
 
-  // 6. Últimas Órdenes para la tabla
   const recentOrdersReal = useMemo(() => {
     return [...filteredOrders].slice(0, 5);
   }, [filteredOrders]);
@@ -120,14 +112,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
 
   return (
     <div className="flex flex-col gap-8 pb-10">
-      {/* Heading Actions */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
         <div>
           <h2 className="text-text text-3xl md:text-4xl font-black tracking-tight">Tablero Principal</h2>
           <p className="text-muted text-sm mt-1">Análisis de rendimiento: <span className="text-primary font-bold">{periodLabel}</span></p>
         </div>
         
-        {/* Filtro de Fechas */}
         <div className="flex items-center gap-2 bg-surface p-1.5 rounded-2xl border border-surfaceHighlight shadow-sm w-full sm:w-auto overflow-x-auto no-scrollbar">
           <div className="flex items-center gap-2 px-3 text-muted shrink-0">
             <CalendarDays size={18} />
@@ -156,7 +146,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
         </div>
       </div>
 
-      {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard 
           icon={<ShoppingBag size={24} />}
@@ -176,35 +165,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
         />
         <KPICard 
           icon={<TrendingUp size={24} />}
-          label="Ingresos Realizados"
-          value={`$ ${(monthlyIncome || 0).toLocaleString('es-AR')}`}
-          trend="Real"
+          label="Ingresos Netos"
+          value={`$ ${financialSummary.net.toLocaleString('es-AR')}`}
+          subText={`Enviado: $ ${financialSummary.gross.toLocaleString('es-AR')}`}
+          trend="Cobrado"
           trendColor="text-green-500"
           trendBg="bg-green-500/10"
         />
         <KPICard 
-          icon={<AlertOctagon size={24} />}
-          label="Vencimientos Críticos"
-          value={criticalExpirationsCount.toString()}
-          pill="Urgente"
+          icon={<RotateCcw size={24} />}
+          label="Total Devoluciones"
+          value={`$ ${financialSummary.refunds.toLocaleString('es-AR')}`}
+          pill="Notas de Crédito"
           pillColor="text-red-500"
           pillBg="bg-red-500/10"
         />
       </div>
 
-      {/* Main Grid: Chart & Lists */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* Chart Section */}
         <div className="lg:col-span-2 flex flex-col gap-4 bg-surface p-6 rounded-2xl border border-surfaceHighlight shadow-sm">
           <div className="flex items-center justify-between mb-2">
             <div>
               <h3 className="text-text text-lg font-bold">Tendencia de Pedidos</h3>
-              <p className="text-muted text-sm">Volumen relativo por semana en el periodo actual</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="h-3 w-3 rounded-full bg-primary"></span>
-              <span className="text-sm text-text font-medium">Volumen</span>
+              <p className="text-muted text-sm">Volumen relativo por semana</p>
             </div>
           </div>
           
@@ -217,37 +200,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
                     <stop offset="95%" stopColor="var(--primary)" stopOpacity={0}/>
                   </linearGradient>
                 </defs>
-                <XAxis 
-                  dataKey="name" 
-                  hide={false} 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{fontSize: 10, fontWeight: 'bold', fill: 'var(--muted)'}} 
-                />
+                <XAxis dataKey="name" hide={false} axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold', fill: 'var(--muted)'}} />
                 <YAxis hide={true} />
                 <Tooltip 
                   cursor={{stroke: 'var(--surface-highlight)', strokeWidth: 2}}
-                  contentStyle={{ 
-                    backgroundColor: 'var(--surface)', 
-                    borderColor: 'var(--surface-highlight)', 
-                    borderRadius: '12px', 
-                    color: 'var(--text)',
-                    fontSize: '12px',
-                    fontWeight: 'bold',
-                    boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' 
-                  }}
+                  contentStyle={{ backgroundColor: 'var(--surface)', borderColor: 'var(--surface-highlight)', borderRadius: '12px', color: 'var(--text)', fontSize: '12px', fontWeight: 'bold', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
                   itemStyle={{ color: 'var(--primary)' }}
                   formatter={(value) => [`${value} pedidos`, 'Cantidad']}
                 />
-                <Area 
-                  type="monotone" 
-                  dataKey="value" 
-                  stroke="var(--primary)" 
-                  strokeWidth={4}
-                  fillOpacity={1} 
-                  fill="url(#colorValue)" 
-                  animationDuration={1500}
-                />
+                <Area type="monotone" dataKey="value" stroke="var(--primary)" strokeWidth={4} fillOpacity={1} fill="url(#colorValue)" animationDuration={1500} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -259,7 +220,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
           </div>
         </div>
 
-        {/* Expirations List */}
         <div className="flex flex-col gap-4 bg-surface p-6 rounded-2xl border border-surfaceHighlight shadow-sm">
           <div className="flex items-center justify-between">
             <h3 className="text-text text-lg font-bold">Vencimientos</h3>
@@ -272,48 +232,50 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
             {dashboardExpirationsList.length === 0 && (
               <div className="flex flex-col items-center justify-center py-10 opacity-40">
                 <AlertOctagon size={32} className="text-muted mb-2" />
-                <p className="text-xs text-muted font-bold italic text-center">Sin alertas de vencimiento próximas.</p>
+                <p className="text-xs text-muted font-bold italic text-center">Sin alertas próximas.</p>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Recent Orders Table */}
       <div className="flex flex-col gap-4 bg-surface p-6 rounded-2xl border border-surfaceHighlight shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <h3 className="text-text text-lg font-bold">Pedidos - {periodLabel}</h3>
-          <div className="flex gap-2">
-            <button className="p-2 rounded-full bg-background text-muted hover:text-text transition-colors border border-surfaceHighlight">
-              <Filter size={18} />
-            </button>
-            <button className="p-2 rounded-full bg-background text-muted hover:text-text transition-colors border border-surfaceHighlight">
-              <Download size={18} />
-            </button>
-          </div>
-        </div>
-        
+        <h3 className="text-text text-lg font-bold">Recientes - {periodLabel}</h3>
         <div className="overflow-x-auto rounded-lg border border-surfaceHighlight">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-background/50 text-muted text-xs uppercase tracking-wider border-b border-surfaceHighlight">
-                <th className="p-4 font-medium">ID Pedido</th>
+                <th className="p-4 font-medium">ID</th>
                 <th className="p-4 font-medium">Cliente</th>
-                <th className="p-4 font-medium">Fecha</th>
                 <th className="p-4 font-medium">Monto</th>
                 <th className="p-4 font-medium text-center">Estado</th>
-                <th className="p-4 font-medium text-right">Acción</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-surfaceHighlight text-sm">
-              {recentOrdersReal.map((order) => (
-                <OrderRow key={order.id} order={order} onNavigate={() => onNavigate(View.ORDERS)} />
-              ))}
-              {recentOrdersReal.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="p-10 text-center text-muted italic">No hay pedidos registrados en el periodo seleccionado.</td>
-                </tr>
-              )}
+              {recentOrdersReal.map((order) => {
+                const refund = getOrderRefundTotal(order);
+                return (
+                  <tr key={order.id} className="group hover:bg-surfaceHighlight/50 transition-colors cursor-pointer" onClick={() => onNavigate(View.ORDERS)}>
+                    <td className="p-4 text-text font-medium text-xs font-mono">{order.displayId}</td>
+                    <td className="p-4 text-text font-bold text-xs uppercase">{order.clientName}</td>
+                    <td className="p-4">
+                        <div className="flex flex-col">
+                            <span className="text-text font-black text-xs">$ {(order.total || 0).toLocaleString('es-AR')}</span>
+                            {refund > 0 && <span className="text-[9px] text-red-500 font-bold uppercase">- $ {refund.toLocaleString('es-AR')} NC</span>}
+                        </div>
+                    </td>
+                    <td className="p-4 text-center">
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase border
+                        ${order.status === OrderStatus.PAGADO ? 'bg-green-500/10 text-green-500 border-green-500/20' : 
+                          order.status === OrderStatus.ENTREGADO ? 'bg-blue-500/10 text-blue-500 border-blue-500/20' :
+                          'bg-yellow-500/10 text-yellow-600 border-yellow-500/20'
+                        }`}>
+                        {order.status.replace('_', ' ')}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -322,32 +284,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
   );
 };
 
-// --- Sub Components ---
-
 const KPICard: React.FC<{
   icon: React.ReactNode;
   label: string;
   value: string;
+  subText?: string;
   trend?: string;
   trendColor?: string;
   trendBg?: string;
   pill?: string;
   pillColor?: string;
   pillBg?: string;
-}> = ({ icon, label, value, trend, trendColor, trendBg, pill, pillColor, pillBg }) => (
-  <div className="flex flex-col justify-between gap-4 rounded-xl p-6 bg-surface hover:bg-surfaceHighlight transition-colors border border-surfaceHighlight hover:border-primary/20 group shadow-sm">
+}> = ({ icon, label, value, subText, trend, trendColor, trendBg, pill, pillColor, pillBg }) => (
+  <div className="flex flex-col justify-between gap-4 rounded-xl p-6 bg-surface hover:bg-surfaceHighlight transition-colors border border-surfaceHighlight group shadow-sm">
     <div className="flex justify-between items-start">
       <div className="p-2 bg-background rounded-full text-text group-hover:text-primary transition-colors">
         {icon}
       </div>
-      {trend && (
-        <span className={`flex items-center gap-1 text-[10px] font-black uppercase px-2 py-1 rounded-full ${trendColor} ${trendBg}`}>
-          {trend}
-        </span>
-      )}
       {pill && (
         <span className={`flex items-center gap-1 text-[10px] font-black uppercase px-2 py-1 rounded-full ${pillColor} ${pillBg}`}>
-          <AlertOctagon size={12} />
           {pill}
         </span>
       )}
@@ -355,6 +310,7 @@ const KPICard: React.FC<{
     <div>
       <p className="text-muted text-xs font-bold uppercase tracking-widest">{label}</p>
       <p className="text-text text-3xl font-black mt-1 tracking-tighter">{value}</p>
+      {subText && <p className="text-[10px] text-muted font-bold uppercase mt-1 opacity-70">{subText}</p>}
     </div>
   </div>
 );
@@ -374,36 +330,3 @@ const ExpirationRow: React.FC<{ item: ExpirationItem; onClick?: () => void }> = 
     <ChevronRight size={18} className="text-muted group-hover:text-primary transition-colors" />
   </div>
 );
-
-const OrderRow: React.FC<{ order: Order; onNavigate: () => void }> = ({ order, onNavigate }) => {
-  const initials = order.customerInitials || order.clientName.substring(0, 2).toUpperCase();
-  const colorClass = order.customerColor || "bg-primary/10 text-primary";
-
-  return (
-    <tr className="group hover:bg-surfaceHighlight/50 transition-colors cursor-pointer" onClick={onNavigate}>
-      <td className="p-4 text-text font-medium text-xs font-mono">{order.displayId}</td>
-      <td className="p-4 text-text flex items-center gap-2">
-        <div className={`h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold ${colorClass}`}>
-          {initials}
-        </div>
-        <span className="font-bold text-xs uppercase">{order.clientName}</span>
-      </td>
-      <td className="p-4 text-muted text-xs font-mono">{order.createdDate}</td>
-      <td className="p-4 text-text font-black text-xs">$ {(order.total || 0).toLocaleString('es-AR')}</td>
-      <td className="p-4 text-center">
-        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border
-          ${order.status === OrderStatus.PAGADO ? 'bg-green-500/10 text-green-500 border-green-500/20' : 
-            order.status === OrderStatus.ENTREGADO ? 'bg-blue-500/10 text-blue-500 border-blue-500/20' :
-            'bg-yellow-500/10 text-yellow-600 border-yellow-500/20'
-          }`}>
-          {order.status.replace('_', ' ')}
-        </span>
-      </td>
-      <td className="p-4 text-right">
-        <button className="text-muted hover:text-text">
-          <MoreVertical size={18} />
-        </button>
-      </td>
-    </tr>
-  );
-};

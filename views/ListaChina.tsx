@@ -9,31 +9,83 @@ import {
     Save,
     AlertCircle,
     Zap,
-    History,
-    PackageSearch,
     CalendarCheck,
     CheckCircle2,
-    Layers,
     XCircle,
     HelpCircle,
     Info,
     Sparkles,
     Eye,
-    MessageCircle
+    MessageCircle,
+    History
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { MasterProduct } from '../types';
 
-const FAMILY_EMOJIS: Record<string, string> = {
-    'ALMACEN': '📦', 'ARROZ': '🍚', 'CONDIMENTOS': '🧂', 'FIDEOS': '🍜',
-    'GOLOSINAS Y ENDULZANTES': '🍭', 'LIMPIEZA E HIGIENE': '🧽', 'OTROS': '📋',
-    'REPELENTES': '🦟', 'SNACKS': '🥨', 'YERBAS E INFUSIONES': '🌿',
-    'BEBIDAS': '🥂', 'CERVEZAS': '🍻', 'CHAMPAGNE & ESPUMANTES': '🍾',
-    'GIN Y GINEBRAS': '🍸', 'GRAPAS': '🍇', 'LICORES': '🥃',
-    'MINIATURAS Y PETACAS': '✨', 'RON': '🥃', 'SIDRAS': '🍏',
-    'SIN ALCOHOL / ENERGIZANTES / GASEOSAS': '🧃', 'VODKAS': '🧊',
-    'WHISKY': '🥃', 'VINOS': '🍷'
+// ==========================================
+// 1. DICCIONARIO DE TRADUCCIÓN Y EMOJIS (nsubf)
+// ==========================================
+const SUB_CONFIG: Record<string, { label: string, emoji: string }> = {
+    // ALMACEN
+    'ARROZ': { label: 'ARROZ', emoji: '🍚' },
+    'CONDIMENTOS': { label: 'CONDIMENTOS', emoji: '🧂' },
+    'FIDEOS': { label: 'FIDEOS', emoji: '🍜' },
+    'GOLOSINAS Y ENDULZANTES': { label: 'GOLOSINAS Y ENDULZANTES', emoji: '🍭' },
+    'LIMPIEZA E HIGIENE': { label: 'LIMPIEZA E HIGIENE', emoji: '🧽' },
+    'REPELENTES': { label: 'REPELENTES', emoji: '🦟' },
+    'SNACKS': { label: 'SNACKS', emoji: '🥨' },
+    'YERBAS E INFUSIONES': { label: 'YERBAS E INFUSIONES', emoji: '🌿' },
+    
+    // BEBIDAS (Subcategorías específicas según nsubf)
+    'CERVEZA': { label: 'CERVEZAS', emoji: '🍻' },
+    'CERVEZAS': { label: 'CERVEZAS', emoji: '🍻' },
+    'CHAMPAGNE': { label: 'CHAMPAGNE & ESPUMANTES', emoji: '🍾' },
+    'ESPUMANTE': { label: 'CHAMPAGNE & ESPUMANTES', emoji: '🍾' },
+    'GIN': { label: 'GIN Y GINEBRAS', emoji: '🍸' },
+    'GINEBRA': { label: 'GIN Y GINEBRAS', emoji: '🍸' },
+    'VODKA': { label: 'VODKAS', emoji: '🧊' },
+    'RON': { label: 'RON', emoji: '🏴‍☠️' },
+    'TEQUILA': { label: 'TEQUILAS', emoji: '🥃' },
+    'WHISKY': { label: 'WHISKY', emoji: '🥃' },
+    'LICOR': { label: 'LICORES', emoji: '🥃' },
+    'APERITIVOS': { label: 'LICORES', emoji: '🥃' }, // Mapeo preventivo o mantener como subcat
+    'VERMOUTH': { label: 'LICORES', emoji: '🥃' },
+    'GRAPPA': { label: 'GRAPAS', emoji: '🍇' },
+    'GRAPAS': { label: 'GRAPAS', emoji: '🍇' },
+    'GASEOSA': { label: 'SIN ALCOHOL Y ENERGIZANTES', emoji: '🥤' },
+    'JUGO': { label: 'SIN ALCOHOL Y ENERGIZANTES', emoji: '🥤' },
+    'AGUA': { label: 'SIN ALCOHOL Y ENERGIZANTES', emoji: '🥤' },
+    'ENERGIZANTE': { label: 'SIN ALCOHOL Y ENERGIZANTES', emoji: '🥤' },
+
+    // OTROS (Separación solicitada)
+    'PULPA': { label: 'PULPAS', emoji: '🐙' },
+    'PULPAS': { label: 'PULPAS', emoji: '🐙' },
+    'CRISTALERIA': { label: 'CRISTALERIA Y MAS', emoji: '🫗' },
+    'CRISTALERIA Y MAS': { label: 'CRISTALERIA Y MAS', emoji: '🫗' },
+    'COPAS': { label: 'CRISTALERIA Y MAS', emoji: '🫗' },
+    'VASOS': { label: 'CRISTALERIA Y MAS', emoji: '🫗' },
+    'ESTERILLA': { label: 'ESTERILLAS', emoji: '🩶' },
+    'ESTERILLAS': { label: 'ESTERILLAS', emoji: '🩶' },
+    'ESTUCHERIA': { label: 'ESTUCHERIA Y GIFTPACK', emoji: '📦' },
+    'ESTUCHE': { label: 'ESTUCHERIA Y GIFTPACK', emoji: '📦' },
+    'GIFTPACK': { label: 'ESTUCHERIA Y GIFTPACK', emoji: '📦' }
 };
+
+// ==========================================
+// 2. ORDEN OBLIGATORIO DE BEBIDAS (REGLA 3)
+// ==========================================
+const BEBIDAS_ORDER = [
+    'CERVEZAS',
+    'CHAMPAGNE & ESPUMANTES',
+    'GIN Y GINEBRAS',
+    'VODKAS',
+    'RON',
+    'TEQUILAS',
+    'WHISKY',
+    'LICORES',
+    'GRAPAS',
+    'SIN ALCOHOL Y ENERGIZANTES'
+];
 
 export const ListaChina: React.FC = () => {
     const [products, setProducts] = useState<MasterProduct[]>([]);
@@ -49,7 +101,6 @@ export const ListaChina: React.FC = () => {
     const [generatedText, setGeneratedText] = useState('');
     const [dbError, setDbError] = useState<string | null>(null);
 
-    // --- CARGA DE DATOS ---
     const fetchData = useCallback(async (isSilent = false) => {
         if (!isSilent) setIsLoading(true);
         setDbError(null);
@@ -62,7 +113,7 @@ export const ListaChina: React.FC = () => {
             while (hasMore) {
                 const { data, error } = await supabase
                     .from('master_products')
-                    .select('codart, desart, pventa_4, familia, stock_llerena')
+                    .select('codart, desart, pventa_4, familia, nsubf, stock_llerena')
                     .gt('stock_llerena', 0)
                     .order('desart', { ascending: true })
                     .range(from, from + PAGE_SIZE - 1);
@@ -77,29 +128,15 @@ export const ListaChina: React.FC = () => {
                 }
             }
 
-            let allSnapshots: any[] = [];
-            let snapFrom = 0;
-            let hasMoreSnaps = true;
+            const { data: allSnapshots, error: snapError } = await supabase
+                .from('whatsapp_list_snapshot')
+                .select('codart, last_price, created_at');
 
-            while (hasMoreSnaps) {
-                const { data, error: snapError } = await supabase
-                    .from('whatsapp_list_snapshot')
-                    .select('codart, last_price, created_at')
-                    .range(snapFrom, snapFrom + PAGE_SIZE - 1);
-
-                if (snapError) throw snapError;
-                if (data && data.length > 0) {
-                    allSnapshots = [...allSnapshots, ...data];
-                    if (data.length < PAGE_SIZE) hasMoreSnaps = false;
-                    else snapFrom += PAGE_SIZE;
-                } else {
-                    hasMoreSnaps = false;
-                }
-            }
+            if (snapError) throw snapError;
 
             const map: Record<string, number> = {};
             let latestDate: string | null = null;
-            if (allSnapshots.length > 0) {
+            if (allSnapshots && allSnapshots.length > 0) {
                 allSnapshots.forEach(s => { map[s.codart] = s.last_price; });
                 latestDate = allSnapshots[0].created_at;
             }
@@ -108,7 +145,6 @@ export const ListaChina: React.FC = () => {
             setSnapshotMap(map);
             setLastSnapshotDate(latestDate ? new Date(latestDate).toLocaleString('es-AR') : null);
         } catch (err: any) {
-            console.error(">>> [FETCH] ERROR:", err);
             setDbError(err.message || "Error de conexión.");
         } finally {
             setIsLoading(false);
@@ -122,45 +158,88 @@ export const ListaChina: React.FC = () => {
         
         const baseExists = Object.keys(snapshotMap).length > 0;
 
-        const filtered = products.filter(p => {
+        // Categorías Principales permitidas (Regla 2)
+        const hierarchy: Record<string, Record<string, MasterProduct[]>> = {
+            '📦 ALMACEN': {},
+            '🥂 BEBIDAS': {},
+            '🍷 VINOS': {},
+            '📋 OTROS': {}
+        };
+
+        products.forEach(p => {
             const matchesSearch = p.desart.toLowerCase().includes(searchTerm.toLowerCase()) ||
                                  p.codart.toLowerCase().includes(searchTerm.toLowerCase());
-            
             const isNew = baseExists && snapshotMap[p.codart] === undefined;
-            const matchesNewFilter = !showOnlyNew || isNew;
+            if (!matchesSearch || (showOnlyNew && !isNew)) return;
 
-            return matchesSearch && matchesNewFilter;
+            const rawSub = (p.nsubf || p.familia || 'OTROS').toUpperCase();
+            const config = SUB_CONFIG[rawSub] || { label: rawSub, emoji: '📋' };
+            const subLabel = `${config.emoji} ${config.label}`;
+            
+            // Mapeo a Categoría Principal
+            let mainKey = '📋 OTROS';
+            const fam = (p.familia || '').toUpperCase();
+            
+            if (fam.includes('ALMACEN') || ['ARROZ', 'FIDEOS', 'SNACKS', 'CONDIMENTOS'].includes(rawSub)) {
+                mainKey = '📦 ALMACEN';
+            } else if (fam.includes('VINOS')) {
+                mainKey = '🍷 VINOS';
+            } else if (fam.includes('BEBIDAS') || fam.includes('CERVEZA') || fam.includes('GIN') || fam.includes('WHISKY')) {
+                mainKey = '🥂 BEBIDAS';
+            } else if (['PULPAS', 'CRISTALERIA Y MAS', 'ESTERILLAS', 'ESTUCHERIA Y GIFTPACK'].includes(config.label)) {
+                mainKey = '📋 OTROS';
+            }
+
+            if (!hierarchy[mainKey][subLabel]) hierarchy[mainKey][subLabel] = [];
+            hierarchy[mainKey][subLabel].push(p);
         });
 
-        const grouped: Record<string, MasterProduct[]> = {};
-        filtered.forEach(p => {
-            const fam = (p.familia || 'OTROS').toUpperCase();
-            if (!grouped[fam]) grouped[fam] = [];
-            grouped[fam].push(p);
-        });
-
-        const sortedFamilies = Object.keys(grouped).sort();
-        
         let text = "";
         if (showOnlyNew) {
             text += "🔥 NOVEDADES DISPONIBLES 🔥\n";
             text += `📅 ${new Date().toLocaleDateString('es-AR')}\n\n`;
         }
 
-        sortedFamilies.forEach(fam => {
-            if (grouped[fam].length > 0) {
-                text += `${FAMILY_EMOJIS[fam] || '📋'} ${fam}\n\n`;
-                grouped[fam].sort((a, b) => a.desart.localeCompare(b.desart)).forEach(p => {
+        // Orden modificado: VINOS al último
+        const mainOrder = ['📦 ALMACEN', '🥂 BEBIDAS', '📋 OTROS', '🍷 VINOS'];
+
+        mainOrder.forEach((mainTitle) => {
+            const subs = hierarchy[mainTitle];
+            if (Object.keys(subs).length === 0) return;
+
+            text += `${mainTitle}\n\n`;
+
+            // Ordenar subcategorías
+            let subKeys = Object.keys(subs);
+            if (mainTitle === '🥂 BEBIDAS') {
+                subKeys = subKeys.sort((a, b) => {
+                    const labelA = a.split(' ').slice(1).join(' ');
+                    const labelB = b.split(' ').slice(1).join(' ');
+                    const idxA = BEBIDAS_ORDER.indexOf(labelA);
+                    const idxB = BEBIDAS_ORDER.indexOf(labelB);
+                    if (idxA === -1 && idxB === -1) return a.localeCompare(b);
+                    if (idxA === -1) return 1;
+                    if (idxB === -1) return -1;
+                    return idxA - idxB;
+                });
+            } else {
+                subKeys = subKeys.sort();
+            }
+
+            subKeys.forEach((subLabel) => {
+                const items = subs[subLabel];
+                text += `${subLabel}\n\n`;
+                
+                items.sort((a, b) => a.desart.localeCompare(b.desart)).forEach(p => {
                     const isNew = baseExists && snapshotMap[p.codart] === undefined;
                     text += `${p.desart.toUpperCase()} $${Math.round(p.pventa_4)}${isNew ? ' 🆕' : ''}\n`;
                 });
+                
                 text += "\n";
-            }
-        });
+            });
 
-        if (filtered.length === 0) {
-            return showOnlyNew ? "No hay novedades detectadas respecto a la base anterior." : "No se encontraron productos.";
-        }
+            text += "\n";
+        });
 
         return text.trim();
     }, [products, snapshotMap, searchTerm, showOnlyNew]);
@@ -176,7 +255,6 @@ export const ListaChina: React.FC = () => {
 
         try {
             await supabase.from('whatsapp_list_snapshot').delete().neq('codart', '._._._.'); 
-
             const payload = products.map(p => ({ 
                 codart: p.codart, 
                 desart: p.desart,
@@ -216,10 +294,8 @@ export const ListaChina: React.FC = () => {
 
     const handleWhatsAppShare = () => {
         if (!generatedText || isLoading) return;
-        // Limpiamos el texto de cualquier carácter extraño que pudiera haberse colado
         const cleanText = generatedText.normalize('NFC').trim();
         const encodedText = encodeURIComponent(cleanText);
-        // Usamos la URL de la API oficial que maneja mejor UTF-8
         const url = `https://api.whatsapp.com/send?text=${encodedText}`;
         window.open(url, '_blank');
     };
@@ -309,7 +385,7 @@ export const ListaChina: React.FC = () => {
                         <h3 className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-2">
                             <Zap size={14} className="text-primary" /> Filtros Dinámicos
                         </h3>
-                        <input type="text" placeholder="Buscar por nombre o código..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-background border border-surfaceHighlight rounded-2xl px-5 py-4 text-sm font-bold text-text outline-none focus:border-primary shadow-inner" />
+                        <input type="text" placeholder="Buscar por nombre o código..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-background border border-surfaceHighlight rounded-2xl px-5 py-4 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase" />
                         
                         <div className="h-px bg-surfaceHighlight my-1"></div>
 
@@ -339,7 +415,7 @@ export const ListaChina: React.FC = () => {
                             <div className="flex gap-3">
                                 <Info size={16} className="text-primary shrink-0 mt-0.5" />
                                 <p className="text-[10px] text-muted font-bold leading-tight uppercase">
-                                    El filtro de novedades muestra productos que han entrado a stock desde la última vez que presionaste "Fijar Actual".
+                                    El filtro de novedades separa automáticamente Cristalería, Esterillas, Estuches y Pulpas dentro de la categoría OTROS.
                                 </p>
                             </div>
                         </div>

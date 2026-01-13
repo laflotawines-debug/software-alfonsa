@@ -114,7 +114,7 @@ export const PaymentsProviders: React.FC<PaymentsProvidersProps> = ({ providers,
                                         <button type="button" onClick={() => handleOpenModal(p)} className="p-3 text-muted hover:text-primary rounded-xl hover:bg-primary/10 transition-all cursor-pointer" title="Editar">
                                             <Edit2 size={18} />
                                         </button>
-                                        <button type="button" onClick={(e) => handleDelete(e, p.id)} className="p-3 text-muted hover:text-red-500 rounded-xl hover:bg-red-500/10 transition-all cursor-pointer" title="Eliminar">
+                                        <button type="button" onClick={(e) => handleDelete(e, p.id)} className="p-3 text-muted hover:text-red-500 rounded-xl hover:bg-red-50/10 transition-all cursor-pointer" title="Eliminar">
                                             <Trash2 size={18} />
                                         </button>
                                     </div>
@@ -180,12 +180,14 @@ const NewProviderModal: React.FC<{
     }, [initialData]);
 
     const handleAddAccount = () => {
+        // ID temporal 'acc-' para que el backend sepa que es nuevo
         const newAcc: ProviderAccount = { id: `acc-${Date.now()}`, providerId: initialData?.id || '', condition: '', holder: '', identifierAlias: '', identifierCBU: '', metaAmount: 0, currentAmount: 0, pendingAmount: 0, status: 'Activa' };
         setAccounts([...accounts, newAcc]);
     };
 
     const submit = () => {
         if (!name) return alert("Seleccione un proveedor del maestro.");
+        // ID temporal 'p-' si es nuevo
         const finalId = (initialData && initialData.id) ? initialData.id : `p-${Date.now()}`;
         onSave({ id: finalId, name, goalAmount: parseFloat(parseCurrencyInput(goalAmountDisplay)) || 0, priority: parseInt(priority) || 1, status, accounts });
     };

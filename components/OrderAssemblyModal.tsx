@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { 
     X, 
@@ -29,7 +28,8 @@ import {
     Activity,
     LogOut,
     MessageCircle,
-    Share2
+    Share2,
+    ArrowDownLeft
 } from 'lucide-react';
 import { Order, Product, User, OrderStatus, PaymentMethod } from '../types';
 import { updatePaymentMethod } from '../logic';
@@ -188,6 +188,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
             currentY += 5;
         }
 
+        // SECCIÓN FALTANTES (DE DEPÓSITO)
         const shortages = order.products.filter(p => p.originalQuantity > (p.shippedQuantity ?? p.quantity));
         if (shortages.length > 0) {
             currentY += 10;
@@ -214,6 +215,37 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                 doc.setTextColor(239, 68, 68);
                 doc.text(missing.toString(), 180, currentY, { align: 'center' });
                 doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+                currentY += 7;
+                if (currentY > 270) { doc.addPage(); currentY = 20; }
+            });
+        }
+
+        // SECCIÓN NOTA DE CRÉDITO / DEVOLUCIONES (DE REPARTO)
+        const returns = order.products.filter(p => p.shippedQuantity && p.shippedQuantity > p.quantity);
+        if (returns.length > 0) {
+            currentY += 10;
+            doc.setFontSize(11);
+            doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+            doc.text('NOTA DE CRÉDITO / DEVOLUCIONES EN REPARTO', 20, currentY);
+            currentY += 8;
+            doc.setFontSize(9);
+            doc.setTextColor(mutedColor[0], mutedColor[1], mutedColor[2]);
+            doc.text('CÓD.', 20, currentY);
+            doc.text('ARTÍCULO', 35, currentY);
+            doc.text('RECHAZADO', 150, currentY, { align: 'center' });
+            doc.text('MONTO DESC.', 190, currentY, { align: 'right' });
+            currentY += 3;
+            doc.setDrawColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+            doc.line(20, currentY, 190, currentY);
+            currentY += 7;
+            doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+            returns.forEach(p => {
+                const returnedQty = (p.shippedQuantity || 0) - p.quantity;
+                const discount = returnedQty * p.unitPrice;
+                doc.text(p.code, 20, currentY);
+                doc.text(p.name.substring(0, 45).toUpperCase(), 35, currentY);
+                doc.text(returnedQty.toString(), 150, currentY, { align: 'center' });
+                doc.text(`- $ ${discount.toLocaleString('es-AR')}`, 190, currentY, { align: 'right' });
                 currentY += 7;
                 if (currentY > 270) { doc.addPage(); currentY = 20; }
             });
@@ -248,10 +280,8 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
 
             const message = `Hola ${order.clientName}, adjuntamos el detalle de tu pedido #${order.displayId}. Total: $${order.total.toLocaleString('es-AR')}. ¡Muchas gracias!`;
 
-            // DETECCION DE MOVIL (iOS o Android)
             const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
-            // Solo usamos navigator.share en MOVILES (donde sí funciona WhatsApp bien)
             if (isMobile && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
                 await navigator.share({
                     files: [file],
@@ -259,12 +289,10 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                     text: message,
                 });
             } else {
-                // EN COMPUTADORAS: Forzamos descarga y abrimos WhatsApp Web directamente para evitar el cartel de Windows
                 doc.save(fileName);
                 const encodedMsg = encodeURIComponent(message);
                 const whatsappUrl = `https://api.whatsapp.com/send?phone=${clientPhone}&text=${encodedMsg}`;
                 window.open(whatsappUrl, '_blank');
-                // Un pequeño aviso solo para PC
                 if (!isMobile) {
                     alert("PC DETECTADA: La factura se descargó. Se abrió el chat del cliente; por favor arrastra el PDF al chat para enviarlo.");
                 }
@@ -626,8 +654,9 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                 </div>
 
                 <div className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
-                    <div className="flex-1 overflow-y-auto bg-background scroll-smooth">
-                        <div className="p-4 md:p-6 flex flex-col gap-6">
+                    {/* Contenedor de Scroll Principal - Añadido pb-48 para mobile y overscroll-contain */}
+                    <div className="flex-1 overflow-y-auto bg-background scroll-smooth overscroll-contain">
+                        <div className="p-4 md:p-6 pb-48 lg:pb-10 flex flex-col gap-6">
                             <div className="lg:hidden"><InfoBlock /></div>
 
                             <div className={selfControlBlocked || occupiedByOther ? 'opacity-40 grayscale pointer-events-none' : ''}>
@@ -686,7 +715,11 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                                     <div className="flex gap-2 mt-1">
                                                         <span className="text-[10px] font-mono text-muted bg-surfaceHighlight/50 px-1.5 rounded">#{product.code}</span>
                                                         {isShortage && <span className="text-[10px] font-bold text-orange-600 bg-orange-500/10 px-1.5 rounded italic">Faltante: {missingAmount}</span>}
-                                                        {isReturned && <span className="text-[10px] font-bold text-red-600 bg-red-500/10 px-1.5 rounded italic">Devolución: {returnedAmount}</span>}
+                                                        {isReturned && (
+                                                            <span className="text-[10px] font-black text-red-600 bg-red-500/10 px-1.5 py-0.5 rounded border border-red-500/20 uppercase tracking-tighter flex items-center gap-1 animate-pulse">
+                                                                <ArrowDownLeft size={8}/> Nota de Crédito: {returnedAmount}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </div>
 
@@ -702,7 +735,11 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                                                 <span className="text-lg font-black text-text">{product.quantity}</span>
                                                                 {canEditProducts && <button onClick={() => handleEditQtyClick(product)} className="p-1 text-muted hover:text-primary"><Edit2 size={14} /></button>}
                                                             </div>
-                                                            {isShortage && <span className="text-[9px] text-muted font-bold">de {product.originalQuantity}</span>}
+                                                            {isShortage ? (
+                                                                <span className="text-[9px] text-muted font-bold">de {product.originalQuantity}</span>
+                                                            ) : isReturned ? (
+                                                                <span className="text-[9px] text-red-500 font-black uppercase">Reducido</span>
+                                                            ) : null}
                                                         </div>
                                                     )}
                                                 </div>

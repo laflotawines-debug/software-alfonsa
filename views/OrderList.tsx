@@ -31,10 +31,19 @@ import {
   Send,
   Undo2,
   History,
-  Activity
+  Activity,
+  ArrowDownLeft
 } from 'lucide-react';
 import { DetailedOrder, View, OrderStatus, User, OrderZone } from '../types';
-import { ORDER_WORKFLOW, getStatusColor, getZoneStyles, getMissingProducts, getReturnedProducts } from '../logic';
+import { 
+    ORDER_WORKFLOW, 
+    getStatusColor, 
+    getZoneStyles, 
+    getMissingProducts, 
+    getReturnedProducts, 
+    hasPermission,
+    getOrderRefundTotal 
+} from '../logic';
 
 interface OrderListProps {
   onNavigate: (view: View) => void;
@@ -66,13 +75,11 @@ export const OrderList: React.FC<OrderListProps> = ({
   let currentList = currentTab === 'active' ? activeOrders : currentTab === 'delivered' ? deliveredOrders : unpaidOrders;
 
   const filteredOrders = currentList.filter(order => {
-      // Búsqueda inteligente por palabras clave
       const keywords = searchTerm.toLowerCase().split(/\s+/).filter(k => k.length > 0);
       const textToSearch = `${order.clientName} ${order.displayId}`.toLowerCase();
-      const matchesSearch = keywords.every(k => textToSearch.includes(k));
-      
+      const keywordsMatch = keywords.every(k => textToSearch.includes(k));
       const matchesZone = zoneFilter ? order.zone === zoneFilter : true;
-      return matchesSearch && matchesZone;
+      return keywordsMatch && matchesZone;
   });
 
   return (
@@ -95,7 +102,8 @@ export const OrderList: React.FC<OrderListProps> = ({
           <button className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-surface text-text border border-surfaceHighlight hover:border-primary/50 transition-all text-sm font-bold shadow-sm">
             <RefreshCw size={18} /> Actualizar
           </button>
-          {currentUser.role === 'vale' && (
+          
+          {hasPermission(currentUser, 'orders.create') && (
               <button onClick={() => onNavigate(View.CREATE_BUDGET)} className="flex items-center gap-2 bg-primary hover:bg-primaryHover text-white px-6 py-3 rounded-full text-sm font-black transition-all shadow-lg shadow-primary/20 active:scale-95">
                 <Plus size={18} /> Nuevo Pedido
               </button>
@@ -176,8 +184,6 @@ const DetailedOrderCard: React.FC<{ order: DetailedOrder; currentUser: User; onO
   const occupantName = order.status === OrderStatus.EN_ARMADO ? order.assemblerName : order.controllerName;
 
   const getValeActions = () => {
-    const isPostBilling = order.status === OrderStatus.EN_TRANSITO || isFinished;
-    
     const secondaryBtn = (
         <button 
             onClick={() => onOpenAssembly(order)}
@@ -292,6 +298,7 @@ const DetailedOrderCard: React.FC<{ order: DetailedOrder; currentUser: User; onO
   };
 
   const missingProducts = getMissingProducts(order);
+  const refundAmount = getOrderRefundTotal(order);
 
   return (
     <div className={`bg-surface rounded-xl p-5 flex flex-col gap-3 border transition-all group relative overflow-hidden shadow-sm hover:shadow-lg hover:-translate-y-0.5 ${zoneStyles.borderColor} border-opacity-40`}>
@@ -324,24 +331,35 @@ const DetailedOrderCard: React.FC<{ order: DetailedOrder; currentUser: User; onO
                 <span className="text-xs text-text font-black">{order.productCount}</span>
             </div>
             
-            {isVale && (
+            {hasPermission(currentUser, 'orders.view_financials') || isVale ? (
                 <div className="flex justify-between items-center">
-                    <span className="text-[11px] text-muted font-bold">Total:</span>
-                    <span className="text-lg text-green-600 dark:text-green-400 font-black tracking-tighter">$ {(order.total || 0).toLocaleString('es-AR')}</span>
+                    <span className="text-[11px] text-muted font-bold">Total Neto:</span>
+                    <div className="flex flex-col items-end">
+                        <span className="text-lg text-green-600 dark:text-green-400 font-black tracking-tighter leading-none">$ {(order.total || 0).toLocaleString('es-AR')}</span>
+                        {refundAmount > 0 && <span className="text-[8px] font-black text-red-500 uppercase tracking-tighter">NC: -$ {refundAmount.toLocaleString('es-AR')}</span>}
+                    </div>
                 </div>
-            )}
+            ) : null}
             
             <div className="flex justify-between items-center">
                 <span className="text-[11px] text-muted font-bold">Creado:</span>
                 <span className="text-[11px] text-text font-bold">{order.createdDate}</span>
             </div>
             
-            {missingProducts.length > 0 && (
-                <div className="mt-1 p-2 rounded-lg bg-orange-500/10 border border-orange-500/20 flex items-center gap-2">
-                    <AlertTriangle size={12} className="text-orange-500" />
-                    <span className="text-[10px] font-bold text-orange-600 dark:text-orange-400">{missingProducts.length} producto(s) con faltantes</span>
-                </div>
-            )}
+            <div className="flex flex-col gap-1 mt-1">
+                {missingProducts.length > 0 && (
+                    <div className="p-2 rounded-lg bg-orange-500/10 border border-orange-500/20 flex items-center gap-2">
+                        <AlertTriangle size={12} className="text-orange-500" />
+                        <span className="text-[10px] font-bold text-orange-600 dark:text-orange-400">{missingProducts.length} producto(s) con faltantes</span>
+                    </div>
+                )}
+                {refundAmount > 0 && (
+                    <div className="p-2 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-2 animate-pulse">
+                        <ArrowDownLeft size={12} className="text-red-500" />
+                        <span className="text-[10px] font-bold text-red-600 dark:text-red-400 uppercase tracking-tighter">Devolución (NC): $ {refundAmount.toLocaleString('es-AR')}</span>
+                    </div>
+                )}
+            </div>
         </div>
 
         <div className="mt-auto pt-3 flex flex-col gap-2">

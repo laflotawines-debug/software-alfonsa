@@ -153,9 +153,19 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
     if (!rawText.trim()) return;
     setIsProcessing(true);
     setTimeout(() => {
-        const parsedProducts = parseOrderText(rawText);
-        setProducts(parsedProducts);
-        setIsProcessing(false);
+        try {
+            const parsedProducts = parseOrderText(rawText);
+            if (parsedProducts.length === 0) {
+                alert("No se detectaron productos. Verifique que el texto tenga el formato correcto.");
+            } else {
+                setProducts(parsedProducts);
+            }
+        } catch (err: any) {
+            console.error("Error parsing text:", err);
+            alert("Error al procesar el texto: " + (err.message || "Formato desconocido"));
+        } finally {
+            setIsProcessing(false);
+        }
     }, 600);
   };
 
@@ -171,10 +181,12 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
 
     setIsSaving(true);
     try {
-        const newId = `PED-${Date.now()}`;
+        // Generamos el ID legible para display_id
+        const displayId = `PED-${Date.now()}`;
+        
         const newOrder: DetailedOrder = {
-            id: newId,
-            displayId: `PED-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
+            id: '', // Se ignora, la DB genera el UUID
+            displayId: displayId,
             clientName: clientName,
             zone: selectedZone,
             status: OrderStatus.EN_ARMADO, 
@@ -197,8 +209,9 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
             await supabase.from('saved_budgets').delete().eq('id', selectedBudgetId);
         }
         
-    } catch (err) {
-        console.error(err);
+    } catch (err: any) {
+        console.error("Error saving order:", err);
+        alert("Error al guardar el pedido: " + (err.message || "Error de servidor"));
     } finally {
         setIsSaving(false);
     }

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
     Truck, Plus, Search, Trash2, Loader2, Send, AlertCircle, 
@@ -7,7 +6,9 @@ import {
     PackagePlus, Minus, Building2, ChevronDown, ChevronRight, History, 
     UserCheck, Calendar, Filter, XCircle as CloseIcon, CalendarDays,
     Boxes,
-    Clock
+    Clock,
+    RefreshCw,
+    Warehouse
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { StockInbound, MasterProduct, User as UserType, WarehouseCode } from '../types';
@@ -42,6 +43,7 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
     const [boxes, setBoxes] = useState('');
     const [unitsPerBox, setUnitsPerBox] = useState('12');
     const [looseUnits, setLooseUnits] = useState('');
+    const [tempExpiry, setTempExpiry] = useState(''); 
 
     const [expandedSupplier, setExpandedSupplier] = useState<string | null>(null);
 
@@ -78,18 +80,15 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
 
     const filteredInbounds = useMemo(() => {
         return inbounds.filter(inb => {
-            // Filtro por Tab
             const isPending = inb.status === 'enviado' || inb.status === 'borrador';
             if (tab === 'pendientes' && !isPending) return false;
             if (tab === 'finalizados' && isPending) return false;
 
-            // Filtro por Búsqueda
             const matchesSearch = 
                 (inb.supplier_name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
                 (inb.supplier_code?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
                 (inb.observations?.toLowerCase() || '').includes(searchTerm.toLowerCase());
             
-            // Filtro por Fecha
             const inbDate = inb.created_at.split('T')[0];
             const matchesDate = !dateFilter || inbDate === dateFilter;
 
@@ -107,7 +106,6 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
         return Object.entries(groups).sort((a, b) => a[1].name.localeCompare(b[1].name));
     }, [filteredInbounds]);
 
-    // LÓGICA DE BÚSQUEDA KEYBOARD-FRIENDLY
     const handleProductSearch = async (val: string) => {
         setProductSearch(val);
         const trimmed = val.trim();
@@ -149,9 +147,9 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
         setProductSearch('');
         setBoxes('');
         setLooseUnits('');
+        setTempExpiry('');
         setUnitsPerBox(String(p.units_per_box || 12));
         
-        // Foco inmediato en Cajas
         setTimeout(() => boxesInputRef.current?.focus(), 10);
     };
 
@@ -169,11 +167,12 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
             boxes: parseInt(boxes) || 0,
             unitsPerBox: parseInt(unitsPerBox) || 0,
             looseUnits: parseInt(looseUnits) || 0,
-            total: totalUnitsToAdd
+            total: totalUnitsToAdd,
+            expiry: tempExpiry 
         }, ...draftItems]);
         
         setActiveProduct(null);
-        // Devolver foco al buscador
+        setTempExpiry('');
         setTimeout(() => searchInputRef.current?.focus(), 10);
     };
 
@@ -202,10 +201,12 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
                 created_by: currentUser.id
             }).select().single();
             if (inbErr) throw inbErr;
+            
             const itemsToInsert = draftItems.map(item => ({ 
                 inbound_id: inbound.id, 
                 codart: item.product.codart, 
-                quantity: item.total 
+                quantity: item.total,
+                expiry_date: item.expiry || null 
             }));
             const { error: itemsErr } = await supabase.from('stock_inbound_items').insert(itemsToInsert);
             if (itemsErr) throw itemsErr;
@@ -216,6 +217,7 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
 
     const handleAnular = async (inb: StockInbound) => {
         if (inb.status === 'aprobado') return alert("No se puede anular un ingreso ya aprobado.");
+        if (!confirm("¿Realmente desea anular este ingreso?")) return;
         setIsLoading(true);
         try {
             const { error } = await supabase.rpc('anular_ingreso_stock', { p_inbound_id: inb.id });
@@ -238,6 +240,7 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
                     <button onClick={() => setView('list')} className="p-2 rounded-full hover:bg-surfaceHighlight text-muted transition-colors"><ChevronLeft size={24}/></button>
                     <h2 className="text-2xl font-black text-text uppercase italic">Cargar Mercadería</h2>
                 </div>
+                {/* ... resto del formulario de creación se mantiene igual ... */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div className="lg:col-span-2 space-y-6">
                         <div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 shadow-sm grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -297,190 +300,120 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
                             </div>
 
                             {activeProduct && (
-                                <div className="p-6 bg-primary/5 border border-primary/20 rounded-3xl space-y-6 animate-in zoom-in-95">
-                                    <div className="flex justify-between items-start">
-                                        <div>
-                                            <h4 className="font-black text-primary uppercase text-sm">{activeProduct.desart}</h4>
-                                            <p className="text-[10px] font-bold text-muted uppercase">Stock Betbeder: {activeProduct.stock_betbeder} | Llerena: {activeProduct.stock_llerena}</p>
+                                <div className="p-6 bg-primary/5 border border-primary/20 rounded-3xl space-y-6 animate-in zoom-in-95 relative">
+                                    <button onClick={() => setActiveProduct(null)} className="absolute top-6 right-6 p-1 text-muted hover:text-red-500 transition-colors">
+                                        <X size={20}/>
+                                    </button>
+                                    <div className="flex flex-col gap-4 pr-10">
+                                        <div className="flex-1">
+                                            <h4 className="font-black text-primary uppercase text-sm leading-tight">{activeProduct.desart}</h4>
+                                            <p className="text-[10px] font-bold text-muted uppercase mt-0.5">Stock Betbeder: {activeProduct.stock_betbeder} | Llerena: {activeProduct.stock_llerena}</p>
                                         </div>
-                                        <button onClick={() => setActiveProduct(null)} className="p-1 hover:text-red-500"><X size={20}/></button>
+                                        <div className="flex flex-col gap-1 w-full max-w-[280px]">
+                                            <label className="text-[9px] font-black text-muted uppercase ml-1">Vencimiento (Opcional)</label>
+                                            <input type="date" lang="es-AR" value={tempExpiry} onChange={e => setTempExpiry(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl px-3 py-2 text-[11px] font-black text-text outline-none focus:border-primary shadow-sm cursor-pointer" />
+                                        </div>
                                     </div>
                                     <div className="grid grid-cols-3 gap-4">
-                                        <div className="space-y-1">
-                                            <label className="text-[9px] font-black text-muted uppercase ml-1">Cajas (Enter p/ agregar)</label>
-                                            <input 
-                                                ref={boxesInputRef}
-                                                type="number" 
-                                                value={boxes} 
-                                                onChange={e => setBoxes(e.target.value)} 
-                                                onKeyDown={handleCalculatorKeyDown}
-                                                className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-center font-black outline-none focus:border-primary shadow-sm" 
-                                            />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="text-[9px] font-black text-muted uppercase ml-1">Un. x Caja</label>
-                                            <input 
-                                                type="number" 
-                                                value={unitsPerBox} 
-                                                onChange={e => setUnitsPerBox(e.target.value)} 
-                                                onKeyDown={handleCalculatorKeyDown}
-                                                className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-center font-black text-muted/60 outline-none focus:border-primary shadow-sm" 
-                                            />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="text-[9px] font-black text-muted uppercase ml-1">Sueltas</label>
-                                            <input 
-                                                type="number" 
-                                                value={looseUnits} 
-                                                onChange={e => setLooseUnits(e.target.value)} 
-                                                onKeyDown={handleCalculatorKeyDown}
-                                                className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-center font-black outline-none focus:border-primary shadow-sm" 
-                                            />
-                                        </div>
+                                        <div className="space-y-1"><label className="text-[9px] font-black text-muted uppercase ml-1">cajas</label><input ref={boxesInputRef} type="number" value={boxes} onChange={e => setBoxes(e.target.value)} onKeyDown={handleCalculatorKeyDown} className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-center font-black outline-none focus:border-primary shadow-sm" /></div>
+                                        <div className="space-y-1"><label className="text-[9px] font-black text-muted uppercase ml-1">Un. x Caja</label><input type="number" value={unitsPerBox} onChange={e => setUnitsPerBox(e.target.value)} onKeyDown={handleCalculatorKeyDown} className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-center font-black text-muted/60 outline-none focus:border-primary shadow-sm" /></div>
+                                        <div className="space-y-1"><label className="text-[9px] font-black text-muted uppercase ml-1">Sueltas</label><input type="number" value={looseUnits} onChange={e => setLooseUnits(e.target.value)} onKeyDown={handleCalculatorKeyDown} className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-center font-black outline-none focus:border-primary shadow-sm" /></div>
                                     </div>
                                     <div className="flex items-center justify-between pt-2 border-t border-primary/10">
-                                        <div className="flex flex-col">
-                                            <span className="text-[10px] font-black text-muted uppercase tracking-widest">A ingresar</span>
-                                            <span className="text-2xl font-black text-text">{totalUnitsToAdd} <small className="text-[10px]">unidades</small></span>
-                                        </div>
-                                        <button onClick={addToDraft} className="bg-primary text-white px-10 py-4 rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-primaryHover transition-all active:scale-95 flex items-center gap-2">
-                                            <PackagePlus size={18} /> Agregar Ítem
-                                        </button>
+                                        <div className="flex flex-col"><span className="text-[10px] font-black text-muted uppercase tracking-widest">A ingresar</span><span className="text-2xl font-black text-text">{totalUnitsToAdd} <small className="text-[10px]">unidades</small></span></div>
+                                        <button onClick={addToDraft} className="bg-primary text-white px-10 py-4 rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-primaryHover transition-all active:scale-95 flex items-center gap-2"><PackagePlus size={18} /> Agregar Ítem</button>
                                     </div>
-                                    <div className="text-center">
-                                        <p className="text-[8px] font-black text-muted uppercase tracking-[0.2em]">ESC para cancelar • ENTER para confirmar • TAB para navegar</p>
-                                    </div>
+                                    <div className="text-center"><p className="text-[8px] font-black text-muted uppercase tracking-[0.2em]">ESC para cancelar • ENTER para confirmar • TAB para navegar</p></div>
                                 </div>
                             )}
                         </div>
                     </div>
-
                     <div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 shadow-sm flex flex-col h-[600px]">
-                        <h3 className="text-sm font-black text-text uppercase italic border-b border-surfaceHighlight pb-3 mb-4 flex items-center gap-2">
-                            <Boxes size={16} className="text-primary" /> Items Cargados ({draftItems.length})
-                        </h3>
+                        <h3 className="text-sm font-black text-text uppercase italic border-b border-surfaceHighlight pb-3 mb-4 flex items-center gap-2"><Boxes size={16} className="text-primary" /> Items Cargados ({draftItems.length})</h3>
                         <div className="flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-thin">
                             {draftItems.map((item, idx) => (
                                 <div key={idx} className="p-4 bg-background border border-surfaceHighlight rounded-2xl flex justify-between items-center group animate-in slide-in-from-right-2">
-                                    <div className="min-w-0 flex-1">
-                                        <p className="text-[11px] font-black text-text uppercase truncate">{item.product.desart}</p>
-                                        <p className="text-[9px] text-primary font-black uppercase tracking-tighter mt-0.5">
-                                            {item.boxes} CJ x {item.unitsPerBox} {item.looseUnits > 0 ? `+ ${item.looseUnits}` : ''} = <span className="text-text">{item.total} un.</span>
-                                        </p>
+                                    <div className="min-w-0 flex-1"><p className="text-[11px] font-black text-text uppercase truncate">{item.product.desart}</p>
+                                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5"><p className="text-[9px] text-primary font-black uppercase tracking-tighter">{item.boxes} CJ x {item.unitsPerBox} {item.looseUnits > 0 ? `+ ${item.looseUnits}` : ''} = <span className="text-text">{item.total} un.</span></p>
+                                            {item.expiry && <span className="text-[9px] font-black text-orange-500 uppercase flex items-center gap-1 bg-orange-500/5 px-1.5 py-0.5 rounded border border-orange-500/20"><Calendar size={10} /> {new Date(item.expiry + 'T12:00:00').toLocaleDateString('es-AR')}</span>}
+                                        </div>
                                     </div>
-                                    <button onClick={() => setDraftItems(draftItems.filter((_, i) => i !== idx))} className="ml-4 p-2 text-muted hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all">
-                                        <Trash2 size={16}/>
-                                    </button>
+                                    <button onClick={() => setDraftItems(draftItems.filter((_, i) => i !== idx))} className="ml-4 p-2 text-muted hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all"><Trash2 size={16}/></button>
                                 </div>
                             ))}
-                            {draftItems.length === 0 && (
-                                <div className="h-full flex flex-col items-center justify-center text-muted opacity-30 italic">
-                                    <Truck size={48} className="mb-2" />
-                                    <p className="text-xs font-black uppercase tracking-widest">Lista Vacía</p>
-                                </div>
-                            )}
                         </div>
-                        <button onClick={handleFinalizeAndSend} disabled={isSaving || draftItems.length === 0} className={`w-full mt-6 py-5 rounded-2xl font-black text-xs uppercase shadow-xl flex items-center justify-center gap-2 transition-all active:scale-95 ${isSaving || draftItems.length === 0 ? 'bg-surfaceHighlight text-muted cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700 shadow-green-900/20'}`}>
-                            {isSaving ? <Loader2 className="animate-spin" size={20}/> : <Send size={20}/>} Finalizar y Enviar
-                        </button>
+                        <button onClick={handleFinalizeAndSend} disabled={isSaving || draftItems.length === 0} className={`w-full mt-6 py-5 rounded-2xl font-black text-xs uppercase shadow-xl flex items-center justify-center gap-2 transition-all active:scale-95 ${isSaving || draftItems.length === 0 ? 'bg-surfaceHighlight text-muted cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700 shadow-green-900/20'}`}>{isSaving ? <Loader2 className="animate-spin" size={20}/> : <Send size={20}/>} Finalizar y Enviar</button>
                     </div>
                 </div>
             </div>
         );
     }
 
-    const pendingCount = inbounds.filter(i => i.status === 'enviado' || i.status === 'borrador').length;
-    const finalCount = inbounds.filter(i => i.status === 'aprobado' || i.status === 'anulado').length;
-
     return (
-        <div className="flex flex-col gap-8 pb-10 max-w-6xl mx-auto animate-in fade-in">
+        <div className="flex flex-col gap-6 pb-20 animate-in fade-in duration-300">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
-                    <h2 className="text-3xl font-black text-text tracking-tight flex items-center gap-3 uppercase italic"><Truck className="text-primary" size={32} /> Ingresos de Stock</h2>
-                    <p className="text-muted text-sm mt-1 font-medium italic">Gestión de arribos por proveedor.</p>
+                    <h2 className="text-3xl font-black text-text tracking-tight flex items-center gap-3 uppercase italic">
+                        <Truck className="text-primary" size={36} /> Ingresos de Stock
+                    </h2>
+                    <p className="text-muted text-sm mt-1 font-medium">Control de recepción de mercadería y conciliación.</p>
                 </div>
-                <button onClick={() => setView('create')} className="bg-primary hover:bg-primaryHover text-white px-8 py-4 rounded-2xl font-black text-sm uppercase shadow-xl shadow-primary/20 active:scale-95 flex items-center gap-2 transition-all">
-                    <Plus size={20} /> Nuevo Ingreso
-                </button>
+                <div className="flex items-center gap-3 w-full md:w-auto">
+                    <button onClick={fetchInitialData} className="p-4 rounded-2xl bg-surface border border-surfaceHighlight text-muted hover:text-primary transition-all shadow-sm">
+                        <RefreshCw size={20} className={isLoading ? 'animate-spin' : ''} />
+                    </button>
+                    <button onClick={() => setView('create')} className="flex-1 md:flex-none flex items-center justify-center gap-3 bg-primary hover:bg-primaryHover text-white px-8 py-4 rounded-2xl font-black text-sm uppercase transition-all shadow-xl shadow-primary/20 active:scale-95">
+                        <Plus size={20} /> Nuevo Ingreso
+                    </button>
+                </div>
             </div>
 
-            {/* TABS DE SEPARACIÓN */}
-            <div className="flex bg-surface p-1 rounded-2xl border border-surfaceHighlight shadow-sm w-full md:w-fit gap-1">
-                <button 
-                    onClick={() => setTab('pendientes')} 
-                    className={`flex-1 md:flex-none flex items-center justify-center gap-3 px-8 py-3 rounded-xl font-black text-xs uppercase transition-all ${tab === 'pendientes' ? 'bg-primary text-white shadow-lg' : 'text-muted hover:bg-surfaceHighlight'}`}
-                >
-                    <Clock size={16} /> Pendientes
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] ${tab === 'pendientes' ? 'bg-white text-primary' : 'bg-surfaceHighlight text-muted'}`}>{pendingCount}</span>
-                </button>
-                <button 
-                    onClick={() => setTab('finalizados')} 
-                    className={`flex-1 md:flex-none flex items-center justify-center gap-3 px-8 py-3 rounded-xl font-black text-xs uppercase transition-all ${tab === 'finalizados' ? 'bg-primary text-white shadow-lg' : 'text-muted hover:bg-surfaceHighlight'}`}
-                >
-                    <CheckCircle2 size={16} /> Finalizados
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] ${tab === 'finalizados' ? 'bg-white text-primary' : 'bg-surfaceHighlight text-muted'}`}>{finalCount}</span>
-                </button>
-            </div>
-
-            <div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 shadow-sm flex flex-col md:flex-row gap-4">
-                <div className="flex-1 relative">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
-                    <input type="text" placeholder="Buscar por Proveedor o Comprobante..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-background border border-surfaceHighlight rounded-xl py-3 pl-12 pr-4 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase" />
+            <div className="flex flex-col lg:flex-row justify-between items-center gap-4 bg-surface p-2 rounded-2xl border border-surfaceHighlight shadow-sm">
+                <div className="flex gap-1 w-full lg:w-auto">
+                    {[ { id: 'pendientes', label: 'Pendientes', icon: <Clock size={16}/> }, { id: 'finalizados', label: 'Finalizados', icon: <CheckCircle2 size={16}/> } ].map(t => (
+                        <button key={t.id} onClick={() => setTab(t.id as any)} className={`flex-1 lg:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-black text-xs uppercase transition-all ${tab === t.id ? 'bg-primary text-white shadow-lg' : 'text-muted hover:bg-surfaceHighlight'}`}>{t.icon} {t.label}</button>
+                    ))}
                 </div>
-                <div className="w-full md:w-56 relative">
-                    <CalendarDays className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
-                    <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="w-full bg-background border border-surfaceHighlight rounded-xl py-3 pl-12 pr-4 text-sm font-bold text-text outline-none focus:border-primary shadow-inner cursor-pointer" />
+                <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto">
+                    <div className="relative w-full sm:w-64">
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                        <input type="text" placeholder="Buscar por proveedor o ref..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-background border border-surfaceHighlight rounded-xl py-3.5 pl-12 pr-4 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase" />
+                    </div>
+                    <div className="flex bg-background border border-surfaceHighlight rounded-xl overflow-hidden shadow-inner">
+                        <div className="px-3 flex items-center text-muted"><Calendar size={14}/></div>
+                        <input type="date" value={dateFilter} onChange={e => setDateFilter(e.target.value)} className="bg-transparent py-3 pr-4 text-xs font-black outline-none cursor-pointer" />
+                        {dateFilter && <button onClick={() => setDateFilter('')} className="px-3 text-red-500 hover:bg-red-50"><X size={14}/></button>}
+                    </div>
                 </div>
             </div>
 
             <div className="flex flex-col gap-4">
-                {isLoading && !inbounds.length ? (
-                    <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary" size={48} /></div>
+                {isLoading && inbounds.length === 0 ? (
+                    <div className="py-24 flex justify-center"><Loader2 size={48} className="animate-spin text-primary" /></div>
                 ) : groupedInbounds.length === 0 ? (
-                    <div className="py-24 text-center border-2 border-dashed border-surfaceHighlight rounded-3xl bg-surface/30 opacity-50">
-                        <PackageSearch size={48} className="mx-auto mb-4 text-muted" />
-                        <p className="font-black uppercase tracking-widest text-muted italic">No se encontraron ingresos {tab}.</p>
-                    </div>
-                ) : groupedInbounds.map(([code, group]) => {
-                    const isExpanded = expandedSupplier === code || (searchTerm.length > 2);
-                    const pendingInGroup = group.items.filter(i => i.status === 'enviado').length;
-
+                    <div className="py-24 text-center border-2 border-dashed border-surfaceHighlight rounded-3xl bg-surface/30 opacity-50"><Truck size={48} className="mx-auto mb-4 text-muted" /><p className="font-black uppercase tracking-widest text-muted italic">Sin registros que coincidan.</p></div>
+                ) : groupedInbounds.map(([pCode, group]) => {
+                    const isExpanded = expandedSupplier === pCode;
                     return (
-                        <div key={code} className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm transition-all duration-300">
-                            <button onClick={() => setExpandedSupplier(isExpanded ? null : code)} className="w-full p-6 flex items-center justify-between hover:bg-primary/5 transition-colors text-left group">
-                                <div className="flex items-center gap-5">
-                                    <div className="h-12 w-12 rounded-2xl bg-background border border-surfaceHighlight flex items-center justify-center text-primary shadow-inner"><Building2 size={24} /></div>
-                                    <div>
-                                        <h3 className="text-lg font-black text-text uppercase italic leading-tight group-hover:text-primary transition-colors">{group.name}</h3>
-                                        <div className="flex gap-3 mt-1">
-                                            <span className="text-[10px] font-black text-muted uppercase flex items-center gap-1"><History size={12}/> {group.items.length} Ingresos</span>
-                                            {tab === 'pendientes' && pendingInGroup > 0 && <span className="text-[9px] font-black bg-blue-500/10 text-blue-600 px-1.5 py-0.5 rounded border border-blue-500/20">{pendingInGroup} Pendiente(s)</span>}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-4">{isExpanded ? <ChevronDown className="text-muted" /> : <ChevronRight className="text-muted" />}</div>
+                        <div key={pCode} className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm transition-all duration-300">
+                            <button onClick={() => setExpandedSupplier(isExpanded ? null : pCode)} className="w-full p-6 flex items-center justify-between hover:bg-primary/5 transition-colors text-left group">
+                                <div className="flex items-center gap-5"><div className="h-12 w-12 rounded-2xl bg-background border border-surfaceHighlight flex items-center justify-center text-primary group-hover:border-primary/30 shadow-inner"><Building2 size={24}/></div><div><h3 className="text-lg font-black text-text uppercase italic leading-tight group-hover:text-primary transition-colors">{group.name}</h3><p className="text-[10px] font-black text-muted uppercase tracking-widest mt-1">{group.items.length} Ingreso(s) registrados</p></div></div>
+                                {isExpanded ? <ChevronDown className="text-muted" /> : <ChevronRight className="text-muted" />}
                             </button>
-
                             {isExpanded && (
-                                <div className="border-t border-surfaceHighlight bg-background/20 animate-in slide-in-from-top-2 duration-300">
-                                    <div className="overflow-x-auto">
-                                        <table className="w-full text-left">
-                                            <thead className="bg-background/40 text-[10px] text-muted uppercase font-black tracking-widest border-b border-surfaceHighlight">
-                                                <tr><th className="p-4 pl-8">Fecha / ID</th><th className="p-4">Comprobante</th><th className="p-4 text-center">Depósito</th><th className="p-4 text-center">Estado</th><th className="p-4 pr-8 text-right">Acciones</th></tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-surfaceHighlight/50">
-                                                {group.items.map(inb => (
-                                                    <tr key={inb.id} className="hover:bg-primary/5 transition-colors">
-                                                        <td className="p-4 pl-8"><div className="flex flex-col"><span className="text-[10px] font-black text-text">#{inb.display_number}</span><span className="text-[10px] font-bold text-muted">{new Date(inb.created_at).toLocaleDateString()}</span></div></td>
-                                                        <td className="p-4"><span className="text-xs font-bold text-text uppercase italic">{inb.observations || 'S/REF'}</span></td>
-                                                        <td className="p-4 text-center"><span className="px-2 py-0.5 rounded text-[8px] font-black border text-muted uppercase">{inb.warehouse_name || 'S/D'}</span></td>
-                                                        <td className="p-4 text-center"><span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase border ${inb.status === 'borrador' ? 'bg-yellow-500/10 text-yellow-600 border-yellow-200' : inb.status === 'enviado' ? 'bg-blue-500/10 text-blue-600 border-blue-200' : inb.status === 'aprobado' ? 'bg-green-500/10 text-green-600 border-green-200' : 'bg-red-500/10 text-red-600 border-red-200'}`}>{inb.status}</span></td>
-                                                        <td className="p-4 pr-8 text-right"><div className="flex justify-end gap-2">{inb.status === 'enviado' && currentUser.role === 'vale' ? (<button onClick={() => setReviewInbound(inb)} className="p-2 bg-blue-600 text-white rounded-xl shadow-md hover:bg-blue-700 transition-all active:scale-95" title="Revisar e Ingresar"><Eye size={16}/></button>) : (<button onClick={() => setDetailsInbound(inb)} className="p-2 bg-surfaceHighlight text-text rounded-xl shadow-sm hover:bg-primary/10 hover:text-primary transition-all" title="Ver Detalle"><Eye size={16}/></button>)}{inb.status === 'enviado' && currentUser.role === 'vale' && (<button onClick={() => handleAnular(inb)} className="p-2 text-muted hover:text-red-500 rounded-xl transition-all" title="Anular"><Trash2 size={16}/></button>)}</div></td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
+                                <div className="p-4 bg-background/20 border-t border-surfaceHighlight space-y-3 animate-in slide-in-from-top-2">
+                                    {group.items.map(inb => (
+                                        <div key={inb.id} className="bg-surface border border-surfaceHighlight rounded-2xl p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 hover:border-primary/30 transition-all shadow-sm">
+                                            <div className="flex-1 space-y-2"><div className="flex items-center gap-3"><span className="text-[10px] font-black text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20">#{inb.display_number}</span><div className="flex items-center gap-2 text-text font-black uppercase text-sm italic"><FileText size={14} className="text-primary" />Ref: {inb.observations || 'S/REF'}</div></div>
+                                                <div className="flex flex-wrap gap-x-4 gap-y-1"><span className="text-[10px] font-bold text-muted uppercase flex items-center gap-1"><Calendar size={12} /> {new Date(inb.created_at).toLocaleDateString()}</span><span className="text-[10px] font-bold text-muted uppercase flex items-center gap-1"><Warehouse size={12} /> {inb.warehouse_name}</span><StatusBadge status={inb.status} /></div>
+                                            </div>
+                                            <div className="flex gap-2 w-full md:w-auto">
+                                                <button onClick={() => setDetailsInbound(inb)} className="flex-1 md:flex-none px-4 py-2.5 rounded-xl border border-surfaceHighlight text-text hover:bg-surfaceHighlight font-black text-[10px] uppercase transition-all flex items-center justify-center gap-2 shadow-sm"><Eye size={16}/> Detalle</button>
+                                                {inb.status === 'enviado' && currentUser.role === 'vale' && (<button onClick={() => setReviewInbound(inb)} className="flex-1 md:flex-none px-6 py-2.5 rounded-xl bg-green-600 text-white hover:bg-green-700 font-black text-[10px] uppercase shadow-lg shadow-green-900/20 transition-all active:scale-95 flex items-center justify-center gap-2"><Check size={16}/> Aprobar</button>)}
+                                                {inb.status !== 'aprobado' && inb.status !== 'anulado' && (<button onClick={() => handleAnular(inb)} className="p-2.5 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-all shadow-sm" title="Anular Ingreso"><Trash2 size={16}/></button>)}
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
                             )}
                         </div>
@@ -488,227 +421,251 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
                 })}
             </div>
 
-            {reviewInbound && <InboundReviewModal inbound={reviewInbound} currentUser={currentUser} onClose={() => setReviewInbound(null)} onApproved={handleAprobarStock} />}
-            {detailsInbound && <InboundDetailsModal inbound={detailsInbound} onClose={() => setDetailsInbound(null)} />}
+            {reviewInbound && (
+                <InboundReviewModal 
+                    inbound={reviewInbound} 
+                    onClose={() => setReviewInbound(null)} 
+                    onApprove={async () => {
+                        const ok = await handleAprobarStock(reviewInbound.id);
+                        if (ok) setReviewInbound(null);
+                    }}
+                />
+            )}
+
+            {detailsInbound && (
+                <InboundDetailsModal 
+                    inbound={detailsInbound} 
+                    onClose={() => setDetailsInbound(null)} 
+                    currentUser={currentUser}
+                    onRefresh={fetchInitialData}
+                />
+            )}
         </div>
     );
 };
 
-const PackageSearch: React.FC<{ size?: number; className?: string }> = ({ size = 24, className = "" }) => (
-    <div className={`relative ${className}`}><Search size={size} /><div className="absolute -bottom-1 -right-1 bg-surface rounded-full p-0.5"><Truck size={size * 0.6} className="text-primary" /></div></div>
-);
+// --- SUB-COMPONENTES MODALES ---
 
-// --- MODAL DE REVISIÓN CON EDICIÓN DE UNIDADES ---
-const InboundReviewModal: React.FC<{ 
-    inbound: StockInbound, currentUser: UserType, onClose: () => void, onApproved: (id: string) => Promise<boolean> 
-}> = ({ inbound, currentUser, onClose, onApproved }) => {
+const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
+    let styles = "bg-muted/10 text-muted border-muted/20";
+    if (status === 'enviado') styles = "bg-blue-500/10 text-blue-600 border-blue-500/20";
+    if (status === 'aprobado') styles = "bg-green-500/10 text-green-600 border-green-500/20";
+    if (status === 'anulado') styles = "bg-red-500/10 text-red-600 border-red-200";
+    return <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border ${styles}`}>{status}</span>;
+};
+
+const InboundReviewModal: React.FC<{ inbound: StockInbound, onClose: () => void, onApprove: () => void }> = ({ inbound, onClose, onApprove }) => {
     const [items, setItems] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [isSaving, setIsSaving] = useState(false);
-    const [errorMsg, setErrorMsg] = useState<string | null>(null);
-    const [checkedItems, setCheckedItems] = useState<Set<string>>(new Set());
-    const [searchTerm, setSearchTerm] = useState('');
-    const [searchResults, setSearchResults] = useState<MasterProduct[]>([]);
+    const [isProcessing, setIsProcessing] = useState(false);
 
     useEffect(() => {
-        (async () => {
-            setIsLoading(true);
-            const { data } = await supabase.from('stock_inbound_items').select('*, master_products(desart)').eq('inbound_id', inbound.id);
-            if (data) setItems(data);
+        supabase.from('stock_inbound_items').select('*, master_products(desart)').eq('inbound_id', inbound.id).then(res => {
+            if (res.data) setItems(res.data.map(i => ({ ...i, desart: i.master_products?.desart })));
             setIsLoading(false);
-        })();
-    }, [inbound.id]);
+        });
+    }, [inbound]);
 
-    const handleSearch = async (val: string) => {
-        setSearchTerm(val);
-        if (val.trim().length < 2) { setSearchResults([]); return; }
-        const words = val.trim().split(/\s+/);
-        let query = supabase.from('master_products').select('*');
-        words.forEach(w => query = query.ilike('desart', `%${w}%`));
-        const { data } = await query.limit(5);
-        setSearchResults(data || []);
-    };
-
-    const addItem = async (p: MasterProduct) => {
-        const { data, error } = await supabase.from('stock_inbound_items').insert({ inbound_id: inbound.id, codart: p.codart, quantity: 1 }).select().single();
-        if (!error) { setItems([...items, { ...data, master_products: { desart: p.desart } }]); setSearchTerm(''); setSearchResults([]); }
-    };
-
-    const removeItem = async (id: string) => {
-        const { error } = await supabase.from('stock_inbound_items').delete().eq('id', id);
-        if (!error) { setItems(items.filter(i => i.id !== id)); const n = new Set(checkedItems); n.delete(id); setCheckedItems(n); }
-    };
-
-    const updateQty = async (id: string, qty: number) => {
-        if (qty < 0) return;
-        const { error } = await supabase.from('stock_inbound_items').update({ quantity: qty }).eq('id', id);
-        if (!error) setItems(items.map(i => i.id === id ? { ...i, quantity: qty } : i));
-    };
-
-    const handleLocalApprove = async () => {
-        if (items.length === 0) return setErrorMsg("Ingreso vacío.");
-        if (checkedItems.size !== items.length) return setErrorMsg(`⚠️ Verifica todos los ítems.`);
-        setIsSaving(true);
-        try { await onApproved(inbound.id); onClose(); } catch (e: any) { setErrorMsg(e.message); } finally { setIsSaving(false); }
+    const handleConfirm = async () => {
+        setIsProcessing(true);
+        try { await onApprove(); } catch (e) { alert("Error al aprobar"); } finally { setIsProcessing(false); }
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-background w-full max-w-4xl rounded-3xl border border-surfaceHighlight shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-background w-full max-w-2xl rounded-3xl border border-surfaceHighlight shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
                 <div className="p-6 border-b border-surfaceHighlight bg-surface flex justify-between items-center">
                     <div>
-                        <h3 className="text-xl font-black text-text uppercase italic tracking-tight">Revisión: Ingreso #{inbound.display_number}</h3>
-                        <p className="text-[10px] text-muted font-bold uppercase tracking-widest">Proveedor: <span className="text-primary">{inbound.supplier_name}</span> | Ref: {inbound.observations}</p>
+                        <h3 className="text-xl font-black text-text uppercase italic">Conciliación de Ingreso</h3>
+                        <p className="text-[10px] text-muted font-bold uppercase">{inbound.supplier_name} | Ref: {inbound.observations}</p>
                     </div>
-                    <button onClick={onClose} className="p-2 rounded-full hover:bg-surfaceHighlight transition-all"><X size={24}/></button>
+                    <button onClick={onClose} className="p-2 hover:bg-surfaceHighlight rounded-full text-muted transition-all"><X size={24}/></button>
                 </div>
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    {errorMsg && <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-600 text-xs font-bold flex items-center gap-3 animate-in shake"><AlertCircle size={16}/> {errorMsg}</div>}
-                    
-                    <div className="relative">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
-                        <input type="text" placeholder="Búsqueda inteligente: Ej 'fer bran'..." value={searchTerm} onChange={e => handleSearch(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-2xl py-3.5 pl-12 pr-4 text-sm font-bold outline-none focus:border-primary uppercase shadow-inner" />
-                        {searchResults.length > 0 && (
-                            <div className="absolute top-full left-0 w-full bg-surface border border-primary/30 rounded-2xl shadow-xl mt-1 z-50 overflow-hidden">
-                                {searchResults.map(p => (
-                                    <button key={p.codart} onClick={() => addItem(p)} className="w-full p-4 hover:bg-primary/5 text-left border-b border-surfaceHighlight flex justify-between items-center group transition-colors">
-                                        <div className="flex flex-col"><span className="text-xs font-black uppercase group-hover:text-primary">{p.desart}</span><span className="text-[9px] text-muted">#{p.codart}</span></div>
-                                        <PackagePlus size={16} className="text-primary" />
-                                    </button>
-                                ))}
-                            </div>
-                        )}
+                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                    <div className="bg-orange-500/10 border border-orange-500/20 p-4 rounded-2xl flex gap-4"><AlertTriangle className="text-orange-500 shrink-0" size={20} /><p className="text-[10px] text-orange-700 dark:text-orange-300 font-bold uppercase leading-relaxed">Al aprobar este ingreso, las cantidades se sumarán automáticamente al stock real del depósito <b className="underline">{inbound.warehouse_name}</b>.</p></div>
+                    <div className="border border-surfaceHighlight rounded-2xl overflow-hidden">
+                        <table className="w-full text-left">
+                            <thead className="bg-background/50 text-[9px] text-muted font-black uppercase border-b border-surfaceHighlight"><tr><th className="p-4">Artículo</th><th className="p-4 text-center">Cantidad a Ingresar</th></tr></thead>
+                            <tbody className="divide-y divide-surfaceHighlight">{isLoading ? (<tr><td colSpan={2} className="p-10 text-center"><Loader2 className="animate-spin mx-auto text-primary"/></td></tr>) : items.map(item => (<tr key={item.id} className="bg-surface/50"><td className="p-4"><p className="text-xs font-black text-text uppercase">{item.desart}</p><p className="text-[9px] font-mono text-muted">#{item.codart}</p></td><td className="p-4 text-center font-black text-sm text-primary">{item.quantity} un.</td></tr>))}</tbody>
+                        </table>
                     </div>
-
-                    {isLoading ? <div className="py-20 text-center"><Loader2 className="animate-spin mx-auto text-primary" size={32} /></div> : (
-                        <div className="border border-surfaceHighlight rounded-2xl overflow-hidden bg-surface shadow-sm">
-                            <table className="w-full text-left">
-                                <thead className="bg-background/50 text-[9px] text-muted uppercase font-black tracking-widest border-b border-surfaceHighlight">
-                                    <tr>
-                                        <th className="p-4 w-12 text-center">OK</th>
-                                        <th className="p-4">Artículo</th>
-                                        <th className="p-4 text-center w-48">Unidades Recibidas</th>
-                                        <th className="p-4 text-center w-12">Acción</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-surfaceHighlight">
-                                    {items.map(i => (
-                                        <tr key={i.id} className={`transition-colors ${checkedItems.has(i.id) ? 'bg-green-500/5' : ''}`}>
-                                            <td className="p-4 text-center">
-                                                <button 
-                                                    onClick={() => {const n = new Set(checkedItems); n.has(i.id) ? n.delete(i.id) : n.add(i.id); setCheckedItems(n);}}
-                                                    className="transition-transform active:scale-90"
-                                                >
-                                                    {checkedItems.has(i.id) ? <CheckSquare size={22} className="text-green-500" /> : <Square size={22} className="text-muted/50" />}
-                                                </button>
-                                            </td>
-                                            <td className="p-4">
-                                                <p className="text-xs font-black uppercase text-text leading-tight">{i.master_products?.desart}</p>
-                                                <p className="text-[9px] font-mono text-muted">#{i.codart}</p>
-                                            </td>
-                                            <td className="p-4">
-                                                <div className="flex items-center justify-center gap-2">
-                                                    <button 
-                                                        onClick={() => updateQty(i.id, i.quantity - 1)}
-                                                        className="p-1.5 rounded-lg bg-background border border-surfaceHighlight text-muted hover:text-red-500 hover:border-red-200 transition-all"
-                                                    >
-                                                        <Minus size={14}/>
-                                                    </button>
-                                                    <input 
-                                                        type="number" 
-                                                        value={i.quantity}
-                                                        onChange={(e) => updateQty(i.id, parseInt(e.target.value) || 0)}
-                                                        className="w-20 bg-background border border-surfaceHighlight rounded-xl py-2 text-center text-sm font-black text-primary outline-none focus:border-primary shadow-inner"
-                                                    />
-                                                    <button 
-                                                        onClick={() => updateQty(i.id, i.quantity + 1)}
-                                                        className="p-1.5 rounded-lg bg-background border border-surfaceHighlight text-muted hover:text-green-500 hover:border-green-200 transition-all"
-                                                    >
-                                                        <Plus size={14}/>
-                                                    </button>
-                                                </div>
-                                            </td>
-                                            <td className="p-4 text-center">
-                                                <button onClick={() => removeItem(i.id)} className="p-2 text-muted hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all"><Trash2 size={16}/></button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    )}
                 </div>
-                <div className="p-6 bg-surface border-t border-surfaceHighlight flex flex-col sm:flex-row gap-4">
-                    <button onClick={onClose} className="flex-1 py-4 font-black uppercase text-xs text-muted hover:bg-surfaceHighlight rounded-2xl border border-surfaceHighlight transition-all">Cerrar</button>
-                    <button 
-                        onClick={handleLocalApprove} 
-                        disabled={isSaving || items.length === 0} 
-                        className={`flex-[2] py-4 rounded-2xl font-black uppercase text-xs shadow-xl flex items-center justify-center gap-2 transition-all active:scale-95 ${checkedItems.size === items.length && items.length > 0 ? 'bg-green-600 text-white hover:bg-green-700 shadow-green-900/20' : 'bg-surfaceHighlight text-muted cursor-not-allowed'}`}
-                    >
-                        {isSaving ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle2 size={18}/>} Confirmar e Ingresar Stock
-                    </button>
-                </div>
+                <div className="p-6 bg-surface border-t border-surfaceHighlight flex gap-3"><button onClick={onClose} className="flex-1 py-4 font-black text-xs uppercase text-muted hover:bg-surfaceHighlight rounded-2xl border border-surfaceHighlight transition-all">Cancelar</button><button onClick={handleConfirm} disabled={isProcessing} className="flex-[2] py-4 bg-green-600 hover:bg-green-700 text-white font-black rounded-2xl shadow-xl shadow-green-900/20 transition-all active:scale-95 flex items-center justify-center gap-3 uppercase text-xs">{isProcessing ? <Loader2 size={18} className="animate-spin"/> : <CheckCircle2 size={18}/>} Confirmar y Sumar Stock</button></div>
             </div>
         </div>
     );
 };
 
-const InboundDetailsModal: React.FC<{ 
-    inbound: StockInbound, 
-    onClose: () => void 
-}> = ({ inbound, onClose }) => {
+const InboundDetailsModal: React.FC<{ inbound: StockInbound, onClose: () => void, currentUser: UserType, onRefresh: () => void }> = ({ inbound, onClose, currentUser, onRefresh }) => {
     const [items, setItems] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
+    const isVale = currentUser.role === 'vale';
+    const canEdit = isVale && (inbound.status === 'enviado' || inbound.status === 'borrador');
+
+    // Estados para buscador manual interno
+    const [showSearch, setShowSearch] = useState(false);
+    const [searchProd, setSearchProd] = useState('');
+    const [foundProds, setFoundProds] = useState<MasterProduct[]>([]);
+    const [selectedProd, setSelectedProd] = useState<MasterProduct | null>(null);
+    const [newQty, setNewQty] = useState('1');
 
     useEffect(() => {
-        (async () => {
-            setIsLoading(true);
-            const { data } = await supabase.from('stock_inbound_items').select('*, master_products(desart)').eq('inbound_id', inbound.id);
-            if (data) setItems(data);
+        supabase.from('stock_inbound_items').select('*, master_products(desart, codart)').eq('inbound_id', inbound.id).then(res => {
+            if (res.data) setItems(res.data.map(i => ({ ...i, desart: i.master_products?.desart })));
             setIsLoading(false);
-        })();
-    }, [inbound.id]);
+        });
+    }, [inbound]);
+
+    const handleUpdateQty = async (itemId: string, qty: number) => {
+        // CORRECCIÓN: Impedir actualizar con 0 o negativo para evitar violación de Check Constraint
+        if (qty <= 0) return;
+        
+        setItems(prev => prev.map(i => i.id === itemId ? { ...i, quantity: qty } : i));
+        const { error } = await supabase.from('stock_inbound_items').update({ quantity: qty }).eq('id', itemId);
+        if (error) console.error(error);
+    };
+
+    const handleRemoveItem = async (itemId: string) => {
+        if (!confirm("¿Quitar artículo de este ingreso?")) return;
+        const { error } = await supabase.from('stock_inbound_items').delete().eq('id', itemId);
+        if (!error) setItems(prev => prev.filter(i => i.id !== itemId));
+    };
+
+    const handleSearch = async (val: string) => {
+        setSearchProd(val);
+        if (val.trim().length < 2) { setFoundProds([]); return; }
+        const { data } = await supabase.from('master_products').select('*').ilike('desart', `%${val}%`).limit(5);
+        if (data) setFoundProds(data);
+    };
+
+    const handleAddManualItem = async () => {
+        // CORRECCIÓN: Impedir agregar con cantidad 0 o vacía
+        const qty = parseInt(newQty);
+        if (!selectedProd || isNaN(qty) || qty <= 0) {
+            alert("Ingrese una cantidad válida mayor a 0.");
+            return;
+        }
+
+        setIsSaving(true);
+        try {
+            const { data, error } = await supabase.from('stock_inbound_items').insert({
+                inbound_id: inbound.id,
+                codart: selectedProd.codart,
+                quantity: qty
+            }).select().single();
+            
+            if (error) throw error;
+            
+            setItems([...items, { ...data, desart: selectedProd.desart }]);
+            setSelectedProd(null);
+            setNewQty('1');
+            setShowSearch(false);
+        } catch (e: any) { 
+            alert("Error al agregar: " + e.message); 
+        } finally { 
+            setIsSaving(false); 
+        }
+    };
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-background w-full max-w-2xl rounded-3xl border border-surfaceHighlight shadow-2xl flex flex-col max-h-[80vh] overflow-hidden">
+            <div className="bg-background w-full max-w-3xl rounded-3xl border border-surfaceHighlight shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
                 <div className="p-6 border-b border-surfaceHighlight bg-surface flex justify-between items-center">
                     <div>
-                        <h3 className="text-xl font-black text-text uppercase italic tracking-tight">Detalle Ingreso #{inbound.display_number}</h3>
-                        <p className="text-[10px] text-muted font-bold uppercase tracking-widest">{inbound.supplier_name} | {inbound.status}</p>
+                        <h3 className="text-xl font-black text-text uppercase italic tracking-tight">Detalle de Ingreso</h3>
+                        <p className="text-[10px] text-muted font-bold uppercase">{inbound.supplier_name}</p>
                     </div>
-                    <button onClick={onClose} className="p-2 rounded-full hover:bg-surfaceHighlight transition-all"><X size={24}/></button>
-                </div>
-                
-                <div className="p-6 grid grid-cols-2 gap-4 bg-background/50 border-b border-surfaceHighlight">
-                    <div className="flex items-center gap-3"><Calendar size={18} className="text-primary"/><div className="flex flex-col"><span className="text-[10px] font-black text-muted uppercase">Fecha de Arribo</span><span className="text-xs font-bold text-text">{new Date(inbound.created_at).toLocaleString()}</span></div></div>
-                    <div className="flex items-center gap-3"><UserCheck size={18} className="text-primary"/><div className="flex flex-col"><span className="text-[10px] font-black text-muted uppercase">Estado</span><span className="text-xs font-black uppercase text-green-600">{inbound.status}</span></div></div>
+                    <div className="flex items-center gap-2">
+                        {canEdit && !showSearch && (
+                            <button onClick={() => setShowSearch(true)} className="flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-xl text-[10px] font-black uppercase hover:bg-primary hover:text-white transition-all">
+                                <Plus size={14}/> Agregar Ítem
+                            </button>
+                        )}
+                        <button onClick={onClose} className="p-2 hover:bg-surfaceHighlight rounded-full text-muted transition-all"><X size={24}/></button>
+                    </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-6">
-                    {isLoading ? <Loader2 className="animate-spin mx-auto text-primary" /> : (
-                        <div className="border border-surfaceHighlight rounded-2xl overflow-hidden bg-surface shadow-sm">
-                            <table className="w-full text-left">
-                                <thead className="bg-background/50 text-[10px] text-muted uppercase font-black border-b border-surfaceHighlight tracking-widest">
-                                    <tr><th className="p-4">Artículo</th><th className="p-4 text-center">Cantidad Recibida</th></tr>
-                                </thead>
-                                <tbody className="divide-y divide-surfaceHighlight">
-                                    {items.map(i => (
-                                        <tr key={i.id} className="hover:bg-background/10 transition-colors">
-                                            <td className="p-4">
-                                                <p className="text-xs font-black uppercase text-text leading-tight">{i.master_products?.desart}</p>
-                                                <p className="text-[9px] font-mono text-muted">#{i.codart}</p>
-                                            </td>
-                                            <td className="p-4 text-center font-black text-primary text-base">{i.quantity} un.</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                    {showSearch && (
+                        <div className="p-6 bg-primary/5 border border-primary/20 rounded-3xl space-y-4 animate-in zoom-in-95">
+                            <div className="flex justify-between items-center">
+                                <h4 className="text-xs font-black text-primary uppercase">Agregar Producto Manual</h4>
+                                <button onClick={() => setShowSearch(false)}><X size={16}/></button>
+                            </div>
+                            <div className="relative">
+                                <input type="text" placeholder="Búsqueda..." value={searchProd} onChange={e => handleSearch(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold outline-none uppercase" />
+                                {foundProds.length > 0 && (
+                                    <div className="absolute top-full left-0 w-full bg-surface border border-surfaceHighlight rounded-xl shadow-xl mt-1 z-50 overflow-hidden">
+                                        {foundProds.map(p => (
+                                            <button key={p.codart} onClick={() => { setSelectedProd(p); setFoundProds([]); setSearchProd(p.desart); }} className="w-full p-3 text-left hover:bg-primary/5 text-xs font-bold uppercase border-b border-surfaceHighlight last:border-none">{p.desart}</button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                            {selectedProd && (
+                                <div className="flex items-center gap-4 animate-in fade-in">
+                                    <input type="number" min="1" value={newQty} onChange={e => setNewQty(e.target.value)} className="w-24 bg-surface border border-surfaceHighlight rounded-xl p-3 text-center font-black" />
+                                    <button onClick={handleAddManualItem} className="flex-1 py-3 bg-primary text-white font-black rounded-xl uppercase text-xs shadow-lg">Confirmar Adición</button>
+                                </div>
+                            )}
                         </div>
                     )}
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-surface border border-surfaceHighlight p-4 rounded-2xl flex items-center gap-4">
+                            <Calendar size={20} className="text-primary"/>
+                            <div><p className="text-[9px] font-black text-muted uppercase tracking-widest">Fecha Registro</p><p className="text-xs font-black text-text">{new Date(inbound.created_at).toLocaleString()}</p></div>
+                        </div>
+                        <div className="bg-surface border border-surfaceHighlight p-4 rounded-2xl flex items-center gap-4">
+                            <Warehouse size={20} className="text-primary"/>
+                            <div><p className="text-[9px] font-black text-muted uppercase tracking-widest">Depósito Destino</p><p className="text-xs font-black text-text uppercase">{inbound.warehouse_name}</p></div>
+                        </div>
+                    </div>
+                    
+                    <div className="border border-surfaceHighlight rounded-2xl overflow-hidden bg-surface">
+                        <table className="w-full text-left">
+                            <thead className="bg-background/50 text-[9px] text-muted font-black uppercase border-b border-surfaceHighlight">
+                                <tr>
+                                    <th className="p-4">Artículo</th>
+                                    <th className="p-4 text-center">Cantidad</th>
+                                    {canEdit && <th className="p-4 w-12"></th>}
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-surfaceHighlight">
+                                {isLoading ? (
+                                    <tr><td colSpan={3} className="p-10 text-center"><Loader2 className="animate-spin mx-auto text-primary"/></td></tr>
+                                ) : items.map(item => (
+                                    <tr key={item.id}>
+                                        <td className="p-4"><p className="text-xs font-black text-text uppercase">{item.desart}</p><p className="text-[9px] font-mono text-muted">#{item.codart}</p></td>
+                                        <td className="p-4 text-center">
+                                            {canEdit ? (
+                                                <div className="flex items-center justify-center gap-1">
+                                                    <input 
+                                                        type="number" 
+                                                        min="1"
+                                                        value={item.quantity} 
+                                                        onChange={e => handleUpdateQty(item.id, parseInt(e.target.value) || 0)}
+                                                        className="w-20 bg-background border border-surfaceHighlight rounded-lg p-2 text-center font-black text-sm outline-none focus:border-primary"
+                                                    />
+                                                </div>
+                                            ) : (
+                                                <span className="font-black text-sm text-text">{item.quantity} un.</span>
+                                            )}
+                                        </td>
+                                        {canEdit && (
+                                            <td className="p-4 text-center">
+                                                <button onClick={() => handleRemoveItem(item.id)} className="p-2 text-muted hover:text-red-500"><Trash2 size={16}/></button>
+                                            </td>
+                                        )}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-                <div className="p-6 bg-surface border-t border-surfaceHighlight">
-                    <button onClick={onClose} className="w-full py-4 font-black uppercase text-xs text-text hover:bg-surfaceHighlight rounded-2xl border border-surfaceHighlight transition-all shadow-sm">Cerrar Detalle</button>
+                <div className="p-6 bg-surface border-t border-surfaceHighlight flex gap-2">
+                    <button onClick={() => { onRefresh(); onClose(); }} className="w-full py-4 font-black uppercase text-xs text-text hover:bg-surfaceHighlight rounded-2xl border border-surfaceHighlight transition-all">Cerrar y Actualizar</button>
                 </div>
             </div>
         </div>

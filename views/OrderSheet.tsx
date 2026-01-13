@@ -21,9 +21,14 @@ import {
     CreditCard,
     AlertCircle,
     ChevronRight,
-    Edit3
+    Edit3,
+    Receipt,
+    Wallet,
+    ArrowDownRight,
+    TrendingUp
 } from 'lucide-react';
 import { Trip, TripClient, User as UserType, TripExpense, PaymentStatus, DetailedOrder, OrderStatus } from '../types';
+import { hasPermission } from '../logic';
 
 interface OrderSheetProps {
     currentUser: UserType;
@@ -34,10 +39,6 @@ interface OrderSheetProps {
     selectedTripId: string | null;
     onSelectTrip: (id: string | null) => void;
 }
-
-// ==========================================
-// MAIN COMPONENT: ORDER SHEET CONTROLLER
-// ==========================================
 
 export const OrderSheet: React.FC<OrderSheetProps> = ({ 
     currentUser, 
@@ -111,10 +112,6 @@ export const OrderSheet: React.FC<OrderSheetProps> = ({
     );
 };
 
-// ==========================================
-// SUB-VIEW 1: TRIP LIST
-// ==========================================
-
 const TripListView: React.FC<{
     trips: Trip[];
     onSelect: (id: string) => void;
@@ -122,7 +119,7 @@ const TripListView: React.FC<{
     onDelete: (id: string) => void;
     currentUser: UserType;
 }> = ({ trips, onSelect, onCreate, onDelete, currentUser }) => {
-    const isVale = currentUser.role === 'vale';
+    const canManage = hasPermission(currentUser, 'orders.sheet_manage');
 
     return (
         <div className="flex flex-col gap-6 pb-20">
@@ -131,7 +128,7 @@ const TripListView: React.FC<{
                     <h2 className="text-2xl md:text-3xl font-black text-text tracking-tight">Planilla de Viajes</h2>
                     <p className="text-muted text-sm">Gestiona recorridos y cobranzas.</p>
                 </div>
-                {isVale && (
+                {canManage && (
                     <button 
                         onClick={onCreate}
                         className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary hover:bg-primaryHover text-white font-bold text-sm shadow-lg shadow-primary/20 transition-all"
@@ -163,7 +160,7 @@ const TripListView: React.FC<{
                                         {trip.status === 'CLOSED' ? 'Cerrado' : 'En Progreso'}
                                     </span>
                                 </div>
-                                {isVale && trip.status !== 'CLOSED' && (
+                                {canManage && trip.status !== 'CLOSED' && (
                                     <button onClick={(e) => { e.stopPropagation(); onDelete(trip.id); }} className="p-2 text-muted hover:text-red-500 transition-colors">
                                         <Trash2 size={18} />
                                     </button>
@@ -185,129 +182,6 @@ const TripListView: React.FC<{
     );
 };
 
-// ==========================================
-// SUB-VIEW 2: TRIP EDITOR
-// ==========================================
-
-const TripEditor: React.FC<{
-    initialData: Trip | null;
-    onClose: () => void;
-    onSave: (trip: Trip) => void;
-    availableOrders: DetailedOrder[];
-}> = ({ initialData, onClose, onSave, availableOrders }) => {
-    const [name, setName] = useState(initialData?.name || '');
-    const [driverName, setDriverName] = useState(initialData?.driverName || '');
-    const [route, setRoute] = useState(initialData?.route || '');
-    const [date, setDate] = useState(initialData?.date || new Date().toLocaleDateString('es-AR'));
-    const [clients, setClients] = useState<TripClient[]>(initialData?.clients || []);
-    
-    const [isManualAddOpen, setIsManualAddOpen] = useState(false);
-    const [isImportOpen, setIsImportOpen] = useState(false);
-
-    const removeClient = (id: string) => {
-        setClients(prev => prev.filter(c => c.id !== id));
-    };
-
-    const handleSave = () => {
-        if (!name || !driverName) { alert("Complete Nombre y Conductor"); return; }
-        onSave({
-            id: initialData?.id || `trip-${Date.now()}`,
-            displayId: initialData?.displayId || `#${Math.floor(Math.random()*10000)}`,
-            name,
-            status: initialData?.status || 'PLANNING',
-            driverName,
-            route: route || 'Sin asignar',
-            date,
-            clients,
-            expenses: initialData?.expenses || []
-        });
-    };
-
-    return (
-        <div className="flex flex-col gap-6 pb-20 max-w-6xl mx-auto w-full">
-            <div className="flex items-center gap-4">
-                <button onClick={onClose} className="p-2 rounded-full hover:bg-surfaceHighlight text-muted hover:text-text transition-colors"><ArrowLeft size={24} /></button>
-                <h2 className="text-2xl font-black text-text">{initialData ? 'Editar Viaje' : 'Nuevo Viaje'}</h2>
-                <button onClick={handleSave} className="ml-auto flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-white font-bold text-sm shadow-lg shadow-primary/20 transition-all"><Save size={18} /> Guardar</button>
-            </div>
-
-            <div className="bg-surface border border-surfaceHighlight rounded-2xl p-6 grid grid-cols-1 md:grid-cols-3 gap-6 shadow-sm">
-                <div className="md:col-span-3 flex flex-col gap-2">
-                    <label className="text-xs font-bold uppercase text-muted">Nombre del Viaje</label>
-                    <input className="bg-surface border border-surfaceHighlight rounded-xl p-3 text-lg font-bold outline-none focus:border-primary transition-all shadow-sm" value={name} onChange={e => setName(e.target.value)} placeholder="Ej: Zona Norte Lunes" />
-                </div>
-                <div className="flex flex-col gap-2">
-                    <label className="text-xs font-bold uppercase text-muted">Conductor</label>
-                    <input className="bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold shadow-sm" value={driverName} onChange={e => setDriverName(e.target.value)} />
-                </div>
-                <div className="flex flex-col gap-2">
-                    <label className="text-xs font-bold uppercase text-muted">Zona</label>
-                    <select className="bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold appearance-none cursor-pointer shadow-sm" value={route} onChange={e => setRoute(e.target.value)}>
-                        <option value="">-- Seleccionar --</option>
-                        <option value="V. Mercedes">V. Mercedes</option>
-                        <option value="San Luis">San Luis</option>
-                        <option value="Norte">Norte</option>
-                    </select>
-                </div>
-                <div className="flex flex-col gap-2">
-                    <label className="text-xs font-bold uppercase text-muted">Fecha</label>
-                    <input className="bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold shadow-sm" value={date} onChange={e => setDate(e.target.value)} />
-                </div>
-            </div>
-
-            <div className="bg-surface border border-surfaceHighlight rounded-2xl p-6 flex flex-col gap-6 shadow-sm">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-surfaceHighlight pb-4">
-                     <h3 className="text-lg font-bold text-text">Clientes ({clients.length})</h3>
-                     <div className="flex gap-2 w-full sm:w-auto">
-                        <button onClick={() => setIsImportOpen(true)} className="flex-1 sm:flex-none px-4 py-2 rounded-lg bg-blue-500/10 text-blue-500 font-bold text-xs border border-blue-500/20">Importar</button>
-                        <button onClick={() => setIsManualAddOpen(true)} className="flex-1 sm:flex-none px-4 py-2 rounded-lg bg-surfaceHighlight text-text font-bold text-xs border border-surfaceHighlight">Manual</button>
-                     </div>
-                </div>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left min-w-[600px]">
-                        <thead>
-                            <tr className="text-xs text-muted uppercase border-b border-surfaceHighlight">
-                                <th className="pb-3 pl-2">Cliente</th>
-                                <th className="pb-3 text-right">Saldo Ant.</th>
-                                <th className="pb-3 text-right">Factura</th>
-                                <th className="pb-3 text-right">Total</th>
-                                <th className="pb-3 text-center w-12"></th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-surfaceHighlight">
-                            {clients.map(c => (
-                                <tr key={c.id}>
-                                    <td className="py-3 pl-2"><p className="font-bold text-sm text-text">{c.name}</p><p className="text-xs text-muted">{c.address}</p></td>
-                                    <td className="py-3 text-right font-bold text-muted">$ {(c.previousBalance || 0).toLocaleString()}</td>
-                                    <td className="py-3 text-right font-bold text-muted">$ {(c.currentInvoiceAmount || 0).toLocaleString()}</td>
-                                    <td className="py-3 text-right font-black text-text">$ {((c.previousBalance || 0) + (c.currentInvoiceAmount || 0)).toLocaleString()}</td>
-                                    <td className="py-3 text-center"><button onClick={() => removeClient(c.id)} className="p-2 text-muted hover:text-red-500 transition-colors"><Trash2 size={16} /></button></td>
-                                </tr>
-                            ))}
-                            {clients.length === 0 && (
-                                <tr><td colSpan={5} className="py-10 text-center text-muted italic">No hay clientes agregados</td></tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            {isManualAddOpen && <ManualClientModal onClose={() => setIsManualAddOpen(false)} onAdd={(data) => {
-                setClients([...clients, { id: `tc-${Date.now()}`, name: data.name||'Nuevo', address: data.address||'', previousBalance: data.previousBalance||0, currentInvoiceAmount: data.currentInvoiceAmount||0, paymentCash: 0, paymentTransfer: 0, isTransferExpected: false, status: 'PENDING' }]);
-                setIsManualAddOpen(false);
-            }} />}
-            {isImportOpen && <ImportOrdersModal orders={availableOrders} selectedRoute={route} onClose={() => setIsImportOpen(false)} onImport={(selected) => {
-                setClients([...clients, ...selected.map(o => ({ id: `tc-${Date.now()}-${o.id}`, name: o.clientName, address: o.zone||'', previousBalance: 0, currentInvoiceAmount: o.total, paymentCash: 0, paymentTransfer: 0, isTransferExpected: false, status: 'PENDING' as PaymentStatus }))]);
-                setIsImportOpen(false);
-            }} />}
-        </div>
-    );
-};
-
-// ==========================================
-// SUB-VIEW 3: TRIP DETAIL VIEW
-// ==========================================
-
 const TripDetailView: React.FC<{
     trip: Trip;
     currentUser: UserType;
@@ -320,11 +194,10 @@ const TripDetailView: React.FC<{
     const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
     const [isReportOpen, setIsReportOpen] = useState(false);
     
-    // Inline editing states
-    const [editingPrevBal, setEditingPrevBal] = useState<string | null>(null); // clientId
+    const [editingPrevBal, setEditingPrevBal] = useState<string | null>(null); 
     const [tempPrevBal, setTempPrevBal] = useState<string>('');
 
-    const isVale = currentUser.role === 'vale';
+    const canManage = hasPermission(currentUser, 'orders.sheet_manage');
     const isClosed = trip.status === 'CLOSED';
 
     const getClientTotals = (c: TripClient) => {
@@ -351,27 +224,14 @@ const TripDetailView: React.FC<{
     const handleUpdatePayment = (clientId: string, cash: number, transfer: number, isTransferExpected: boolean, prevBalance?: number, currentInvoice?: number) => {
         const updatedClients = trip.clients.map(c => {
             if (c.id !== clientId) return c;
-            
-            // If vale, they can overwrite balances
-            const bPrev = isVale && prevBalance !== undefined ? prevBalance : (c.previousBalance || 0);
-            const bCurr = isVale && currentInvoice !== undefined ? currentInvoice : (c.currentInvoiceAmount || 0);
-            
+            const bPrev = canManage && prevBalance !== undefined ? prevBalance : (c.previousBalance || 0);
+            const bCurr = canManage && currentInvoice !== undefined ? currentInvoice : (c.currentInvoiceAmount || 0);
             const totalDebt = bPrev + bCurr;
             const totalPaid = cash + transfer;
-            
             let status: PaymentStatus = 'PENDING';
             if (totalPaid >= totalDebt - 1) status = 'PAID'; 
             else if (totalPaid > 0) status = 'PARTIAL';
-
-            return { 
-                ...c, 
-                previousBalance: bPrev,
-                currentInvoiceAmount: bCurr,
-                paymentCash: cash, 
-                paymentTransfer: transfer, 
-                isTransferExpected, 
-                status 
-            };
+            return { ...c, previousBalance: bPrev, currentInvoiceAmount: bCurr, paymentCash: cash, paymentTransfer: transfer, isTransferExpected, status };
         });
         onUpdateTrip({ ...trip, clients: updatedClients });
         setSelectedClient(null);
@@ -384,12 +244,12 @@ const TripDetailView: React.FC<{
     };
 
     const toggleStatus = () => {
-        if (!isVale) return;
+        if (!canManage) return;
         onUpdateTrip({ ...trip, status: isClosed ? 'IN_PROGRESS' : 'CLOSED' });
     };
 
     const startInlineEdit = (client: TripClient) => {
-        if (!isVale || isClosed) return;
+        if (!canManage || isClosed) return;
         setEditingPrevBal(client.id);
         setTempPrevBal(client.previousBalance.toString());
     };
@@ -397,31 +257,23 @@ const TripDetailView: React.FC<{
     const saveInlineEdit = (client: TripClient) => {
         const newVal = parseFloat(tempPrevBal);
         if (!isNaN(newVal)) {
-            handleUpdatePayment(
-                client.id, 
-                client.paymentCash, 
-                client.paymentTransfer, 
-                client.isTransferExpected, 
-                newVal, 
-                client.currentInvoiceAmount
-            );
+            handleUpdatePayment(client.id, client.paymentCash, client.paymentTransfer, client.isTransferExpected, newVal, client.currentInvoiceAmount);
         }
         setEditingPrevBal(null);
     };
 
     return (
         <div className="flex flex-col gap-6 pb-20">
-            {/* Header Mobile Optimized */}
             <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between">
                     <button onClick={onBack} className="p-2 -ml-2 rounded-full hover:bg-surfaceHighlight text-muted hover:text-text transition-colors"><ArrowLeft size={24} /></button>
                     <div className="flex gap-2">
-                        {isVale && (
+                        {canManage && (
                             <button onClick={toggleStatus} className={`p-2 rounded-lg border transition-all ${isClosed ? 'border-orange-500/50 text-orange-500' : 'border-green-500/50 text-green-500'}`} title={isClosed ? "Reabrir" : "Cerrar Viaje"}>
                                 {isClosed ? <Unlock size={20}/> : <Lock size={20}/>}
                             </button>
                         )}
-                        {isVale && !isClosed && (
+                        {canManage && !isClosed && (
                             <button onClick={onEditRequest} className="p-2 rounded-lg border border-surfaceHighlight text-text hover:bg-surfaceHighlight" title="Editar Estructura">
                                 <FileEdit size={20} />
                             </button>
@@ -437,7 +289,6 @@ const TripDetailView: React.FC<{
                 </div>
             </div>
 
-            {/* Top Cards for Real-time Financials */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 <SummaryCard label="Cobrar" value={tripTotals.expectedTotal} color="text-text" />
                 <SummaryCard label="Cobrado" value={tripTotals.collectedCash + tripTotals.collectedTransfer} color="text-green-500" />
@@ -448,7 +299,6 @@ const TripDetailView: React.FC<{
                 </div>
             </div>
 
-            {/* Quick Actions */}
             <div className="flex gap-2">
                 {!isClosed && (
                     <button onClick={() => setIsExpenseModalOpen(true)} className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-red-500/10 text-red-500 font-bold text-sm border border-red-500/20">
@@ -460,11 +310,46 @@ const TripDetailView: React.FC<{
                 </button>
             </div>
 
-            {/* Clients List - Card-based for Mobile, Table for Desktop */}
             <div className="space-y-3">
                 <h3 className="text-lg font-bold text-text mb-2">Listado de Clientes</h3>
                 
-                {/* Desktop View Table */}
+                {/* VISTA MOBILE (TARJETAS) */}
+                <div className="md:hidden flex flex-col gap-4">
+                    {(trip.clients || []).map(c => {
+                        const { totalDebt, totalPaid, remaining } = getClientTotals(c);
+                        const isPaid = c.status === 'PAID';
+                        return (
+                            <div key={c.id} className="bg-surface border border-surfaceHighlight rounded-2xl p-5 shadow-sm space-y-4">
+                                <div className="flex justify-between items-start">
+                                    <div>
+                                        <p className="font-black text-text uppercase leading-tight">{c.name}</p>
+                                        <p className="text-[10px] text-muted font-bold uppercase mt-1 flex items-center gap-1"><MapPin size={10}/> {c.address}</p>
+                                    </div>
+                                    <StatusBadge status={c.status} />
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 py-3 border-y border-surfaceHighlight/50">
+                                    <div className="flex flex-col">
+                                        <span className="text-[9px] font-black text-muted uppercase">Deuda Total</span>
+                                        <span className="text-sm font-black text-text">$ {totalDebt.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex flex-col text-right">
+                                        <span className="text-[9px] font-black text-muted uppercase">Cobrado</span>
+                                        <span className="text-sm font-black text-green-500">$ {totalPaid.toLocaleString()}</span>
+                                    </div>
+                                </div>
+                                <button 
+                                    onClick={() => setSelectedClient(c)}
+                                    className={`w-full py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${isPaid ? 'bg-primary/10 text-primary border border-primary/20' : 'bg-primary text-white shadow-lg shadow-primary/20 active:scale-[0.98]'}`}
+                                >
+                                    {isPaid ? 'Ver / Editar' : 'Registrar Cobro'}
+                                </button>
+                            </div>
+                        );
+                    })}
+                    {trip.clients.length === 0 && <p className="text-center py-10 text-muted italic text-sm">Sin clientes en este viaje.</p>}
+                </div>
+
+                {/* VISTA DESKTOP (TABLA) */}
                 <div className="hidden md:block bg-surface border border-surfaceHighlight rounded-2xl overflow-hidden shadow-sm">
                     <table className="w-full text-left">
                         <thead>
@@ -483,7 +368,6 @@ const TripDetailView: React.FC<{
                                 const { totalDebt, totalPaid } = getClientTotals(c);
                                 const isPaid = c.status === 'PAID';
                                 const isEditing = editingPrevBal === c.id;
-
                                 return (
                                     <tr key={c.id} className="hover:bg-surfaceHighlight/30 transition-colors">
                                         <td className="p-4">
@@ -492,37 +376,21 @@ const TripDetailView: React.FC<{
                                         </td>
                                         <td className="p-4 text-right font-bold text-muted group/edit relative">
                                             {isEditing ? (
-                                                <input 
-                                                    autoFocus
-                                                    type="number"
-                                                    value={tempPrevBal}
-                                                    onChange={e => setTempPrevBal(e.target.value)}
-                                                    onBlur={() => saveInlineEdit(c)}
-                                                    onKeyDown={e => e.key === 'Enter' && saveInlineEdit(c)}
-                                                    className="w-24 bg-background border border-primary rounded px-2 py-1 text-right font-bold text-text outline-none"
-                                                />
+                                                <input autoFocus type="number" value={tempPrevBal} onChange={e => setTempPrevBal(e.target.value)} onBlur={() => saveInlineEdit(c)} onKeyDown={e => e.key === 'Enter' && saveInlineEdit(c)} className="w-24 bg-background border border-primary rounded px-2 py-1 text-right font-bold text-text outline-none" />
                                             ) : (
-                                                <div 
-                                                    onClick={() => startInlineEdit(c)} 
-                                                    className={`inline-flex items-center gap-1 ${isVale && !isClosed ? 'cursor-edit hover:text-primary transition-colors' : ''}`}
-                                                >
+                                                <div onClick={() => startInlineEdit(c)} className={`inline-flex items-center gap-1 ${canManage && !isClosed ? 'cursor-edit hover:text-primary transition-colors' : ''}`}>
                                                     $ {(c.previousBalance || 0).toLocaleString()}
-                                                    {isVale && !isClosed && <Edit3 size={10} className="opacity-0 group-hover/edit:opacity-50" />}
+                                                    {canManage && !isClosed && <Edit3 size={10} className="opacity-0 group-hover/edit:opacity-50" />}
                                                 </div>
                                             )}
                                         </td>
                                         <td className="p-4 text-right text-muted font-bold">$ {(c.currentInvoiceAmount || 0).toLocaleString()}</td>
                                         <td className="p-4 text-right font-black text-text">$ {(totalDebt || 0).toLocaleString()}</td>
-                                        <td className="p-4 text-center">
-                                            <StatusBadge status={c.status} />
-                                        </td>
+                                        <td className="p-4 text-center"><StatusBadge status={c.status} /></td>
                                         <td className="p-4 text-right font-bold text-green-500">$ {(totalPaid || 0).toLocaleString()}</td>
                                         <td className="p-4 text-center">
-                                            <button 
-                                                onClick={() => setSelectedClient(c)} 
-                                                className={`px-4 py-1.5 rounded-lg font-bold text-xs transition-colors ${isPaid ? 'text-primary hover:bg-primary/5' : 'bg-primary text-white hover:bg-primaryHover'}`}
-                                            >
-                                                {isVale ? (isPaid ? 'Editar' : 'Cobrar/Edit') : (isPaid ? 'Ver' : 'Cobrar')}
+                                            <button onClick={() => setSelectedClient(c)} className={`px-4 py-1.5 rounded-lg font-bold text-xs transition-colors ${isPaid ? 'text-primary hover:bg-primary/5' : 'bg-primary text-white hover:bg-primaryHover'}`}>
+                                                {canManage ? (isPaid ? 'Editar' : 'Cobrar/Edit') : (isPaid ? 'Ver' : 'Cobrar')}
                                             </button>
                                         </td>
                                     </tr>
@@ -531,101 +399,33 @@ const TripDetailView: React.FC<{
                         </tbody>
                     </table>
                 </div>
-
-                {/* Mobile View Cards */}
-                <div className="flex flex-col gap-3 md:hidden">
-                    {(trip.clients || []).map(c => {
-                        const { totalDebt, totalPaid, remaining } = getClientTotals(c);
-                        const isPaid = c.status === 'PAID';
-                        const isEditing = editingPrevBal === c.id;
-
-                        return (
-                            <div key={c.id} className="bg-surface border border-surfaceHighlight rounded-2xl p-4 shadow-sm flex flex-col gap-3">
-                                <div className="flex justify-between items-start">
-                                    <div className="flex-1">
-                                        <p className="font-bold text-text leading-tight">{c.name}</p>
-                                        <p className="text-[10px] text-muted font-bold uppercase mt-1">{c.address}</p>
-                                    </div>
-                                    <StatusBadge status={c.status} />
-                                </div>
-                                
-                                <div className="grid grid-cols-2 gap-4 border-y border-surfaceHighlight py-3 my-1">
-                                    <div className="flex flex-col gap-1">
-                                        <p className="text-[10px] text-muted uppercase font-bold">Saldo Ant.</p>
-                                        {isEditing ? (
-                                            <input 
-                                                autoFocus
-                                                type="number"
-                                                value={tempPrevBal}
-                                                onChange={e => setTempPrevBal(e.target.value)}
-                                                onBlur={() => saveInlineEdit(c)}
-                                                onKeyDown={e => e.key === 'Enter' && saveInlineEdit(c)}
-                                                className="w-full bg-background border border-primary rounded px-2 py-1 font-bold text-text outline-none text-sm"
-                                            />
-                                        ) : (
-                                            <div onClick={() => startInlineEdit(c)} className="flex items-center gap-2">
-                                                <p className="text-sm font-bold text-muted">$ {(c.previousBalance || 0).toLocaleString()}</p>
-                                                {isVale && !isClosed && <Edit3 size={12} className="text-primary/50" />}
-                                            </div>
-                                        )}
-                                        <p className="text-[10px] text-muted uppercase font-bold mt-2">Factura Hoy</p>
-                                        <p className="text-sm font-bold text-muted">$ {(c.currentInvoiceAmount || 0).toLocaleString()}</p>
-                                    </div>
-                                    <div className="text-right border-l border-surfaceHighlight pl-4">
-                                        <p className="text-[10px] text-muted uppercase font-bold">Deuda Total</p>
-                                        <p className="text-lg font-black text-text">$ {(totalDebt || 0).toLocaleString()}</p>
-                                        <p className="text-[10px] text-muted uppercase font-bold mt-2">Pendiente</p>
-                                        <p className={`text-lg font-black ${remaining <= 0 ? 'text-green-500' : 'text-blue-500'}`}>$ {(remaining || 0).toLocaleString()}</p>
-                                    </div>
-                                </div>
-
-                                <div className="flex justify-between items-center">
-                                    <div className="flex flex-col">
-                                        <span className="text-[10px] text-muted font-bold">COBRADO: <span className="text-green-500 font-black">$ {(totalPaid || 0).toLocaleString()}</span></span>
-                                    </div>
-                                    <button 
-                                        onClick={() => setSelectedClient(c)} 
-                                        className={`flex items-center gap-2 px-6 py-2 rounded-xl font-bold text-sm transition-all shadow-md ${isPaid ? 'bg-surfaceHighlight text-text border border-surfaceHighlight' : 'bg-primary text-white shadow-primary/20'}`}
-                                    >
-                                        <DollarSign size={16} />
-                                        {isPaid ? 'Detalle' : 'Registrar Cobro'}
-                                    </button>
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
             </div>
 
-            {/* Modals */}
             {selectedClient && (
                 <PaymentModal 
                     client={selectedClient} 
                     totals={getClientTotals(selectedClient)} 
                     onClose={() => setSelectedClient(null)} 
                     onSave={handleUpdatePayment} 
-                    isVale={isVale}
+                    isVale={canManage}
                 />
             )}
             {isExpenseModalOpen && (
-                <ExpenseModal 
-                    onClose={() => setIsExpenseModalOpen(false)} 
-                    onSave={handleAddExpense} 
-                />
+                <ExpenseModal onClose={() => setIsExpenseModalOpen(false)} onSave={handleAddExpense} />
             )}
             {isReportOpen && (
-                <TripReportModal 
-                    trip={trip} 
-                    onClose={() => setIsReportOpen(false)} 
-                />
+                <TripReportModal trip={trip} onClose={() => setIsReportOpen(false)} />
             )}
         </div>
     );
 };
 
-// ==========================================
-// SUB-COMPONENTS & HELPERS
-// ==========================================
+const SummaryCard: React.FC<{ label: string, value: number, color: string }> = ({ label, value, color }) => (
+    <div className="bg-surface border border-surfaceHighlight rounded-xl p-4 md:p-6 shadow-sm flex flex-col justify-between">
+        <span className="text-[10px] font-bold text-muted uppercase tracking-wider">{label}</span>
+        <p className={`text-xl md:text-2xl font-black mt-1 ${color}`}>$ {(value || 0).toLocaleString()}</p>
+    </div>
+);
 
 const StatusBadge: React.FC<{ status: PaymentStatus }> = ({ status }) => (
     <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider ${
@@ -637,41 +437,21 @@ const StatusBadge: React.FC<{ status: PaymentStatus }> = ({ status }) => (
     </span>
 );
 
-const SummaryCard: React.FC<{ label: string; value: number; color: string }> = ({ label, value, color }) => (
-    <div className="bg-surface border border-surfaceHighlight rounded-xl p-4 md:p-6 shadow-sm flex flex-col justify-between">
-        <span className="text-[10px] font-bold text-muted uppercase tracking-wider">{label}</span>
-        <p className={`text-xl md:text-2xl font-black mt-1 ${color}`}>$ {(value || 0).toLocaleString()}</p>
-    </div>
-);
-
 const ManualClientModal: React.FC<{ onClose: () => void; onAdd: (data: any) => void }> = ({ onClose, onAdd }) => {
     const [name, setName] = useState('');
     const [prev, setPrev] = useState('');
     const [inv, setInv] = useState('');
     const [address, setAddress] = useState('');
-    
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
              <div className="bg-background w-full max-w-md rounded-2xl border border-surfaceHighlight p-6 shadow-2xl">
                 <h3 className="font-bold text-lg mb-6 text-text">Agregar Cliente Manual</h3>
                 <div className="space-y-4">
-                    <div>
-                        <label className="text-[10px] font-bold uppercase text-muted ml-1">Nombre</label>
-                        <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" value={name} onChange={e => setName(e.target.value)} />
-                    </div>
-                    <div>
-                        <label className="text-[10px] font-bold uppercase text-muted ml-1">Dirección/Zona</label>
-                        <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" value={address} onChange={e => setAddress(e.target.value)} />
-                    </div>
+                    <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" value={name} onChange={e => setName(e.target.value)} placeholder="Nombre" />
+                    <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" value={address} onChange={e => setAddress(e.target.value)} placeholder="Dirección/Zona" />
                     <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <label className="text-[10px] font-bold uppercase text-muted ml-1">Saldo Ant.</label>
-                            <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" type="number" value={prev} onChange={e => setPrev(e.target.value)} />
-                        </div>
-                        <div>
-                            <label className="text-[10px] font-bold uppercase text-muted ml-1">Factura</label>
-                            <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" type="number" value={inv} onChange={e => setInv(e.target.value)} />
-                        </div>
+                        <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" type="number" value={prev} onChange={e => setPrev(e.target.value)} placeholder="Saldo Ant." />
+                        <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" type="number" value={inv} onChange={e => setInv(e.target.value)} placeholder="Factura" />
                     </div>
                     <button onClick={() => onAdd({ name, address, previousBalance: parseFloat(prev)||0, currentInvoiceAmount: parseFloat(inv)||0 })} className="w-full py-4 rounded-xl bg-primary text-white font-black shadow-lg shadow-primary/20 mt-4 transition-all">Agregar Cliente</button>
                     <button onClick={onClose} className="w-full py-2 text-muted font-bold">Cancelar</button>
@@ -694,7 +474,7 @@ const ImportOrdersModal: React.FC<{ orders: DetailedOrder[]; selectedRoute?: str
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-2">
                     {available.map(o => (
-                        <div key={o.id} onClick={() => toggle(o.id)} className={`p-4 rounded-xl border cursor-pointer flex justify-between items-center transition-all ${selectedIds.has(o.id) ? 'bg-primary/5 border-primary shadow-sm' : 'bg-surface border-surfaceHighlight hover:border-primary/50'}`}>
+                        <div key={o.id} onClick={() => toggle(o.id)} className={`p-4 rounded-xl border cursor-pointer flex justify-between items-center transition-all ${selectedIds.has(o.id) ? 'bg-primary/5 border-primary shadow-sm' : 'bg-surface border border-surfaceHighlight hover:border-primary/50'}`}>
                             <div className="flex items-center gap-4">
                                 <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${selectedIds.has(o.id) ? 'bg-primary border-primary' : 'border-muted'}`}>{selectedIds.has(o.id) && <Check size={14} className="text-white"/>}</div>
                                 <div><p className="font-bold text-sm text-text">{o.clientName}</p><p className="text-[10px] text-muted font-bold uppercase">{o.displayId}</p></div>
@@ -717,86 +497,34 @@ const PaymentModal: React.FC<{ client: TripClient; totals: any; onClose: () => v
     const [cash, setCash] = useState(client.paymentCash > 0 ? client.paymentCash.toString() : '');
     const [transfer, setTransfer] = useState(client.paymentTransfer > 0 ? client.paymentTransfer.toString() : '');
     const [isExpected, setIsExpected] = useState(client.isTransferExpected);
-    
-    // Vale only fields
     const [prevBal, setPrevBal] = useState((client.previousBalance || 0).toString());
     const [currInv, setCurrInv] = useState((client.currentInvoiceAmount || 0).toString());
-
-    const handleConfirm = () => {
-        onSave(
-            client.id, 
-            parseFloat(cash)||0, 
-            parseFloat(transfer)||0, 
-            isExpected, 
-            isVale ? parseFloat(prevBal)||0 : undefined,
-            isVale ? parseFloat(currInv)||0 : undefined
-        );
-    };
-
+    const handleConfirm = () => { onSave(client.id, parseFloat(cash)||0, parseFloat(transfer)||0, isExpected, isVale ? parseFloat(prevBal)||0 : undefined, isVale ? parseFloat(currInv)||0 : undefined); };
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4">
             <div className="bg-background w-full max-w-sm rounded-2xl border border-surfaceHighlight p-6 shadow-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
-                <div className="flex justify-between items-center">
-                    <h3 className="font-bold text-lg text-text">Registro de Cobro</h3>
-                    <button onClick={onClose}><X size={24} className="text-muted"/></button>
-                </div>
-                
-                <div className="p-4 bg-surfaceHighlight/20 rounded-xl border border-surfaceHighlight">
-                    <p className="text-[10px] font-bold text-muted uppercase">Cliente</p>
-                    <p className="font-black text-text text-lg leading-tight mt-1">{client.name}</p>
-                </div>
-
+                <div className="flex justify-between items-center"><h3 className="font-bold text-lg text-text">Registro de Cobro</h3><button onClick={onClose}><X size={24} className="text-muted"/></button></div>
+                <div className="p-4 bg-surfaceHighlight/20 rounded-xl border border-surfaceHighlight"><p className="text-[10px] font-bold text-muted uppercase">Cliente</p><p className="font-black text-text text-lg leading-tight mt-1">{client.name}</p></div>
                 {isVale && (
                     <div className="p-4 bg-orange-500/5 rounded-xl border border-orange-500/20 space-y-4">
-                        <div className="flex items-center gap-2 text-orange-500 mb-2">
-                            <Edit3 size={16} />
-                            <span className="text-[10px] font-bold uppercase tracking-widest">Edición de Saldos (Admin)</span>
-                        </div>
+                        <div className="flex items-center gap-2 text-orange-500 mb-2"><Edit3 size={16}/><span className="text-[10px] font-bold uppercase tracking-widest">Edición de Saldos (Admin)</span></div>
                         <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="text-[10px] font-bold uppercase text-muted ml-1">Saldo Ant.</label>
-                                <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" type="number" value={prevBal} onChange={e => setPrevBal(e.target.value)} />
-                            </div>
-                            <div>
-                                <label className="text-[10px] font-bold uppercase text-muted ml-1">Factura</label>
-                                <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" type="number" value={currInv} onChange={e => setCurrInv(e.target.value)} />
-                            </div>
+                            <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" type="number" value={prevBal} onChange={e => setPrevBal(e.target.value)} />
+                            <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" type="number" value={currInv} onChange={e => setCurrInv(e.target.value)} />
                         </div>
                     </div>
                 )}
-
                 <div className="space-y-4">
-                    {!isVale && (
-                        <div className="bg-surfaceHighlight/20 p-4 rounded-xl">
-                            <span className="text-[10px] font-bold uppercase text-muted">Deuda Total</span>
-                            <p className="text-2xl font-black text-text">$ {(totals.totalDebt || 0).toLocaleString()}</p>
-                        </div>
-                    )}
-                    
+                    {!isVale && (<div className="bg-surfaceHighlight/20 p-4 rounded-xl"><span className="text-[10px] font-bold uppercase text-muted">Deuda Total</span><p className="text-2xl font-black text-text">$ {(totals.totalDebt || 0).toLocaleString()}</p></div>)}
                     <div className="flex flex-col gap-4">
-                        <div>
-                            <label className="text-[10px] font-bold uppercase text-muted ml-1 flex items-center gap-1"><DollarSign size={12}/> Efectivo Recibido</label>
-                            <input type="number" value={cash} onChange={e => setCash(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-xl font-black text-green-500 shadow-inner" placeholder="0" />
-                        </div>
-                        <div>
-                            <label className="text-[10px] font-bold uppercase text-muted ml-1 flex items-center gap-1"><CreditCard size={12}/> Transf. Confirmada</label>
-                            <input type="number" value={transfer} onChange={e => setTransfer(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-xl font-black text-blue-500 shadow-inner" placeholder="0" />
-                        </div>
+                        <input type="number" value={cash} onChange={e => setCash(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-xl font-black text-green-500 shadow-inner" placeholder="Efectivo Recibido" />
+                        <input type="number" value={transfer} onChange={e => setTransfer(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-xl font-black text-blue-500 shadow-inner" placeholder="Transf. Confirmada" />
                         <label className="flex items-center gap-3 p-4 bg-surfaceHighlight/30 rounded-xl cursor-pointer border border-surfaceHighlight transition-all hover:bg-surfaceHighlight/50">
                             <input type="checkbox" checked={isExpected} onChange={e => setIsExpected(e.target.checked)} className="w-6 h-6 accent-primary rounded-md" />
-                            <div className="flex flex-col">
-                                <span className="text-sm font-bold text-text">Cliente promete transferir</span>
-                                <span className="text-[10px] text-muted font-medium">Marcar si no se confirmó el pago aún</span>
-                            </div>
+                            <div className="flex flex-col"><span className="text-sm font-bold text-text">Cliente promete transferir</span></div>
                         </label>
                     </div>
-
-                    <button 
-                        onClick={handleConfirm} 
-                        className="w-full py-4 rounded-xl bg-green-600 text-white font-black shadow-lg shadow-green-600/20 mt-4 active:scale-[0.98] transition-all"
-                    >
-                        Confirmar Registro
-                    </button>
+                    <button onClick={handleConfirm} className="w-full py-4 rounded-xl bg-green-600 text-white font-black shadow-lg shadow-green-600/20 mt-4 active:scale-[0.98] transition-all">Confirmar Registro</button>
                     <button onClick={onClose} className="w-full py-2 text-muted font-bold text-sm">Cancelar</button>
                 </div>
             </div>
@@ -819,14 +547,8 @@ const ExpenseModal: React.FC<{ onClose: () => void; onSave: any }> = ({ onClose,
                         <option value="peaje">🛣️ Peajes</option>
                         <option value="otro">⚙️ Otros</option>
                     </select>
-                    <div>
-                        <label className="text-[10px] font-bold uppercase text-muted ml-1">Monto gastado</label>
-                        <input type="number" value={amount} onChange={e => setAmount(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-xl font-black text-red-500 shadow-inner" placeholder="$ 0" />
-                    </div>
-                    <div>
-                        <label className="text-[10px] font-bold uppercase text-muted ml-1">Nota / Observación</label>
-                        <input value={note} onChange={e => setNote(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm text-text outline-none focus:border-primary shadow-sm" placeholder="Ej: Ticket Nro 1234" />
-                    </div>
+                    <input type="number" value={amount} onChange={e => setAmount(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-xl font-black text-red-500 shadow-inner" placeholder="$ 0" />
+                    <input value={note} onChange={e => setNote(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm text-text outline-none focus:border-primary shadow-sm" placeholder="Observación" />
                     <button onClick={() => onSave({ type, amount: parseFloat(amount)||0, note })} className="w-full py-4 rounded-xl bg-red-600 text-white font-black shadow-lg shadow-red-600/20 mt-4 active:scale-[0.98] transition-all">Guardar Gasto</button>
                     <button onClick={onClose} className="w-full py-2 text-muted font-bold text-sm">Cancelar</button>
                 </div>
@@ -841,59 +563,172 @@ const TripReportModal: React.FC<{ trip: Trip; onClose: () => void }> = ({ trip, 
     const exp = (trip.expenses || []).reduce((acc, e) => acc + (e.amount || 0), 0);
     const net = cash - exp;
 
+    const pendingClients = useMemo(() => {
+        return (trip.clients || []).filter(c => {
+            const totalDebt = (c.previousBalance || 0) + (c.currentInvoiceAmount || 0);
+            const totalPaid = (c.paymentCash || 0) + (c.paymentTransfer || 0);
+            return totalPaid < totalDebt - 1; // Margen de error de 1 peso
+        });
+    }, [trip.clients]);
+
+    const totalPending = useMemo(() => {
+        return (trip.clients || []).reduce((acc, c) => {
+            const totalDebt = (c.previousBalance || 0) + (c.currentInvoiceAmount || 0);
+            const totalPaid = (c.paymentCash || 0) + (c.paymentTransfer || 0);
+            return acc + Math.max(0, totalDebt - totalPaid);
+        }, 0);
+    }, [trip.clients]);
+
     return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4">
-            <div className="bg-background w-full max-w-2xl rounded-2xl border border-surfaceHighlight shadow-2xl flex flex-col max-h-[90vh]">
-                <div className="p-6 border-b border-surfaceHighlight flex justify-between items-center bg-surface rounded-t-2xl">
-                    <h3 className="font-bold text-xl text-text">Rendición de Viaje</h3>
-                    <button onClick={onClose}><X size={24} className="text-muted"/></button>
-                </div>
-                <div className="p-6 space-y-6 overflow-y-auto">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <div className="bg-surface p-4 rounded-xl border border-surfaceHighlight text-center shadow-sm">
-                            <span className="text-[10px] font-bold text-muted uppercase">Efectivo</span>
-                            <p className="text-xl font-black text-text mt-1">$ {(cash || 0).toLocaleString()}</p>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+            <div className="bg-background w-full max-w-3xl rounded-[2.5rem] border border-surfaceHighlight shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+                <div className="p-8 border-b border-surfaceHighlight flex justify-between items-center bg-surface shrink-0">
+                    <div className="flex items-center gap-4">
+                        <div className="p-3 bg-primary/10 text-primary rounded-2xl">
+                            <ClipboardList size={28} />
                         </div>
-                        <div className="bg-surface p-4 rounded-xl border border-surfaceHighlight text-center shadow-sm">
-                            <span className="text-[10px] font-bold text-muted uppercase">Transf.</span>
-                            <p className="text-xl font-black text-blue-500 mt-1">$ {(trans || 0).toLocaleString()}</p>
-                        </div>
-                        <div className="bg-surface p-4 rounded-xl border border-surfaceHighlight text-center shadow-sm">
-                            <span className="text-[10px] font-bold text-muted uppercase">Gastos</span>
-                            <p className="text-xl font-black text-red-500 mt-1">$ {(exp || 0).toLocaleString()}</p>
+                        <div>
+                            <h3 className="font-black text-2xl text-text uppercase italic tracking-tight leading-none">Rendición de Viaje</h3>
+                            <p className="text-[10px] font-bold text-muted uppercase tracking-widest mt-2">{trip.name || trip.displayId}</p>
                         </div>
                     </div>
-                    
-                    <div className="bg-blue-600 p-8 rounded-2xl text-white text-center shadow-xl shadow-blue-500/20">
-                        <span className="text-xs font-bold uppercase tracking-widest opacity-80">Saldo Neto a Entregar (Efectivo)</span>
-                        <p className="text-5xl font-black mt-2 leading-none">$ {(net || 0).toLocaleString()}</p>
-                        <div className="h-px bg-white/20 my-6"></div>
-                        <p className="text-xs font-medium opacity-80">Efectivo total menos gastos realizados en el camino.</p>
+                    <button onClick={onClose} className="p-2 -mr-2 text-muted hover:text-text transition-colors"><X size={28}/></button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-8 space-y-10 scrollbar-thin">
+                    {/* TOTALES PRINCIPALES */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <SummaryMiniCard label="Cobrado Efectivo" value={cash} icon={<Wallet size={16}/>} color="text-green-500" />
+                        <SummaryMiniCard label="Cobrado Transf." value={trans} icon={<CreditCard size={16}/>} color="text-blue-500" />
+                        <SummaryMiniCard label="Total Gastos" value={exp} icon={<Fuel size={16}/>} color="text-red-500" />
                     </div>
 
-                    <div className="space-y-3">
-                        <h4 className="text-xs font-bold uppercase text-muted tracking-wider flex items-center gap-2">
-                            <Fuel size={14} /> Detalle de Gastos Realizados
-                        </h4>
-                        {(trip.expenses || []).length === 0 ? (
-                            <p className="text-sm text-muted italic p-4 text-center border border-dashed border-surfaceHighlight rounded-xl">No hay gastos registrados en este viaje.</p>
-                        ) : (
-                            trip.expenses.map(e => (
-                                <div key={e.id} className="flex justify-between items-center p-4 bg-surface border border-surfaceHighlight rounded-xl shadow-sm">
-                                    <div className="flex items-center gap-3">
-                                        <div className="p-2 bg-red-500/10 text-red-500 rounded-lg"><Fuel size={16}/></div>
-                                        <div><p className="font-bold text-sm text-text capitalize">{e.type}</p><p className="text-[10px] text-muted font-bold">{e.note || 'Sin observación'}</p></div>
+                    {/* SALDO NETO DESTACADO */}
+                    <div className="bg-blue-600 p-8 rounded-3xl text-white text-center shadow-xl shadow-blue-500/20 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl"></div>
+                        <span className="text-xs font-black uppercase tracking-[0.2em] opacity-80">Saldo Neto a Entregar (Efectivo)</span>
+                        <p className="text-6xl font-black mt-3 leading-none italic tracking-tighter">$ {(net || 0).toLocaleString()}</p>
+                        <p className="text-[10px] font-bold uppercase mt-4 opacity-60">(Efectivo - Gastos)</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        {/* LISTADO DE PENDIENTES */}
+                        <div className="space-y-4">
+                            <div className="flex items-center justify-between border-b border-surfaceHighlight pb-2">
+                                <h4 className="text-sm font-black text-text uppercase flex items-center gap-2">
+                                    <ArrowDownRight size={18} className="text-orange-500" /> Saldo Pendiente
+                                </h4>
+                                <span className="text-xs font-black text-orange-500 bg-orange-500/10 px-2 py-0.5 rounded-full">$ {totalPending.toLocaleString()}</span>
+                            </div>
+                            <div className="space-y-2">
+                                {pendingClients.map(c => {
+                                    const totalDebt = (c.previousBalance || 0) + (c.currentInvoiceAmount || 0);
+                                    const totalPaid = (c.paymentCash || 0) + (c.paymentTransfer || 0);
+                                    const pending = totalDebt - totalPaid;
+                                    return (
+                                        <div key={c.id} className="flex justify-between items-center p-3 bg-surface border border-surfaceHighlight rounded-xl shadow-sm">
+                                            <div className="flex flex-col">
+                                                <span className="text-xs font-black text-text uppercase leading-tight">{c.name}</span>
+                                                <span className="text-[9px] font-bold text-muted uppercase">Deuda: $ {totalDebt.toLocaleString()}</span>
+                                            </div>
+                                            <span className="text-xs font-black text-red-500">$ {pending.toLocaleString()}</span>
+                                        </div>
+                                    );
+                                })}
+                                {pendingClients.length === 0 && <p className="text-center py-6 text-[10px] font-bold text-muted uppercase italic">Todo cobrado</p>}
+                            </div>
+                        </div>
+
+                        {/* LISTADO DE GASTOS */}
+                        <div className="space-y-4">
+                            <div className="flex items-center justify-between border-b border-surfaceHighlight pb-2">
+                                <h4 className="text-sm font-black text-text uppercase flex items-center gap-2">
+                                    <Fuel size={18} className="text-red-500" /> Detalle de Gastos
+                                </h4>
+                            </div>
+                            <div className="space-y-2">
+                                {(trip.expenses || []).map(e => (
+                                    <div key={e.id} className="p-3 bg-surface border border-surfaceHighlight rounded-xl shadow-sm space-y-1">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-[9px] font-black text-red-500 uppercase tracking-widest bg-red-500/5 px-2 py-0.5 rounded">{e.type}</span>
+                                            <span className="text-sm font-black text-text">$ {e.amount.toLocaleString()}</span>
+                                        </div>
+                                        {e.note && (
+                                            <p className="text-[10px] font-bold text-muted uppercase italic leading-tight">
+                                                Obs: {e.note}
+                                            </p>
+                                        )}
                                     </div>
-                                    <p className="font-black text-red-500">$ {(e.amount || 0).toLocaleString()}</p>
-                                </div>
-                            ))
-                        )}
+                                ))}
+                                {(trip.expenses || []).length === 0 && <p className="text-center py-6 text-[10px] font-bold text-muted uppercase italic">Sin gastos registrados</p>}
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div className="p-4 border-t border-surfaceHighlight bg-surface rounded-b-2xl">
-                    <button onClick={onClose} className="w-full py-4 rounded-xl bg-surfaceHighlight font-black text-text transition-all hover:bg-surfaceHighlight/80">Cerrar Rendición</button>
+
+                <div className="p-8 border-t border-surfaceHighlight bg-surface shrink-0">
+                    <button onClick={onClose} className="w-full py-5 rounded-[1.5rem] bg-surfaceHighlight font-black text-text uppercase text-xs tracking-[0.2em] transition-all hover:bg-surfaceHighlight/80 active:scale-[0.98]">Cerrar Rendición</button>
                 </div>
             </div>
+        </div>
+    );
+};
+
+const SummaryMiniCard: React.FC<{ label: string, value: number, color: string, icon: React.ReactNode }> = ({ label, value, color, icon }) => (
+    <div className="bg-surface border border-surfaceHighlight rounded-2xl p-5 shadow-sm flex flex-col justify-between hover:border-primary/20 transition-all">
+        <div className="flex items-center gap-2 mb-2">
+            <span className="text-muted">{icon}</span>
+            <span className="text-[9px] font-black text-muted uppercase tracking-widest">{label}</span>
+        </div>
+        <p className={`text-xl font-black ${color}`}>$ {(value || 0).toLocaleString()}</p>
+    </div>
+);
+
+const TripEditor: React.FC<{
+    initialData: Trip | null;
+    onClose: () => void;
+    onSave: (trip: Trip) => void;
+    availableOrders: DetailedOrder[];
+}> = ({ initialData, onClose, onSave, availableOrders }) => {
+    const [name, setName] = useState(initialData?.name || '');
+    const [driverName, setDriverName] = useState(initialData?.driverName || '');
+    const [route, setRoute] = useState(initialData?.route || '');
+    const [date, setDate] = useState(initialData?.date || new Date().toLocaleDateString('es-AR'));
+    const [clients, setClients] = useState<TripClient[]>(initialData?.clients || []);
+    const [isManualAddOpen, setIsManualAddOpen] = useState(false);
+    const [isImportOpen, setIsImportOpen] = useState(false);
+    
+    const handleSave = () => { 
+        if (!name || !driverName) { alert("Complete Nombre y Conductor"); return; } 
+        // No generamos 'id' si es nuevo, dejamos que App.tsx lo maneje o mandamos undefined
+        onSave({ 
+            id: initialData?.id || '', 
+            displayId: initialData?.displayId || `#${Math.floor(Math.random()*10000)}`, 
+            name, 
+            status: initialData?.status || 'PLANNING', 
+            driverName, 
+            route: route || 'Sin asignar', 
+            date, 
+            clients, 
+            expenses: initialData?.expenses || [] 
+        }); 
+    };
+
+    return (
+        <div className="flex flex-col gap-6 pb-20 max-w-6xl mx-auto w-full">
+            <div className="flex items-center gap-4"><button onClick={onClose} className="p-2 rounded-full hover:bg-surfaceHighlight text-muted hover:text-text transition-colors"><ArrowLeft size={24} /></button><h2 className="text-2xl font-black text-text">{initialData ? 'Editar Viaje' : 'Nuevo Viaje'}</h2><button onClick={handleSave} className="ml-auto flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-white font-bold text-sm shadow-lg shadow-primary/20 transition-all"><Save size={18} /> Guardar</button></div>
+            <div className="bg-surface border border-surfaceHighlight rounded-2xl p-6 grid grid-cols-1 md:grid-cols-3 gap-6 shadow-sm">
+                <input className="md:col-span-3 bg-surface border border-surfaceHighlight rounded-xl p-3 text-lg font-bold outline-none focus:border-primary shadow-sm" value={name} onChange={e => setName(e.target.value)} placeholder="Nombre del Viaje" />
+                <input className="bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold shadow-sm" value={driverName} onChange={e => setDriverName(e.target.value)} placeholder="Conductor" />
+                <select className="bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold shadow-sm" value={route} onChange={e => setRoute(e.target.value)}><option value="">-- Seleccionar Zona --</option><option value="V. Mercedes">V. Mercedes</option><option value="San Luis">San Luis</option><option value="Norte">Norte</option></select>
+                <input className="bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold shadow-sm" value={date} onChange={e => setDate(e.target.value)} />
+            </div>
+            <div className="bg-surface border border-surfaceHighlight rounded-2xl p-6 flex flex-col gap-6 shadow-sm">
+                <div className="flex justify-between items-center border-b border-surfaceHighlight pb-4"><h3 className="text-lg font-bold text-text">Clientes ({clients.length})</h3><div className="flex gap-2"><button onClick={() => setIsImportOpen(true)} className="px-4 py-2 rounded-lg bg-blue-500/10 text-blue-500 font-bold text-xs">Importar</button><button onClick={() => setIsManualAddOpen(true)} className="px-4 py-2 rounded-lg bg-surfaceHighlight text-text font-bold text-xs">Manual</button></div></div>
+                <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr className="text-xs text-muted uppercase"><th>Cliente</th><th className="text-right">Saldo Ant.</th><th className="text-right">Factura</th><th className="text-right">Total</th><th className="text-center w-12"></th></tr></thead><tbody className="divide-y divide-surfaceHighlight">{clients.map(c => (<tr key={c.id}><td className="py-3 font-bold text-sm">{c.name}</td><td className="py-3 text-right text-muted">$ {c.previousBalance.toLocaleString()}</td><td className="py-3 text-right text-muted">$ {c.currentInvoiceAmount.toLocaleString()}</td><td className="py-3 text-right font-black">$ {(c.previousBalance + c.currentInvoiceAmount).toLocaleString()}</td><td className="py-3 text-center"><button onClick={() => setClients(clients.filter(cl => cl.id !== c.id))} className="p-2 text-muted hover:text-red-500"><Trash2 size={16}/></button></td></tr>))}</tbody></table></div>
+            </div>
+            {isManualAddOpen && <ManualClientModal onClose={() => setIsManualAddOpen(false)} onAdd={(d) => { setClients([...clients, { id: `tc-${Date.now()}`, ...d, paymentCash: 0, paymentTransfer: 0, isTransferExpected: false, status: 'PENDING' }]); setIsManualAddOpen(false); }} />}
+            {isImportOpen && <ImportOrdersModal orders={availableOrders} selectedRoute={route} onClose={() => setIsImportOpen(false)} onImport={(sel) => { setClients([...clients, ...sel.map(o => ({ id: `tc-${o.id}`, name: o.clientName, address: o.zone||'', previousBalance: 0, currentInvoiceAmount: o.total, paymentCash: 0, paymentTransfer: 0, isTransferExpected: false, status: 'PENDING' as PaymentStatus }))]); setIsImportOpen(false); }} />}
         </div>
     );
 };
