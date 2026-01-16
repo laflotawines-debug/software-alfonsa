@@ -1,39 +1,53 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
     Users, 
     Settings, 
-    DollarSign, 
     Calendar, 
-    Clock, 
     Save, 
     FileText, 
     Zap, 
-    Trash2, 
-    LogIn,
-    LogOut,
-    Loader2,
-    CheckCircle2,
-    AlertCircle,
-    Info,
-    Download,
-    XCircle,
+    Loader2, 
+    CheckCircle2, 
+    Building2, 
+    MapPin, 
+    Circle, 
+    Banknote,
+    X,
     AlertTriangle,
-    Minus
+    Download,
+    Info,
+    History,
+    User as UserIcon,
+    Trophy,
+    TrendingUp,
+    Star,
+    Award,
+    Target,
+    BarChart3,
+    ArrowUpRight,
+    ArrowDownLeft,
+    Clock,
+    MinusCircle,
+    LayoutList,
+    Activity,
+    ChevronRight
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { User, WorkerAttendanceConfig, GlobalAttendanceSettings } from '../types';
 
-const DAYS_OF_WEEK = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+const DAYS_OF_WEEK = [
+    { key: 'Lunes', short: 'Lun' },
+    { key: 'Martes', short: 'Mar' },
+    { key: 'Miércoles', short: 'Mié' },
+    { key: 'Jueves', short: 'Jue' },
+    { key: 'Viernes', short: 'Vie' },
+    { key: 'Sábado', short: 'Sáb' },
+    { key: 'Domingo', short: 'Dom' }
+];
 
 const DAY_MAP: Record<string, string> = {
-    'Lu': 'Lunes',
-    'Ma': 'Martes',
-    'Mi': 'Miércoles',
-    'Ju': 'Jueves',
-    'Vi': 'Viernes',
-    'Sa': 'Sábado',
-    'Do': 'Domingo'
+    'Lu': 'Lunes', 'Ma': 'Martes', 'Mi': 'Miércoles', 'Ju': 'Jueves', 'Vi': 'Viernes', 'Sa': 'Sábado', 'Do': 'Domingo',
+    'Lunes': 'Lunes', 'Martes': 'Martes', 'Miercoles': 'Miércoles', 'Miércoles': 'Miércoles', 'Jueves': 'Jueves', 'Viernes': 'Viernes', 'Sabado': 'Sábado', 'Sábado': 'Sábado', 'Domingo': 'Domingo'
 };
 
 interface ParsedDay {
@@ -44,85 +58,134 @@ interface ParsedDay {
     observation: string;
     isFeriado: boolean;
     isJustified: boolean;
+    hours: number;
+    penaltyHours: number;
+    status: string;
+    isEarly: boolean;
+    isLate: boolean;
+    minutesLate: number; // Para tracking interno
 }
 
-export const Attendance: React.FC = () => {
-    const [activeTab, setActiveTab] = useState<'workers' | 'settings'>('workers');
+interface PerformanceRecord {
+    user_id: string;
+    user_name?: string;
+    avatar_url?: string;
+    early_arrivals: number;
+    late_arrivals: number;
+    justified_count: number;
+    total_issues: number;
+    holidays_worked: number;
+    absences: number;
+    scheduled_days: number;
+    marked_days: number;
+    score?: number;
+}
+
+export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) => {
+    const [activeTab, setActiveTab] = useState<'workers' | 'settings' | 'report' | 'performance'>('workers');
     const [armadores, setArmadores] = useState<User[]>([]);
     const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     
     const [workerConfigs, setWorkerConfigs] = useState<Record<string, WorkerAttendanceConfig>>({});
-    const [globalSettings, setGlobalSettings] = useState<GlobalAttendanceSettings>({
-        location: 'LLERENA',
-        bonus_1: 30000,
-        bonus_2: 20000
-    });
+    const [globalSettings, setGlobalSettings] = useState<Record<string, GlobalAttendanceSettings>>({});
+    const [performanceHistory, setPerformanceHistory] = useState<PerformanceRecord[]>([]);
     
     const [rawReport, setRawReport] = useState('');
     const [parsedReport, setParsedReport] = useState<ParsedDay[]>([]);
     const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+    const [perfSaveStatus, setPerfSaveStatus] = useState<'idle' | 'saving' | 'success'>('idle');
+    const [debtAmount, setDebtAmount] = useState<number>(0);
 
-    useEffect(() => {
-        const loadInitialData = async () => {
-            setIsLoading(true);
-            try {
-                const [profRes, configRes, settingsRes] = await Promise.all([
-                    supabase.from('profiles').select('*').eq('role', 'armador').order('name'),
-                    supabase.from('attendance_worker_configs').select('*'),
-                    supabase.from('attendance_settings').select('*').eq('location', 'LLERENA').maybeSingle()
-                ]);
+    const [selectedPerfDetail, setSelectedPerfDetail] = useState<PerformanceRecord | null>(null);
 
-                if (profRes.data) {
-                    setArmadores(profRes.data as User[]);
-                    if (profRes.data.length > 0) setSelectedWorkerId(profRes.data[0].id);
+    const isVale = currentUser?.role === 'vale';
+
+    const loadData = async () => {
+        setIsLoading(true);
+        try {
+            const [profRes, configRes, settingsRes, perfRes] = await Promise.all([
+                supabase.from('profiles').select('*').eq('role', 'armador').order('name'),
+                supabase.from('attendance_worker_configs').select('*'),
+                supabase.from('attendance_settings').select('*'),
+                supabase.from('attendance_performance').select('*')
+            ]);
+
+            if (profRes.data) setArmadores(profRes.data as User[]);
+            if (configRes.data) {
+                const configMap: Record<string, WorkerAttendanceConfig> = {};
+                configRes.data.forEach((c: any) => { configMap[c.user_id] = c; });
+                setWorkerConfigs(configMap);
+                if (profRes.data && profRes.data.length > 0 && !selectedWorkerId) {
+                    setSelectedWorkerId(profRes.data[0].id);
                 }
+            }
+            if (settingsRes.data) {
+                const sMap: Record<string, GlobalAttendanceSettings> = {};
+                settingsRes.data.forEach((s: any) => { sMap[s.location] = s; });
+                setGlobalSettings(sMap);
+            }
+            if (perfRes.data && profRes.data) {
+                const mappedPerf = perfRes.data.map((p: any) => {
+                    const user = profRes.data.find(u => u.id === p.user_id);
+                    return { ...p, user_name: user?.name, avatar_url: user?.avatar_url };
+                });
+                setPerformanceHistory(mappedPerf);
+            }
+        } catch (e) { console.error(e); } finally { setIsLoading(false); }
+    };
 
-                if (configRes.data) {
-                    const configMap: Record<string, WorkerAttendanceConfig> = {};
-                    configRes.data.forEach((c: any) => { configMap[c.user_id] = c; });
-                    setWorkerConfigs(configMap);
-                }
+    useEffect(() => { loadData(); }, []);
 
-                if (settingsRes.data) setGlobalSettings(settingsRes.data);
-            } catch (e) { console.error(e); } finally { setIsLoading(false); }
-        };
-        loadInitialData();
-    }, []);
+    const selectedWorker = useMemo(() => 
+        armadores.find(w => w.id === selectedWorkerId), 
+    [armadores, selectedWorkerId]);
 
-    const handleWorkerChange = (updates: Partial<WorkerAttendanceConfig>) => {
-        if (!selectedWorkerId) return;
-        const current = workerConfigs[selectedWorkerId] || {
+    const currentConfig = useMemo(() => {
+        if (!selectedWorkerId) return null;
+        const existing = workerConfigs[selectedWorkerId];
+        return existing || {
             user_id: selectedWorkerId,
             hourly_rate: 0,
             work_days: ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'],
             entry_time: '08:00',
             exit_time: '16:00',
+            entry_time_pm: '17:00',
+            exit_time_pm: '23:30',
             location: 'LLERENA'
         };
-        setWorkerConfigs({ ...workerConfigs, [selectedWorkerId]: { ...current, ...updates } });
+    }, [selectedWorkerId, workerConfigs]);
+
+    const handleWorkerChange = (updates: Partial<WorkerAttendanceConfig>) => {
+        if (!selectedWorkerId || !currentConfig) return;
+        setWorkerConfigs(prev => ({
+            ...prev,
+            [selectedWorkerId]: { ...currentConfig, ...updates }
+        }));
     };
 
     const toggleDay = (day: string) => {
-        if (!selectedWorkerId) return;
-        const current = workerConfigs[selectedWorkerId]?.work_days || [];
-        const nextDays = current.includes(day) ? current.filter(d => d !== day) : [...current, day];
+        if (!currentConfig) return;
+        const currentDays = currentConfig.work_days || [];
+        const nextDays = currentDays.includes(day) 
+            ? currentDays.filter(d => d !== day) 
+            : [...currentDays, day];
         handleWorkerChange({ work_days: nextDays });
     };
 
     const saveWorkerConfig = async () => {
-        if (!selectedWorkerId) return;
+        if (!selectedWorkerId || !currentConfig) return;
         setSaveStatus('saving');
-        const config = workerConfigs[selectedWorkerId];
-        if (!config) return;
         try {
             const { error } = await supabase.from('attendance_worker_configs').upsert({
                 user_id: selectedWorkerId,
-                hourly_rate: config.hourly_rate,
-                work_days: config.work_days,
-                entry_time: config.entry_time,
-                exit_time: config.exit_time,
-                location: 'LLERENA'
+                hourly_rate: currentConfig.hourly_rate,
+                work_days: currentConfig.work_days,
+                entry_time: currentConfig.entry_time,
+                exit_time: currentConfig.exit_time,
+                entry_time_pm: currentConfig.entry_time_pm || '17:00',
+                exit_time_pm: currentConfig.exit_time_pm || '23:30',
+                location: currentConfig.location
             });
             if (error) throw error;
             setSaveStatus('success');
@@ -130,433 +193,784 @@ export const Attendance: React.FC = () => {
         } catch (e) { setSaveStatus('error'); }
     };
 
-    const saveGlobalSettings = async () => {
-        setSaveStatus('saving');
-        try {
-            const { error } = await supabase.from('attendance_settings').upsert(globalSettings);
-            if (error) throw error;
-            setSaveStatus('success');
-            setTimeout(() => setSaveStatus('idle'), 3000);
-        } catch (e) { setSaveStatus('error'); }
-    };
-
-    // --- MOTOR DE PARSEO ---
     const processReport = () => {
-        if (!rawReport.trim()) return;
+        if (!rawReport.trim() || !currentConfig) return;
         const lines = rawReport.split('\n');
         const results: ParsedDay[] = [];
-        const lineRegex = /^(\d{2})\s+([A-Z][a-z])\s+([\d:]*)\s*([\d:]*)\s*(Falta)?/;
-
+        
         lines.forEach(line => {
-            const trimmedLine = line.trim();
-            const match = trimmedLine.match(lineRegex);
-            if (match) {
-                const date = match[1];
-                const dayShort = match[2];
-                let entry = match[3] || "";
-                let exit = match[4] || "";
-                const isFalta = match[5] === "Falta" || trimmedLine.includes("Falta");
-                const dayFull = DAY_MAP[dayShort] || dayShort;
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.toLowerCase().includes('tabla') || trimmed.includes('==')) return;
+            const parts = trimmed.split(/\s+/);
 
-                results.push({
-                    date,
-                    dayName: dayFull,
-                    entry,
-                    exit,
-                    observation: isFalta ? "falta" : "",
-                    isFeriado: false,
-                    isJustified: false
-                });
+            if (currentConfig.location === 'BETBEDER') {
+                if (parts.length >= 4 && parts[0].includes('/')) {
+                    const date = parts[0];
+                    const dayRaw = parts[parts.length - 1];
+                    const dayFull = DAY_MAP[dayRaw] || dayRaw;
+                    let entry = ""; let exit = "";
+                    if (!trimmed.toLowerCase().includes('sin registro')) {
+                        entry = parts[1];
+                        exit = parts[2];
+                    }
+                    results.push({ date, dayName: dayFull, entry, exit, observation: "", isFeriado: false, isJustified: false, hours: 0, penaltyHours: 0, status: '', isEarly: false, isLate: false, minutesLate: 0 });
+                }
+            } else {
+                const llerenaRegex = /^(\d{2})\s+([A-Z][a-z])\s+([\d:]*)\s*([\d:]*)/;
+                const match = trimmed.match(llerenaRegex);
+                if (match) {
+                    const date = match[1]; const dayShort = match[2]; const entry = match[3] || ""; const exit = match[4] || "";
+                    results.push({ date, dayName: DAY_MAP[dayShort] || dayShort, entry, exit, observation: "", isFeriado: false, isJustified: false, hours: 0, penaltyHours: 0, status: '', isEarly: false, isLate: false, minutesLate: 0 });
+                }
             }
         });
-        setParsedReport(results);
+
+        if (results.length > 0) {
+            setParsedReport(results);
+            setActiveTab('report');
+        }
     };
 
-    // --- CÁLCULOS FINALES ---
     const finalReportData = useMemo(() => {
-        if (!selectedWorkerId || !workerConfigs[selectedWorkerId] || parsedReport.length === 0) return null;
-        const currentConfig = workerConfigs[selectedWorkerId];
+        if (!selectedWorkerId || !currentConfig || parsedReport.length === 0) return null;
 
-        let totalAccumulatedHours = 0;
-        let unjustifiedAbsencesCount = 0;
-        let latesCount = 0;
-        let alwaysEarly = true;
-        let totalWorkDays = 0;
+        const timeToMinutes = (time: string) => {
+            const [h, m] = (time || "00:00").split(':').map(Number);
+            return h * 60 + m;
+        };
 
-        const scheduledEntryMinutes = timeToMinutes(currentConfig.entry_time);
-        const scheduledExitMinutes = timeToMinutes(currentConfig.exit_time);
-        const theoreticalDailyHours = (scheduledExitMinutes - scheduledEntryMinutes) / 60;
-
-        const detailedDays = parsedReport.map(day => {
-            let hours = 0;
-            let status = day.observation || "trabajado";
-            const isSunday = day.dayName === 'Domingo';
-            const isWorkDay = currentConfig.work_days.includes(day.dayName);
-
-            if (isWorkDay) totalWorkDays++;
-
-            const entryMins = day.entry ? timeToMinutes(day.entry) : null;
-            const exitMins = day.exit ? timeToMinutes(day.exit) : null;
-
-            // Lógica de Horas y Estados
-            if (day.isFeriado) {
-                if (day.entry && day.exit) {
-                    hours = ((exitMins! - entryMins!) / 60) * 2;
-                    status = "feriado trabajado";
-                } else {
-                    hours = theoreticalDailyHours;
-                    status = "feriado no trabajado";
-                }
-            } else if (day.entry && day.exit) {
-                hours = (exitMins! - entryMins!) / 60;
-                status = "trabajado";
-            } else if (day.entry && !day.exit) {
-                status = "incompleto";
-            } else if (!day.entry && !day.exit) {
-                if (isSunday) status = "no laboral";
-                else if (day.observation === 'falta') status = "falta";
-                else status = isWorkDay ? "falta" : "no laboral";
-            }
-
-            // Lógica de Bono (Puntualidad y Faltas)
-            if (isWorkDay && !day.isFeriado) {
-                if (status === 'falta' && !day.isJustified) {
-                    unjustifiedAbsencesCount++;
-                }
-                if (entryMins !== null) {
-                    if (entryMins > scheduledEntryMinutes + 10) {
-                        latesCount++;
-                    }
-                    if (entryMins >= scheduledEntryMinutes) {
-                        alwaysEarly = false;
-                    }
-                }
-            }
-
-            totalAccumulatedHours += hours;
-
-            return { ...day, hours, status };
-        });
-
-        // Redondeo final de horas (>30m arriba, else abajo)
-        const integerHours = Math.floor(totalAccumulatedHours);
-        const decimalPart = totalAccumulatedHours - integerHours;
-        const finalRoundedHours = decimalPart > 0.5 ? integerHours + 1 : integerHours;
-
-        // Determinar Bono
-        let bonusAmount = 0;
-        let bonusStatus = "SIN BONO";
-        let bonusReason = "";
-
-        if (unjustifiedAbsencesCount > 0) {
-            bonusReason = `Tuvo ${unjustifiedAbsencesCount} ausencia(s) sin justificar`;
-        } else if (latesCount > 0) {
-            bonusReason = `Llegó tarde ${latesCount} vez/veces (10+ min)`;
+        const reportMap = new Map<string, ParsedDay>(parsedReport.map(r => [r.date, r] as [string, ParsedDay]));
+        const firstEntry = parsedReport[0];
+        const fullQuincena: ParsedDay[] = [];
+        let anchorDate = new Date();
+        if (currentConfig.location === 'BETBEDER' && firstEntry.date.includes('/')) {
+            const [d, m] = firstEntry.date.split('/').map(Number);
+            anchorDate.setDate(d); anchorDate.setMonth(m - 1);
         } else {
-            if (alwaysEarly) {
-                bonusAmount = globalSettings.bonus_1;
-                bonusStatus = "BONO 1 (EXCELENCIA)";
-            } else {
-                bonusAmount = globalSettings.bonus_2;
-                bonusStatus = "BONO 2 (CUMPLIMIENTO)";
+            anchorDate.setDate(parseInt(firstEntry.date));
+        }
+
+        for (let i = 0; i < 14; i++) {
+            const current = new Date(anchorDate);
+            current.setDate(anchorDate.getDate() + i);
+            let dateStr = currentConfig.location === 'BETBEDER' ? `${String(current.getDate()).padStart(2, '0')}/${String(current.getMonth() + 1).padStart(2, '0')}` : String(current.getDate()).padStart(2, '0');
+            const dayName = DAYS_OF_WEEK[current.getDay() === 0 ? 6 : current.getDay() - 1].key;
+            const existing = reportMap.get(dateStr);
+            if (existing) { fullQuincena.push({ ...(existing as ParsedDay) }); } else {
+                fullQuincena.push({ date: dateStr, dayName: dayName, entry: "", exit: "", observation: "", isFeriado: false, isJustified: false, hours: 0, penaltyHours: 0, status: "", isEarly: false, isLate: false, minutesLate: 0 });
             }
         }
 
-        const subtotal = finalRoundedHours * currentConfig.hourly_rate;
-        const totalToPay = subtotal + bonusAmount;
+        let totalAccumulatedHours = 0;
+        let totalPenaltyHours = 0;
+        let totalLateCount = 0;
 
-        return {
-            detailedDays,
-            totalAccumulatedHours,
-            finalRoundedHours,
-            unjustifiedAbsencesCount,
-            totalWorkDays,
-            bonusAmount,
-            bonusStatus,
-            bonusReason,
-            totalToPay,
-            subtotal
-        };
-    }, [parsedReport, selectedWorkerId, workerConfigs, globalSettings]);
+        const detailedDays = fullQuincena.map(day => {
+            let hours = 0; let penaltyHours = 0; let status = "TRABAJADO";
+            const isWorkDay = currentConfig.work_days.includes(day.dayName);
+            const entryMins = day.entry ? timeToMinutes(day.entry) : null;
+            const exitMins = day.exit ? timeToMinutes(day.exit) : null;
 
-    const selectedWorker = useMemo(() => armadores.find(w => w.id === selectedWorkerId), [armadores, selectedWorkerId]);
-    const currentConfig = useMemo(() => {
-        if (!selectedWorkerId) return null;
-        return workerConfigs[selectedWorkerId] || {
+            const amEntry = timeToMinutes(currentConfig.entry_time);
+            const amExit = timeToMinutes(currentConfig.exit_time);
+            const pmEntry = currentConfig.entry_time_pm ? timeToMinutes(currentConfig.entry_time_pm) : null;
+            const pmExit = currentConfig.exit_time_pm ? timeToMinutes(currentConfig.exit_time_pm) : null;
+
+            let targetEntry = amEntry; let targetExit = amExit;
+            if (entryMins !== null && pmEntry !== null) {
+                const diffAm = Math.abs(entryMins - amEntry);
+                const diffPm = Math.abs(entryMins - pmEntry);
+                if (diffPm < diffAm) { targetEntry = pmEntry; targetExit = pmExit!; }
+            }
+
+            const scheduledDailyHours = (targetExit - targetEntry) / 60;
+            let isEarly = false; let isLate = false;
+            let diffMinutes = 0;
+
+            if (day.isFeriado) {
+                if (day.entry && day.exit) {
+                    hours = ((exitMins! - entryMins!) / 60) * 2;
+                    status = "FERIADO TRABAJADO";
+                } else { hours = scheduledDailyHours; status = "FERIADO"; }
+            } else if (day.entry && day.exit) {
+                hours = (exitMins! - entryMins!) / 60;
+                diffMinutes = entryMins! - targetEntry;
+
+                // REGLA: Llegar 10 minutos antes (o más temprano) -> Cuenta para Bono 1
+                if (diffMinutes <= -10) {
+                    isEarly = true;
+                }
+
+                // REGLA: Llegada Tarde estricta (para bonos)
+                if (diffMinutes > 0) {
+                    isLate = true; // Marca visual: llegó tarde al horario (afecta bono)
+                    
+                    // REGLA: Tolerancia hasta 10 minutos inclusive para PENALIZACIÓN DE HORA
+                    if (diffMinutes <= 10) {
+                        status = "TARDE (TOLERANCIA)"; // No descuenta hora, pero "rompe" el perfecto para bono 2 si no se justifica
+                    } else {
+                        // Minuto 11 en adelante -> Descuento de hora
+                        totalLateCount++; // Cuenta como incidencia grave en contadores
+                        if (diffMinutes >= 120) { 
+                            penaltyHours = 4;
+                            status = "TARDE (>2H) -4Hs";
+                        } else if (diffMinutes >= 60) { 
+                            penaltyHours = 2;
+                            status = "TARDE (>1H) -2Hs";
+                        } else {
+                            // Entre 11 y 59 minutos
+                            penaltyHours = 1;
+                            status = "TARDE (>10m) -1Hs";
+                        }
+                    }
+                }
+            } else if ((day.entry && !day.exit) || (!day.entry && day.exit)) {
+                // REGLA: No registra ingreso (o incompleto) -> -6 horas
+                status = "REGISTRO INCOMPLETO (-6Hs)";
+                penaltyHours = 6;
+                totalLateCount++; 
+            } else {
+                if (isWorkDay) {
+                    if (day.isJustified) { 
+                        hours = scheduledDailyHours / 2; 
+                        status = "FALTA JUSTIFICADA"; 
+                    } else { 
+                        status = "FALTA"; 
+                    }
+                } else { status = "NO TRABAJA"; }
+            }
+
+            totalAccumulatedHours += (hours - penaltyHours);
+            totalPenaltyHours += penaltyHours;
+            return { ...(day as ParsedDay), hours, penaltyHours, status, isEarly, isLate, minutesLate: Math.max(0, diffMinutes) };
+        });
+
+        const settings = globalSettings[currentConfig.location] || { bonus_1: 30000, bonus_2: 20000 };
+        const roundedHours = Math.round(totalAccumulatedHours);
+        const subtotal = roundedHours * currentConfig.hourly_rate;
+
+        // Lógica de Bonos Actualizada
+        const workedDays = detailedDays.filter(d => d.entry && d.exit);
+        
+        // Bono 1: Asistencia Perfecta, Sin Faltas, Sin Tardanzas Estrictas (>0 min), SIEMPRE TEMPRANO (-10m)
+        // NOTA: Si llega 1 min tarde, pierde Bono 1.
+        const isAlwaysEarly10Min = workedDays.length > 0 && workedDays.every(d => d.isEarly);
+        const anyAbsenceOrIncomplete = detailedDays.some(d => d.status === 'FALTA' || d.status.includes('INCOMPLETO'));
+        
+        // Bono 2: Se pierde si hay llegadas tarde (>0 min) NO justificadas o faltas NO justificadas.
+        // Tolerancia de 10 min sirve para NO descontar hora, pero cuenta como tarde para el bono.
+        const hasUnjustifiedIssues = detailedDays.some(d => {
+            // Si llegó tarde (>0 min) y NO está justificado -> Pierde
+            if (d.minutesLate > 0 && !d.isJustified) return true;
+            // Si faltó y NO está justificado -> Pierde
+            if (d.status === 'FALTA') return true;
+            // Registro incompleto -> Pierde
+            if (d.status.includes('INCOMPLETO')) return true;
+            return false;
+        });
+
+        let bonusAmount = 0;
+        let bonusStatus = "SIN BONO";
+
+        if (!anyAbsenceOrIncomplete && isAlwaysEarly10Min) {
+            // Caso ideal: Siempre temprano (-10m), nunca tarde, nunca falta.
+            bonusAmount = settings.bonus_1;
+            bonusStatus = "BONO EXCELENCIA (1)";
+        } else if (!hasUnjustifiedIssues) {
+            // Caso cumplimiento: Pudo llegar tarde (dentro o fuera de tolerancia) pero JUSTIFICADO.
+            // O faltó pero JUSTIFICADO.
+            // O llegó puntual (entre -9 y 0).
+            bonusAmount = settings.bonus_2;
+            bonusStatus = "BONO CUMPLIMIENTO (2)";
+        }
+
+        const metrics = {
             user_id: selectedWorkerId,
-            hourly_rate: 0,
-            work_days: ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'],
-            entry_time: '08:00',
-            exit_time: '16:00',
-            location: 'LLERENA'
+            early_arrivals: detailedDays.filter(d => d.isEarly).length,
+            late_arrivals: totalLateCount, // Solo cuenta las > 10 min para estadísticas graves
+            justified_count: detailedDays.filter(d => d.isJustified && (d.isLate || d.status.includes('FALTA'))).length,
+            total_issues: detailedDays.filter(d => d.minutesLate > 0 || d.status === 'FALTA' || d.status.includes('INCOMPLETO')).length,
+            holidays_worked: detailedDays.filter(d => d.status === 'FERIADO TRABAJADO').length,
+            absences: detailedDays.filter(d => d.status === 'FALTA').length,
+            scheduled_days: detailedDays.filter(d => currentConfig.work_days.includes(d.dayName)).length,
+            marked_days: detailedDays.filter(d => d.entry && d.exit).length
         };
-    }, [workerConfigs, selectedWorkerId]);
 
-    const toggleCheck = (idx: number, field: 'isFeriado' | 'isJustified') => {
-        const next = [...parsedReport];
-        next[idx][field] = !next[idx][field];
-        setParsedReport(next);
+        return { detailedDays, totalHours: roundedHours, totalPenaltyHours, totalLateCount, subtotal, bonusAmount, bonusStatus, totalToPay: subtotal + bonusAmount - debtAmount, metrics };
+    }, [parsedReport, currentConfig, globalSettings, debtAmount]);
+
+    const toggleFlag = (idx: number, field: 'isFeriado' | 'isJustified') => {
+        const dayToFlag = finalReportData?.detailedDays[idx];
+        if (!dayToFlag) return;
+        setParsedReport(prev => {
+            const existingIdx = prev.findIndex(p => p.date === dayToFlag.date);
+            const next = [...prev];
+            if (existingIdx !== -1) {
+                next[existingIdx] = { ...(next[existingIdx] as ParsedDay), [field]: !next[existingIdx][field] };
+            } else {
+                next.push({ ...(dayToFlag as ParsedDay), [field]: !dayToFlag[field] });
+                next.sort((a,b) => a.date.localeCompare(b.date));
+            }
+            return next;
+        });
     };
 
-    function timeToMinutes(time: string) {
-        if (!time) return 0;
-        const [h, m] = time.split(':').map(Number);
-        return h * 60 + m;
-    }
+    const handleSavePerformance = async () => {
+        if (!finalReportData?.metrics || !selectedWorkerId) return;
+        setPerfSaveStatus('saving');
+        try {
+            const { data: existing } = await supabase.from('attendance_performance').select('*').eq('user_id', selectedWorkerId).maybeSingle();
+            
+            const payload = {
+                user_id: selectedWorkerId,
+                early_arrivals: (existing?.early_arrivals || 0) + finalReportData.metrics.early_arrivals,
+                late_arrivals: (existing?.late_arrivals || 0) + finalReportData.metrics.late_arrivals,
+                justified_count: (existing?.justified_count || 0) + finalReportData.metrics.justified_count,
+                total_issues: (existing?.total_issues || 0) + finalReportData.metrics.total_issues,
+                holidays_worked: (existing?.holidays_worked || 0) + finalReportData.metrics.holidays_worked,
+                absences: (existing?.absences || 0) + finalReportData.metrics.absences,
+                scheduled_days: (existing?.scheduled_days || 0) + finalReportData.metrics.scheduled_days,
+                marked_days: (existing?.marked_days || 0) + finalReportData.metrics.marked_days,
+                updated_at: new Date().toISOString()
+            };
 
-    if (isLoading) return <div className="h-full w-full flex items-center justify-center"><Loader2 className="animate-spin text-primary" size={48} /></div>;
+            const { error } = await supabase.from('attendance_performance').upsert(payload);
+            if (error) throw error;
+            setPerfSaveStatus('success');
+            setTimeout(() => setPerfSaveStatus('idle'), 3000);
+            loadData();
+        } catch (e) {
+            console.error(e);
+            setPerfSaveStatus('idle');
+        }
+    };
+
+    const rankingSorted = useMemo(() => {
+        return [...performanceHistory].map(p => {
+            // NUEVA LÓGICA DE PUNTOS
+            let score = 0;
+            
+            // Temprano: +1 punto por día
+            score += (p.early_arrivals * 1);
+            
+            // Tarde: -1 punto por día
+            score -= (p.late_arrivals * 1);
+            
+            // Ausencias: -1 punto por cada una
+            score -= (p.absences * 1);
+            
+            // Justificación > 80% = +1 punto (si no, -1)
+            // Se calcula sobre el total de incidencias (tardanzas)
+            if (p.late_arrivals > 0) {
+                const justRatio = p.justified_count / p.late_arrivals;
+                if (justRatio >= 0.8) score += 1;
+                else score -= 1;
+            }
+
+            // Marcado de asistencia:
+            const markingEff = p.scheduled_days > 0 ? (p.marked_days / p.scheduled_days) : 0;
+            if (markingEff === 1) {
+                score += 2; // 100% = +2
+            } else if (markingEff > 0.7) {
+                score += 1; // +70% = +1
+            } else if (markingEff < 0.5) {
+                score -= 1; // -50% = -1
+            }
+
+            return { ...p, score };
+        }).sort((a, b) => (b.score || 0) - (a.score || 0));
+    }, [performanceHistory]);
 
     return (
-        <div className="flex flex-col gap-6 animate-in fade-in duration-500 pb-20 max-w-7xl mx-auto">
-            <div className="flex flex-col text-center">
-                <h1 className="text-4xl font-black text-text italic tracking-tighter uppercase leading-none">Gestión de Asistencia</h1>
-                <p className="text-muted text-[10px] uppercase font-bold tracking-[0.3em] mt-2 opacity-60">Alfonsa Distribuidora - Control Salarial</p>
+        <div className="flex flex-col h-full animate-in fade-in duration-500 overflow-hidden -m-8">
+            <div className="bg-surface border-b border-surfaceHighlight px-8 flex justify-between items-center shrink-0">
+                <div className="flex gap-8">
+                    <button onClick={() => setActiveTab('workers')} className={`py-4 text-sm font-bold transition-all border-b-2 ${activeTab === 'workers' || activeTab === 'report' ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-text'}`}>
+                        <span className="flex items-center gap-2"><Users size={18}/> Gestión de Trabajadores</span>
+                    </button>
+                    <button onClick={() => setActiveTab('settings')} className={`py-4 text-sm font-bold transition-all border-b-2 ${activeTab === 'settings' ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-text'}`}>
+                        <span className="flex items-center gap-2"><Settings size={18}/> Ajustes Globales</span>
+                    </button>
+                </div>
+                {isVale && (
+                    <button onClick={() => setActiveTab('performance')} className={`flex items-center gap-2 px-6 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-sm ${activeTab === 'performance' ? 'bg-primary text-white shadow-primary/20' : 'bg-surfaceHighlight text-muted hover:text-text'}`}>
+                        <Trophy size={16}/> Rendimiento de Asistencias
+                    </button>
+                )}
             </div>
 
-            <div className="bg-surface border border-surfaceHighlight p-1.5 rounded-[2rem] flex gap-1 w-full sm:w-fit mx-auto shadow-sm">
-                <button onClick={() => setActiveTab('workers')} className={`flex items-center gap-2 px-10 py-4 rounded-[1.5rem] text-xs font-black uppercase transition-all ${activeTab === 'workers' ? 'bg-primary text-white shadow-xl shadow-primary/20' : 'text-muted hover:bg-surfaceHighlight'}`}><Users size={18} /> Trabajadores</button>
-                <button onClick={() => setActiveTab('settings')} className={`flex items-center gap-2 px-10 py-4 rounded-[1.5rem] text-xs font-black uppercase transition-all ${activeTab === 'settings' ? 'bg-primary text-white shadow-xl shadow-primary/20' : 'text-muted hover:bg-surfaceHighlight'}`}><Settings size={18} /> Ajustes</button>
-            </div>
-
-            {activeTab === 'workers' ? (
-                <div className="bg-surface border border-surfaceHighlight rounded-[2.5rem] shadow-lg overflow-hidden flex flex-col md:flex-row min-h-[500px]">
-                    <div className="w-full md:w-80 border-r border-surfaceHighlight flex flex-col bg-background/20 shrink-0">
-                        <div className="p-6 border-b border-surfaceHighlight flex justify-between items-center"><h3 className="text-[10px] font-black text-muted uppercase tracking-[0.2em]">Seleccionar Trabajador</h3></div>
-                        <div className="flex-1 overflow-y-auto p-4 space-y-2 scrollbar-thin">
-                            {armadores.map(w => (
-                                <button key={w.id} onClick={() => { setSelectedWorkerId(w.id); setSaveStatus('idle'); }} className={`w-full flex items-center justify-between p-4 rounded-2xl transition-all ${selectedWorkerId === w.id ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'hover:bg-surfaceHighlight text-text'}`}>
-                                    <div className="flex items-center gap-3">
-                                        <div className={`h-8 w-8 rounded-full flex items-center justify-center font-black text-[10px] border ${selectedWorkerId === w.id ? 'bg-white/20' : 'bg-primary/10 text-primary'}`}>{w.name.substring(0, 2)}</div>
-                                        <span className="text-sm font-bold uppercase truncate max-w-[140px]">{w.name}</span>
-                                    </div>
-                                    <div className={`h-1.5 w-1.5 rounded-full ${selectedWorkerId === w.id ? 'bg-white' : 'bg-muted opacity-20'}`}></div>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div className="flex-1 p-8 md:p-12 animate-in fade-in">
-                        {selectedWorker && currentConfig && (
-                            <div className="max-w-2xl space-y-10">
-                                <div className="space-y-2">
-                                    <h2 className="text-3xl font-black text-text uppercase italic tracking-tighter">Gestión de Trabajadores</h2>
-                                    <p className="text-muted text-xs font-bold opacity-60 uppercase">Configura la tarifa, días laborales y horarios específicos para <span className="text-primary">{selectedWorker.name}</span>.</p>
-                                </div>
-
-                                <div className="space-y-8">
-                                    <div className="space-y-3">
-                                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Tarifa por Hora ($)</label>
-                                        <div className="relative group">
-                                            <div className="absolute left-4 top-1/2 -translate-y-1/2 p-2 bg-background border border-surfaceHighlight rounded-xl text-muted">
-                                                <DollarSign size={20} />
+            <div className="flex-1 flex overflow-hidden">
+                {activeTab === 'workers' && (
+                    <>
+                        <div className="w-80 border-r border-surfaceHighlight bg-background/30 flex flex-col shrink-0">
+                            <div className="p-6 border-b border-surfaceHighlight flex justify-between items-center">
+                                <h3 className="text-[10px] font-black text-muted uppercase tracking-[0.2em]">Listado de Personal</h3>
+                            </div>
+                            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                                {armadores.map(w => {
+                                    const isSelected = selectedWorkerId === w.id;
+                                    const config = workerConfigs[w.id];
+                                    return (
+                                        <button key={w.id} onClick={() => { setSelectedWorkerId(w.id); setRawReport(''); }} className={`w-full flex items-center justify-between p-4 rounded-2xl transition-all ${isSelected ? 'bg-primary text-white shadow-xl scale-[1.02]' : 'hover:bg-surfaceHighlight text-text'}`}>
+                                            <div className="flex items-center gap-3">
+                                                <div className={`h-10 w-10 rounded-xl overflow-hidden flex items-center justify-center font-black text-[10px] border ${isSelected ? 'bg-white/20 border-white/30' : 'bg-surfaceHighlight/50 border-surfaceHighlight'}`}>
+                                                    {w.avatar_url ? <img src={w.avatar_url} className="h-full w-full object-cover" /> : w.name.substring(0, 2).toUpperCase()}
+                                                </div>
+                                                <div className="flex flex-col text-left">
+                                                    <span className="text-sm font-bold truncate max-w-[140px] uppercase">{w.name}</span>
+                                                    <span className={`text-[9px] font-black uppercase ${isSelected ? 'text-white/60' : 'text-muted'}`}>
+                                                        {config?.location || 'Sin Sede'}
+                                                    </span>
+                                                </div>
                                             </div>
-                                            <input 
-                                                type="number" 
-                                                value={currentConfig.hourly_rate} 
-                                                onChange={e => handleWorkerChange({ hourly_rate: parseFloat(e.target.value) || 0 })}
-                                                className="w-full bg-background border border-surfaceHighlight rounded-2xl py-5 pl-16 pr-6 text-xl font-black text-text outline-none focus:border-primary shadow-inner" 
-                                            />
-                                        </div>
-                                    </div>
-
-                                    <div className="space-y-4">
-                                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Días Laborales</label>
-                                        <div className="flex flex-wrap gap-2">
-                                            {DAYS_OF_WEEK.map(day => (
-                                                <button 
-                                                    key={day} 
-                                                    onClick={() => toggleDay(day)}
-                                                    className={`px-6 py-3 rounded-full text-[11px] font-black uppercase transition-all border ${currentConfig.work_days.includes(day) ? 'bg-primary/10 border-primary text-primary shadow-sm' : 'bg-background border-surfaceHighlight text-muted hover:border-primary/40'}`}
-                                                >
-                                                    {day}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                        <div className="space-y-3">
-                                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Hora de Entrada Programada</label>
-                                            <div className="relative">
-                                                <LogIn className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
-                                                <input 
-                                                    type="time" 
-                                                    value={currentConfig.entry_time} 
-                                                    onChange={e => handleWorkerChange({ entry_time: e.target.value })} 
-                                                    className="w-full bg-background border border-surfaceHighlight rounded-2xl py-5 pl-12 pr-6 text-sm font-black text-text outline-none focus:border-primary shadow-inner uppercase" 
-                                                />
-                                            </div>
-                                        </div>
-                                        <div className="space-y-3">
-                                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Hora de Salida Programada</label>
-                                            <div className="relative">
-                                                <LogOut className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
-                                                <input 
-                                                    type="time" 
-                                                    value={currentConfig.exit_time} 
-                                                    onChange={e => handleWorkerChange({ exit_time: e.target.value })} 
-                                                    className="w-full bg-background border border-surfaceHighlight rounded-2xl py-5 pl-12 pr-6 text-sm font-black text-text outline-none focus:border-primary shadow-inner uppercase" 
-                                                />
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div className="pt-6 border-t border-surfaceHighlight">
-                                        <button 
-                                            onClick={saveWorkerConfig}
-                                            disabled={saveStatus === 'saving'}
-                                            className={`flex items-center gap-3 px-12 py-5 rounded-2xl font-black uppercase text-sm shadow-xl transition-all active:scale-95 disabled:opacity-50 ${saveStatus === 'success' ? 'bg-green-600 text-white' : 'bg-primary hover:bg-primaryHover text-white shadow-primary/20'}`}
-                                        >
-                                            {saveStatus === 'saving' ? <Loader2 size={20} className="animate-spin" /> : saveStatus === 'success' ? <CheckCircle2 size={20}/> : <Save size={20} />}
-                                            {saveStatus === 'success' ? 'Cambios Guardados' : 'Guardar Cambios'}
+                                            <Circle size={8} fill="currentColor" className={!!config ? 'text-green-500' : 'text-surfaceHighlight'} />
                                         </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-8 md:p-12 bg-white dark:bg-background">
+                            {currentConfig && selectedWorker ? (
+                                <div className="max-w-3xl space-y-12 animate-in fade-in slide-in-from-bottom-4">
+                                    <div className="flex items-center gap-6">
+                                        <div className="h-24 w-24 rounded-[2.5rem] overflow-hidden border-4 border-surfaceHighlight shadow-2xl bg-background flex items-center justify-center">
+                                            {selectedWorker.avatar_url ? <img src={selectedWorker.avatar_url} className="h-full w-full object-cover" /> : <UserIcon size={48} className="text-muted" />}
+                                        </div>
+                                        <div>
+                                            <h2 className="text-4xl font-black text-text tracking-tighter flex items-center gap-3 uppercase italic">{selectedWorker.name}</h2>
+                                            <p className="text-muted text-sm font-medium mt-1 uppercase tracking-wider">Configuración individual de jornada y compensación.</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-10">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                            <div className="space-y-4">
+                                                <label className="text-xs font-black text-text uppercase tracking-wide">Tarifa por Hora</label>
+                                                <div className="relative group">
+                                                    <div className="absolute left-4 top-1/2 -translate-y-1/2 bg-surfaceHighlight/30 p-2 rounded-lg text-muted"><Banknote size={18} /></div>
+                                                    <input type="number" value={currentConfig.hourly_rate} onChange={e => handleWorkerChange({ hourly_rate: parseFloat(e.target.value) || 0 })} className="w-full bg-white dark:bg-background border border-surfaceHighlight rounded-2xl py-5 pl-16 pr-6 text-lg font-black text-text outline-none focus:border-primary transition-all shadow-sm" />
+                                                </div>
+                                            </div>
+                                            <div className="space-y-4">
+                                                <label className="text-xs font-black text-text uppercase tracking-wide">Sede Asignada</label>
+                                                <div className="flex gap-3">
+                                                    <button onClick={() => handleWorkerChange({ location: 'LLERENA' })} className={`flex-1 py-4 rounded-2xl text-xs font-black uppercase transition-all border flex items-center justify-center gap-2 ${currentConfig.location === 'LLERENA' ? 'bg-primary/5 border-primary text-primary shadow-sm' : 'bg-white dark:bg-background text-muted border-surfaceHighlight hover:bg-surfaceHighlight/50'}`}><Building2 size={16}/> Llerena</button>
+                                                    <button onClick={() => handleWorkerChange({ location: 'BETBEDER' })} className={`flex-1 py-4 rounded-2xl text-xs font-black uppercase transition-all border flex items-center justify-center gap-2 ${currentConfig.location === 'BETBEDER' ? 'bg-primary/5 border-primary text-primary shadow-sm' : 'bg-white dark:bg-background text-muted border-surfaceHighlight hover:bg-surfaceHighlight/50'}`}><MapPin size={16}/> Betbeder</button>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-4">
+                                            <label className="text-xs font-black text-text uppercase tracking-wide">Días Laborales Programados</label>
+                                            <div className="flex flex-wrap gap-3">
+                                                {DAYS_OF_WEEK.map(d => (
+                                                    <button 
+                                                        key={d.key} 
+                                                        onClick={() => toggleDay(d.key)} 
+                                                        className={`px-6 py-3 rounded-2xl text-xs font-bold transition-all border ${currentConfig.work_days.includes(d.key) ? 'bg-primary/5 border-primary text-primary shadow-sm' : 'bg-white dark:bg-background text-muted border-surfaceHighlight hover:bg-surfaceHighlight/50'}`}
+                                                    >
+                                                        {d.short}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-8">
+                                            <h3 className="text-sm font-black text-text uppercase italic border-b border-surfaceHighlight pb-2">Turnos Programados</h3>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-10">
+                                                <div className="space-y-4">
+                                                    <label className="text-[10px] font-black text-primary uppercase tracking-widest ml-1">Turno Mañana</label>
+                                                    <div className="grid grid-cols-2 gap-4">
+                                                        <div className="relative">
+                                                            <input type="time" value={currentConfig.entry_time} onChange={e => handleWorkerChange({ entry_time: e.target.value })} className="w-full bg-white dark:bg-background border border-surfaceHighlight rounded-2xl py-4 px-4 text-xs font-black text-text outline-none focus:border-primary shadow-sm" />
+                                                            <div className="absolute -top-2 left-3 px-1 bg-white dark:bg-background text-[8px] font-bold text-muted uppercase">Entrada</div>
+                                                        </div>
+                                                        <div className="relative">
+                                                            <input type="time" value={currentConfig.exit_time} onChange={e => handleWorkerChange({ exit_time: e.target.value })} className="w-full bg-white dark:bg-background border border-surfaceHighlight rounded-2xl py-4 px-4 text-xs font-black text-text outline-none focus:border-primary shadow-sm" />
+                                                            <div className="absolute -top-2 left-3 px-1 bg-white dark:bg-background text-[8px] font-bold text-muted uppercase">Salida</div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="space-y-4">
+                                                    <label className="text-[10px] font-black text-blue-500 uppercase tracking-widest ml-1">Turno Tarde (Rotativo)</label>
+                                                    <div className="grid grid-cols-2 gap-4">
+                                                        <div className="relative">
+                                                            <input type="time" value={currentConfig.entry_time_pm || ''} onChange={e => handleWorkerChange({ entry_time_pm: e.target.value })} className="w-full bg-white dark:bg-background border border-surfaceHighlight rounded-2xl py-4 px-4 text-xs font-black text-text outline-none focus:border-primary shadow-sm" />
+                                                            <div className="absolute -top-2 left-3 px-1 bg-white dark:bg-background text-[8px] font-bold text-muted uppercase">Entrada</div>
+                                                        </div>
+                                                        <div className="relative">
+                                                            <input type="time" value={currentConfig.exit_time_pm || ''} onChange={e => handleWorkerChange({ exit_time: e.target.value })} className="w-full bg-white dark:bg-background border border-surfaceHighlight rounded-2xl py-4 px-4 text-xs font-black text-text outline-none focus:border-primary shadow-sm" />
+                                                            <div className="absolute -top-2 left-3 px-1 bg-white dark:bg-background text-[8px] font-bold text-muted uppercase">Salida</div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="pt-4 border-t border-surfaceHighlight/50 space-y-6">
+                                            <div className="space-y-3">
+                                                <label className="text-xs font-black text-primary uppercase tracking-widest flex items-center gap-2"><Zap size={16} /> Procesar Informe de Huella</label>
+                                                <textarea value={rawReport} onChange={e => setRawReport(e.target.value)} placeholder="Pegue aquí el texto del reporte de asistencia..." className="w-full h-32 bg-white dark:bg-background border border-surfaceHighlight rounded-2xl p-4 text-xs font-mono text-text outline-none focus:border-primary shadow-inner resize-none transition-all" />
+                                            </div>
+
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                                <button onClick={saveWorkerConfig} disabled={saveStatus === 'saving'} className={`py-4 rounded-2xl font-black uppercase text-xs shadow-xl transition-all active:scale-[0.98] flex items-center justify-center gap-3 ${saveStatus === 'success' ? 'bg-green-600 text-white' : 'bg-primary text-white shadow-primary/30 hover:bg-primaryHover'}`}>
+                                                    {saveStatus === 'saving' ? <Loader2 size={18} className="animate-spin" /> : saveStatus === 'success' ? <CheckCircle2 size={18}/> : <Save size={18} />}
+                                                    Guardar Cambios
+                                                </button>
+                                                <button onClick={processReport} disabled={!rawReport.trim()} className="py-4 rounded-2xl font-black uppercase text-xs bg-slate-900 text-white shadow-xl hover:bg-black transition-all active:scale-[0.98] flex items-center justify-center gap-3 disabled:opacity-30">
+                                                    <FileText size={18} /> Generar Detalle Quincenal
+                                                </button>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            ) : (
-                <div className="bg-surface border border-surfaceHighlight rounded-[2.5rem] p-12 space-y-8 max-w-4xl mx-auto w-full">
-                    <h2 className="text-3xl font-black text-text uppercase italic tracking-tighter">Configuración de Bonos</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                        <div className="space-y-4">
-                            <label className="text-[10px] font-black text-muted uppercase">Bono 1 (Puntualidad Perfecta)</label>
-                            <input type="number" value={globalSettings.bonus_1} onChange={e => setGlobalSettings({...globalSettings, bonus_1: parseFloat(e.target.value) || 0})} className="w-full bg-background border border-surfaceHighlight rounded-3xl py-6 px-8 text-3xl font-black text-primary" />
+                            ) : (
+                                <div className="h-full flex flex-col items-center justify-center text-center opacity-20"><Users size={80} className="mb-4" /><p className="font-black uppercase tracking-[0.3em] text-sm">Seleccione un trabajador</p></div>
+                            )}
                         </div>
-                        <div className="space-y-4">
-                            <label className="text-[10px] font-black text-muted uppercase">Bono 2 (Asistencia Completa)</label>
-                            <input type="number" value={globalSettings.bonus_2} onChange={e => setGlobalSettings({...globalSettings, bonus_2: parseFloat(e.target.value) || 0})} className="w-full bg-background border border-surfaceHighlight rounded-3xl py-6 px-8 text-3xl font-black text-text" />
-                        </div>
-                    </div>
-                    <div className="pt-6 border-t border-surfaceHighlight">
-                        <button 
-                            onClick={saveGlobalSettings}
-                            disabled={saveStatus === 'saving'}
-                            className={`flex items-center gap-3 px-12 py-5 rounded-2xl font-black uppercase text-sm shadow-xl transition-all active:scale-95 disabled:opacity-50 ${saveStatus === 'success' ? 'bg-green-600 text-white' : 'bg-primary hover:bg-primaryHover text-white shadow-primary/20'}`}
-                        >
-                            {saveStatus === 'saving' ? <Loader2 size={20} className="animate-spin" /> : saveStatus === 'success' ? <CheckCircle2 size={20}/> : <Save size={20} />}
-                            {saveStatus === 'success' ? 'Configuración Guardada' : 'Guardar Configuración'}
-                        </button>
-                    </div>
-                </div>
-            )}
+                    </>
+                )}
 
-            {/* SECCIÓN REPORTE INFERIOR */}
-            <div className="bg-surface border border-surfaceHighlight rounded-[2.5rem] p-8 md:p-12 shadow-sm space-y-8 animate-in slide-in-from-bottom-4">
-                <div className="flex items-center gap-5">
-                    <div className="p-4 bg-primary/10 text-primary rounded-2xl"><FileText size={28} /></div>
-                    <div>
-                        <h3 className="text-2xl font-black text-text uppercase italic tracking-tight">Reporte de Asistencia</h3>
-                        <p className="text-muted text-xs font-bold uppercase mt-1 opacity-60">Pega los datos del reloj para procesar las 2 semanas.</p>
+                {activeTab === 'report' && finalReportData && (
+                    <div className="flex-1 bg-background p-8 md:p-12 overflow-y-auto animate-in zoom-in-95">
+                        <div className="max-w-6xl mx-auto space-y-10 pb-20">
+                            <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+                                <div>
+                                    <p className="text-primary font-black text-[10px] uppercase tracking-[0.3em] mb-1">Cálculo de Quincena</p>
+                                    <h1 className="text-4xl font-black text-text tracking-tighter uppercase italic leading-none">Informe Detallado</h1>
+                                    <p className="text-muted text-sm font-medium mt-2 uppercase tracking-wide italic">Resumen de 14 días — {selectedWorker?.name}</p>
+                                </div>
+                                <div className="flex gap-3 w-full md:w-auto">
+                                    {isVale && (
+                                        <button onClick={handleSavePerformance} disabled={perfSaveStatus === 'saving'} className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-black text-xs transition-all shadow-lg ${perfSaveStatus === 'success' ? 'bg-green-600 text-white shadow-green-900/20' : 'bg-primary text-white shadow-primary/20 hover:bg-primaryHover'}`}>
+                                            {perfSaveStatus === 'saving' ? <Loader2 size={16} className="animate-spin"/> : perfSaveStatus === 'success' ? <CheckCircle2 size={16}/> : <Save size={16}/>}
+                                            {perfSaveStatus === 'success' ? 'Rendimiento Guardado' : 'Guardar Informe en Rendimiento'}
+                                        </button>
+                                    )}
+                                    <button onClick={() => window.print()} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-surface border border-surfaceHighlight text-text font-bold text-xs shadow-sm hover:bg-surfaceHighlight transition-all"><FileText size={16}/> PDF</button>
+                                </div>
+                            </div>
+
+                            <div className="bg-surface border border-surfaceHighlight rounded-3xl p-8 grid grid-cols-2 md:grid-cols-6 lg:grid-cols-8 gap-8 shadow-sm">
+                                <SummaryItem label="Horas Totales" value={finalReportData.totalHours.toString()} color="text-text" />
+                                <SummaryItem label="Multa (Hs)" value={finalReportData.totalPenaltyHours.toString()} color="text-red-500" />
+                                <SummaryItem label="Tardanzas" value={finalReportData.totalLateCount.toString()} color="text-orange-500" />
+                                <SummaryItem label="Tarifa x H" value={`$ ${currentConfig?.hourly_rate.toLocaleString()}`} color="text-text" />
+                                <SummaryItem label="Total Bruto" value={`$ ${finalReportData.subtotal.toLocaleString()}`} color="text-text" />
+                                <div className="flex flex-col gap-2">
+                                    <span className="text-[10px] font-bold text-muted uppercase tracking-widest">Bono</span>
+                                    <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border self-start ${finalReportData.bonusAmount > 0 ? 'bg-green-500/10 text-green-600 border-green-200' : 'bg-surfaceHighlight text-muted'}`}>{finalReportData.bonusStatus}</span>
+                                </div>
+                                <div className="flex flex-col gap-2">
+                                    <span className="text-[10px] font-bold text-muted uppercase tracking-widest">Deuda</span>
+                                    <input type="number" value={debtAmount} onChange={(e) => setDebtAmount(parseFloat(e.target.value) || 0)} className="w-full bg-background border border-surfaceHighlight rounded-lg p-2 text-xs font-black text-red-500 outline-none focus:border-red-500 shadow-sm" />
+                                </div>
+                                <SummaryItem label="Neto a Pagar" value={`$ ${finalReportData.totalToPay.toLocaleString()}`} color="text-blue-600" />
+                            </div>
+
+                            <div className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm">
+                                <div className="p-4 border-b border-surfaceHighlight bg-background/20 flex justify-between items-center">
+                                    <h3 className="text-xs font-black uppercase text-muted tracking-[0.2em]">Detalle Diario</h3>
+                                    <div className="flex gap-4 text-[9px] font-black text-muted uppercase tracking-widest">
+                                        <span className="flex items-center gap-1"><Circle size={8} fill="#f97316" className="text-orange-500"/> Feriado</span>
+                                        <span className="flex items-center gap-1"><Circle size={8} fill="#2563eb" className="text-blue-600"/> Justificado (Tardanza/Falta)</span>
+                                    </div>
+                                </div>
+                                <table className="w-full text-left">
+                                    <thead className="bg-background/40 text-[10px] text-muted font-black uppercase tracking-widest border-b border-surfaceHighlight">
+                                        <tr>
+                                            <th className="p-4 pl-8">Fecha</th>
+                                            <th className="p-4">Día</th>
+                                            <th className="p-4">Entrada</th>
+                                            <th className="p-4">Salida</th>
+                                            <th className="p-4 text-center">Horas</th>
+                                            <th className="p-4 text-center">Multa (Hs)</th>
+                                            <th className="p-4">Estado / Novedad</th>
+                                            <th className="p-4 text-center w-12">F</th>
+                                            <th className="p-4 text-center w-12">J</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-surfaceHighlight">
+                                        {finalReportData.detailedDays.map((day, idx) => (
+                                            <tr key={idx} className={`hover:bg-primary/5 transition-colors ${day.status === 'NO TRABAJA' ? 'opacity-40' : ''}`}>
+                                                <td className={`p-4 pl-8 text-xs font-black ${day.status === 'FALTA' ? 'text-red-600' : 'text-text'}`}>{day.date}</td>
+                                                <td className="p-4 text-xs font-bold text-blue-600">{day.dayName.substring(0, 2)}</td>
+                                                <td className="p-4 text-xs font-medium text-text">{day.entry || '--:--'}</td>
+                                                <td className="p-4 text-xs font-medium text-text">{day.exit || '--:--'}</td>
+                                                <td className="p-4 text-center text-xs font-black">{day.hours > 0 ? (day.hours - day.penaltyHours).toFixed(2) : '-'}</td>
+                                                <td className="p-4 text-center">
+                                                    {day.penaltyHours > 0 && <span className="text-xs font-black text-red-500">-{day.penaltyHours} hs</span>}
+                                                </td>
+                                                <td className="p-4">
+                                                    <div className="flex flex-col gap-0.5">
+                                                        <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${getStatusStyle(day.status)}`}>{day.status}</span>
+                                                        {day.isEarly && <span className="text-[7px] text-green-600 font-bold uppercase ml-1 italic tracking-tighter">Llegó temprano</span>}
+                                                        {day.isLate && !day.isJustified && day.minutesLate <= 10 && <span className="text-[7px] text-orange-500 font-bold uppercase ml-1 italic tracking-tighter">Sin multa, pierde bono</span>}
+                                                        {day.isLate && !day.isJustified && day.minutesLate > 10 && <span className="text-[7px] text-red-500 font-bold uppercase ml-1 italic tracking-tighter">Tardanza sin justificar</span>}
+                                                        {day.isLate && day.isJustified && <span className="text-[7px] text-blue-500 font-bold uppercase ml-1 italic tracking-tighter">Tardanza Justificada</span>}
+                                                    </div>
+                                                </td>
+                                                <td className="p-4 text-center">
+                                                    <button onClick={() => toggleFlag(idx, 'isFeriado')} className={`w-5 h-5 rounded-full border-2 transition-all ${day.isFeriado ? 'bg-orange-500 border-orange-600 shadow-sm' : 'border-surfaceHighlight hover:border-orange-200'}`} />
+                                                </td>
+                                                <td className="p-4 text-center">
+                                                    <button onClick={() => toggleFlag(idx, 'isJustified')} className={`w-5 h-5 rounded-full border-2 transition-all ${day.isJustified ? 'bg-blue-600 border-blue-700 shadow-sm' : 'border-surfaceHighlight hover:border-blue-200'}`} />
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            <div className="bg-primary/5 border border-primary/20 rounded-3xl p-6 flex items-start gap-4">
+                                <AlertTriangle className="text-primary shrink-0" size={20} />
+                                <div>
+                                    <h4 className="text-[11px] font-black text-primary uppercase tracking-widest">Información de Rendimiento</h4>
+                                    <p className="text-[10px] text-muted font-bold leading-relaxed uppercase mt-1">
+                                        Las horas de multa impactan el neto a pagar. Al marcar "Justificado" (J) en una tardanza o falta, el trabajador no pierde el derecho al bono 2 y su puntaje de ranking se protege parcialmente.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <button onClick={() => setActiveTab('workers')} className="flex items-center gap-2 text-muted hover:text-primary transition-colors text-xs font-black uppercase tracking-widest"><X size={16}/> Salir del Informe</button>
+                        </div>
                     </div>
-                </div>
-                <textarea value={rawReport} onChange={e => setRawReport(e.target.value)} placeholder="Tabla Asistencia..." className="w-full min-h-[250px] bg-background border border-surfaceHighlight rounded-[2rem] p-8 text-sm font-mono text-text outline-none focus:border-primary shadow-inner resize-none transition-all placeholder:opacity-30 uppercase" />
-                <div className="flex gap-4"><button onClick={processReport} className="flex items-center gap-3 bg-primary text-white hover:bg-primaryHover px-10 py-5 rounded-2xl font-black uppercase text-xs shadow-xl active:scale-95"><Zap size={18} /> Procesar Reporte Actual</button></div>
+                )}
+
+                {activeTab === 'performance' && isVale && (
+                    <div className="flex-1 p-8 md:p-12 overflow-y-auto bg-background">
+                        <div className="max-w-6xl mx-auto space-y-12">
+                            <div className="flex justify-between items-end">
+                                <div>
+                                    <h2 className="text-4xl font-black text-text tracking-tighter uppercase italic leading-none">Ranking de Rendimiento</h2>
+                                    <p className="text-muted text-sm font-medium mt-3 uppercase tracking-wider">Cumplimiento de reglas y puntualidad histórica acumulada.</p>
+                                </div>
+                                <div className="hidden md:flex gap-4">
+                                     <div className="bg-surface border border-surfaceHighlight rounded-2xl px-6 py-3 shadow-sm text-center">
+                                        <p className="text-[9px] font-black text-muted uppercase tracking-widest">Puntaje Base</p>
+                                        <p className="text-xl font-black text-primary">Sistema Acumulativo</p>
+                                     </div>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                                {rankingSorted.map((p, idx) => {
+                                    const rankColor = idx === 0 ? 'border-yellow-500 bg-yellow-500/5' : idx === 1 ? 'border-slate-400 bg-slate-400/5' : idx === 2 ? 'border-orange-500 bg-orange-500/5' : 'border-surfaceHighlight bg-surface';
+                                    const Medal = idx === 0 ? Award : idx === 1 ? Star : idx === 2 ? Trophy : null;
+                                    const justifiedRatio = p.late_arrivals > 0 ? Math.round((p.justified_count / (p.late_arrivals)) * 100) : 0;
+
+                                    return (
+                                        <div 
+                                            key={p.user_id} 
+                                            onClick={() => setSelectedPerfDetail(p)}
+                                            className={`p-8 rounded-[2.5rem] border-2 transition-all shadow-sm flex flex-col gap-6 relative group hover:scale-[1.02] cursor-pointer ${rankColor}`}
+                                        >
+                                            <div className="flex items-start justify-between">
+                                                <div className="flex items-center gap-4">
+                                                    <div className="h-16 w-16 rounded-2xl overflow-hidden border-2 border-surfaceHighlight bg-background flex items-center justify-center relative shadow-md">
+                                                        {p.avatar_url ? <img src={p.avatar_url} className="h-full w-full object-cover" /> : <span className="font-black text-muted text-lg">{p.user_name?.substring(0, 2).toUpperCase()}</span>}
+                                                        <div className="absolute -top-2 -left-2 h-7 w-7 rounded-full bg-slate-900 text-white flex items-center justify-center text-[11px] font-black border-2 border-white shadow-lg">#{idx+1}</div>
+                                                    </div>
+                                                    <div>
+                                                        <h4 className="font-black text-text uppercase italic tracking-tight leading-tight truncate max-w-[140px] text-base">{p.user_name}</h4>
+                                                        <div className="flex items-center gap-1.5 mt-1 text-[11px] font-black uppercase text-primary">
+                                                            <TrendingUp size={14} className="text-green-500"/> {(p as any).score} pts
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                {Medal && <Medal className={idx === 0 ? 'text-yellow-500' : idx === 1 ? 'text-slate-400' : 'text-orange-500'} size={36} />}
+                                            </div>
+
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <RankingStat label="Temprano (+1)" value={p.early_arrivals} color="text-green-600" />
+                                                <RankingStat label="Tardanzas (-1)" value={p.late_arrivals} color="text-red-500" />
+                                                <RankingStat label="Ausencias (-1)" value={p.absences} color="text-red-700" />
+                                                <RankingStat label="Justificación" value={`${justifiedRatio}%`} color="text-blue-600" />
+                                            </div>
+
+                                            <div className="pt-4 border-t border-surfaceHighlight/50">
+                                                <div className="flex justify-between items-center text-[9px] font-black uppercase mb-2 tracking-widest">
+                                                    <span className="text-muted">Marcado de Asistencia</span>
+                                                    <span className="text-text">{Math.round((p.marked_days / (p.scheduled_days || 1)) * 100)}%</span>
+                                                </div>
+                                                <div className="h-2 w-full bg-surfaceHighlight rounded-full overflow-hidden shadow-inner">
+                                                    <div className="h-full bg-primary" style={{ width: `${(p.marked_days / (p.scheduled_days || 1)) * 100}%` }}></div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="absolute bottom-4 right-8 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 text-[8px] font-black uppercase text-primary">
+                                                Ver Detalle <ChevronRight size={12}/>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            {rankingSorted.length === 0 && (
+                                <div className="py-24 text-center opacity-30 italic">
+                                    <Target size={64} className="mx-auto mb-4" />
+                                    <p className="font-black uppercase tracking-[0.3em] text-sm">Sin datos históricos guardados.</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'settings' && (
+                    <div className="flex-1 p-8 md:p-16 max-w-4xl">
+                        <h2 className="text-3xl font-black text-text uppercase italic mb-8">Ajustes de Bonos Globales</h2>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            <SedeBonusCard location="LLERENA" settings={globalSettings['LLERENA']} onSave={loadData} />
+                            <SedeBonusCard location="BETBEDER" settings={globalSettings['BETBEDER']} onSave={loadData} />
+                        </div>
+                    </div>
+                )}
             </div>
 
-            {finalReportData && (
-                <div className="space-y-8 animate-in zoom-in-95">
-                    <div className="bg-surface border border-surfaceHighlight rounded-[2.5rem] p-8 md:p-12 shadow-sm space-y-10">
-                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-                            <div>
-                                <span className="text-[10px] font-black text-primary uppercase tracking-[0.3em]">Informe Detallado</span>
-                                <h2 className="text-4xl font-black text-text uppercase italic tracking-tighter mt-1">Liquidación de Periodo</h2>
+            {/* MODAL DE DETALLE DE RENDIMIENTO */}
+            {selectedPerfDetail && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+                    <div className="bg-surface w-full max-w-lg rounded-[2.5rem] border border-surfaceHighlight shadow-2xl overflow-hidden flex flex-col">
+                        <div className="p-8 border-b border-surfaceHighlight bg-background/20 flex justify-between items-center">
+                            <div className="flex items-center gap-4">
+                                <div className="h-16 w-16 rounded-2xl overflow-hidden border-2 border-primary/20 bg-background flex items-center justify-center shadow-md">
+                                    {selectedPerfDetail.avatar_url ? <img src={selectedPerfDetail.avatar_url} className="h-full w-full object-cover" /> : <span className="font-black text-primary text-xl">{selectedPerfDetail.user_name?.substring(0, 2).toUpperCase()}</span>}
+                                </div>
+                                <div>
+                                    <h3 className="text-2xl font-black text-text uppercase italic tracking-tight">{selectedPerfDetail.user_name}</h3>
+                                    <p className="text-[10px] font-black text-muted uppercase tracking-widest mt-1">Estadísticas Históricas Acumuladas</p>
+                                </div>
                             </div>
-                            <div className="flex gap-3">
-                                <button className="flex items-center gap-2 px-6 py-3 rounded-xl border border-surfaceHighlight text-text text-xs font-black uppercase hover:bg-surfaceHighlight transition-all"><FileText size={16}/> Exportar PDF</button>
-                                <button className="flex items-center gap-2 px-6 py-3 rounded-xl bg-green-600 text-white text-xs font-black uppercase shadow-lg hover:bg-green-700 transition-all"><Download size={16}/> Excel</button>
+                            <button onClick={() => setSelectedPerfDetail(null)} className="p-2 hover:bg-surfaceHighlight rounded-full text-muted transition-all"><X size={28}/></button>
+                        </div>
+
+                        <div className="p-8 space-y-8 overflow-y-auto max-h-[60vh]">
+                            <div className="bg-primary text-white p-8 rounded-3xl text-center shadow-xl shadow-primary/20 relative overflow-hidden">
+                                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl"></div>
+                                <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80">Puntaje Total de Ranking</span>
+                                <p className="text-6xl font-black mt-3 leading-none italic tracking-tighter">{selectedPerfDetail.score} pts</p>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <DetailMetricItem 
+                                    label="Días Temprano" 
+                                    value={selectedPerfDetail.early_arrivals} 
+                                    points={`+${selectedPerfDetail.early_arrivals}`} 
+                                    icon={<Activity className="text-green-500" size={16}/>} 
+                                />
+                                <DetailMetricItem 
+                                    label="Tardanzas" 
+                                    value={selectedPerfDetail.late_arrivals} 
+                                    points={`-${selectedPerfDetail.late_arrivals}`} 
+                                    icon={<Clock className="text-red-500" size={16}/>} 
+                                />
+                                <DetailMetricItem 
+                                    label="Ausencias" 
+                                    value={selectedPerfDetail.absences} 
+                                    points={`-${selectedPerfDetail.absences}`} 
+                                    icon={<MinusCircle className="text-red-700" size={16}/>} 
+                                />
+                                <DetailMetricItem 
+                                    label="Justificaciones" 
+                                    value={`${selectedPerfDetail.late_arrivals > 0 ? Math.round((selectedPerfDetail.justified_count/selectedPerfDetail.late_arrivals)*100) : 0}%`} 
+                                    points={selectedPerfDetail.late_arrivals > 0 ? (selectedPerfDetail.justified_count/selectedPerfDetail.late_arrivals >= 0.8 ? '+1' : '-1') : '0'} 
+                                    icon={<CheckCircle2 className="text-blue-600" size={16}/>} 
+                                />
+                            </div>
+
+                            <div className="bg-background border border-surfaceHighlight rounded-3xl p-6 space-y-4">
+                                <div className="flex justify-between items-center text-[11px] font-black uppercase">
+                                    <span className="text-muted">Efectividad de Marcado</span>
+                                    <span className="text-text">{selectedPerfDetail.marked_days} / {selectedPerfDetail.scheduled_days} días</span>
+                                </div>
+                                <div className="h-3 w-full bg-surfaceHighlight rounded-full overflow-hidden shadow-inner">
+                                    <div className="h-full bg-primary" style={{ width: `${(selectedPerfDetail.marked_days / (selectedPerfDetail.scheduled_days || 1)) * 100}%` }}></div>
+                                </div>
+                                <p className="text-[9px] text-muted font-bold text-center uppercase tracking-widest">
+                                    {Math.round((selectedPerfDetail.marked_days / (selectedPerfDetail.scheduled_days || 1)) * 100) === 100 ? '+2 puntos por asistencia perfecta' : 
+                                     Math.round((selectedPerfDetail.marked_days / (selectedPerfDetail.scheduled_days || 1)) * 100) > 70 ? '+1 punto por alta asistencia' : 
+                                     Math.round((selectedPerfDetail.marked_days / (selectedPerfDetail.scheduled_days || 1)) * 100) < 50 ? '-1 punto por baja asistencia' : '0 puntos adicionales'}
+                                </p>
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
-                            <div className="bg-background/50 border border-surfaceHighlight p-6 rounded-3xl flex flex-col gap-1"><span className="text-[10px] font-black text-muted uppercase">Empleado</span><span className="text-xl font-black text-text uppercase italic">{selectedWorker?.name}</span></div>
-                            <div className="bg-background/50 border border-surfaceHighlight p-6 rounded-3xl flex flex-col gap-1"><span className="text-[10px] font-black text-muted uppercase">Horas Totales</span><span className="text-xl font-black text-text italic">{finalReportData.finalRoundedHours} h</span></div>
-                            <div className="bg-background/50 border border-surfaceHighlight p-6 rounded-3xl flex flex-col gap-1"><span className="text-[10px] font-black text-muted uppercase">Tarifa x Hora</span><span className="text-xl font-black text-text italic">$ {currentConfig?.hourly_rate.toLocaleString()}</span></div>
-                            <div className="bg-background/50 border border-surfaceHighlight p-6 rounded-3xl flex flex-col gap-1"><span className="text-[10px] font-black text-muted uppercase">Bono</span><span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase self-start mt-1 ${finalReportData.bonusAmount > 0 ? 'bg-green-500 text-white' : 'bg-surfaceHighlight text-muted'}`}>{finalReportData.bonusAmount > 0 ? `$ ${finalReportData.bonusAmount.toLocaleString()}` : 'Sin Bono'}</span></div>
-                            <div className="md:col-span-2 bg-blue-600 border border-blue-500 p-6 rounded-3xl flex flex-col gap-1 text-white shadow-xl shadow-blue-500/20"><span className="text-[10px] font-black uppercase opacity-70">Total a Liquidar</span><span className="text-3xl font-black italic">$ {finalReportData.totalToPay.toLocaleString()}</span></div>
-                        </div>
-
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-                            <div className="lg:col-span-4 space-y-6">
-                                <div className="bg-orange-50/50 dark:bg-orange-950/10 border border-orange-200 dark:border-orange-900/30 rounded-[2rem] p-8 space-y-6">
-                                    <div className="flex items-center gap-3"><div className="p-3 bg-orange-500 text-white rounded-xl"><Calendar size={20}/></div><h3 className="text-xl font-black text-orange-700 dark:text-orange-400 uppercase italic">Ausencias</h3></div>
-                                    <div className="space-y-3">
-                                        {finalReportData.detailedDays.filter(d => d.status === 'falta').map(f => (
-                                            <div key={f.date} className="flex items-center justify-between p-4 bg-white dark:bg-background/40 border border-orange-200 rounded-2xl shadow-sm">
-                                                <span className="text-sm font-black text-orange-600">{f.date} ({f.dayName.substring(0, 2)})</span>
-                                                <span className={`text-[9px] font-bold uppercase italic ${f.isJustified ? 'text-green-600' : 'text-red-500'}`}>{f.isJustified ? 'Justificada' : 'Sin Justificar'}</span>
-                                            </div>
-                                        ))}
-                                        {finalReportData.unjustifiedAbsencesCount === 0 && <p className="text-xs font-bold text-muted uppercase italic text-center py-4">Perfecta asistencia</p>}
-                                    </div>
-                                    <div className="pt-4 border-t border-orange-200 flex justify-between items-center"><span className="text-sm font-black text-text">Total Faltas: {finalReportData.detailedDays.filter(d => d.status === 'falta').length}</span><span className="text-[10px] font-black bg-orange-500/10 text-orange-600 px-3 py-1 rounded-full uppercase">De {finalReportData.totalWorkDays} laborales</span></div>
-                                </div>
-
-                                <div className="bg-background/50 border border-surfaceHighlight rounded-[2rem] p-8 space-y-6">
-                                    <div className="flex items-center gap-3"><div className="p-3 bg-primary/10 text-primary rounded-xl"><Zap size={20}/></div><div className="flex flex-col"><h3 className="text-lg font-black text-text uppercase italic leading-none">Estado Bono</h3><span className="text-[9px] font-black text-muted uppercase tracking-widest mt-1">{finalReportData.bonusStatus}</span></div></div>
-                                    {finalReportData.bonusAmount > 0 ? (
-                                        <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-2xl flex items-center gap-3 text-green-600"><CheckCircle2 size={18} /><p className="text-[10px] font-black uppercase">¡Califica para el bono del periodo!</p></div>
-                                    ) : (
-                                        <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-start gap-3 text-red-600"><AlertTriangle size={18} className="shrink-0" /><p className="text-[10px] font-black uppercase leading-relaxed">{finalReportData.bonusReason}</p></div>
-                                    )}
-                                </div>
-                            </div>
-
-                            <div className="lg:col-span-8 bg-background/50 border border-surfaceHighlight rounded-[2rem] overflow-hidden">
-                                <div className="p-8 border-b border-surfaceHighlight bg-surfaceHighlight/10 flex justify-between items-center"><h3 className="text-xl font-black text-text uppercase italic">Desglose por Día</h3><div className="flex gap-4 text-[9px] font-black text-muted uppercase tracking-widest"><span>F: Feriado</span><span>J: Justificado</span></div></div>
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-left">
-                                        <thead>
-                                            <tr className="text-[10px] font-black text-muted uppercase tracking-widest border-b border-surfaceHighlight">
-                                                <th className="p-5 pl-8">Fecha</th>
-                                                <th className="p-4">Día</th>
-                                                <th className="p-4">Entrada</th>
-                                                <th className="p-4">Salida</th>
-                                                <th className="p-4 text-center">Horas</th>
-                                                <th className="p-4">Estado</th>
-                                                <th className="p-4 text-center">F</th>
-                                                <th className="p-4 text-center">J</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-surfaceHighlight">
-                                            {finalReportData.detailedDays.map((day, idx) => (
-                                                <tr key={idx} className="hover:bg-primary/5 transition-colors group">
-                                                    <td className="p-5 pl-8 text-sm font-black text-text">{day.date}</td>
-                                                    <td className="p-4 text-xs font-bold text-muted uppercase">{day.dayName.substring(0, 2)}</td>
-                                                    <td className="p-4 text-sm font-bold text-text">{day.entry || '--:--'}</td>
-                                                    <td className="p-4 text-sm font-bold text-text">{day.exit || '--:--'}</td>
-                                                    <td className="p-4 text-center font-black text-sm">{day.hours > 0 ? day.hours.toFixed(2) : '-'}</td>
-                                                    <td className="p-4">
-                                                        <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase border
-                                                            ${day.status.includes('trabajado') ? 'bg-green-500/10 text-green-600 border-green-200' :
-                                                              day.status === 'falta' ? 'bg-red-500/10 text-red-600 border-red-200' :
-                                                              day.status === 'no laboral' ? 'bg-muted/10 text-muted border-muted/20' :
-                                                              'bg-orange-500/10 text-orange-600 border-orange-200'}
-                                                        `}>
-                                                            {day.status}
-                                                        </span>
-                                                    </td>
-                                                    <td className="p-4 text-center">
-                                                        <button onClick={() => toggleCheck(idx, 'isFeriado')} className={`p-1.5 rounded-lg border transition-all ${day.isFeriado ? 'bg-primary text-white border-primary' : 'bg-surface border-surfaceHighlight text-muted hover:border-primary/50'}`}>
-                                                            {day.isFeriado ? <CheckCircle2 size={16}/> : <Minus size={16} className="opacity-20"/>}
-                                                        </button>
-                                                    </td>
-                                                    <td className="p-4 text-center">
-                                                        <button onClick={() => toggleCheck(idx, 'isJustified')} className={`p-1.5 rounded-lg border transition-all ${day.isJustified ? 'bg-indigo-600 text-white border-indigo-700' : 'bg-surface border-surfaceHighlight text-muted hover:border-indigo-500/50'}`}>
-                                                            {day.isJustified ? <CheckCircle2 size={16}/> : <Minus size={16} className="opacity-20"/>}
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
+                        <div className="p-8 bg-background/50 border-t border-surfaceHighlight">
+                            <button onClick={() => setSelectedPerfDetail(null)} className="w-full py-5 bg-slate-900 text-white rounded-3xl font-black text-xs uppercase tracking-widest transition-all hover:bg-black active:scale-95">Cerrar Detalle</button>
                         </div>
                     </div>
                 </div>
             )}
+        </div>
+    );
+};
+
+const DetailMetricItem: React.FC<{ label: string, value: string | number, points: string, icon: React.ReactNode }> = ({ label, value, points, icon }) => (
+    <div className="bg-background border border-surfaceHighlight p-5 rounded-2xl flex flex-col gap-2 shadow-sm">
+        <div className="flex items-center justify-between">
+            {icon}
+            <span className={`text-[10px] font-black uppercase ${points.includes('+') ? 'text-green-600' : points === '0' ? 'text-muted' : 'text-red-600'}`}>{points} pts</span>
+        </div>
+        <div>
+            <p className="text-[9px] font-black text-muted uppercase tracking-tight">{label}</p>
+            <p className="text-xl font-black text-text">{value}</p>
+        </div>
+    </div>
+);
+
+const SummaryItem: React.FC<{ label: string, value: string, color: string }> = ({ label, value, color }) => (
+    <div className="flex flex-col gap-1">
+        <span className="text-[10px] font-bold text-muted uppercase tracking-widest">{label}</span>
+        <span className={`text-xl font-black uppercase tracking-tighter ${color}`}>{value}</span>
+    </div>
+);
+
+const RankingStat: React.FC<{ label: string, value: string | number, color: string }> = ({ label, value, color }) => (
+    <div className="bg-background/40 p-3 rounded-2xl flex flex-col border border-surfaceHighlight/50">
+        <span className="text-[8px] font-black text-muted uppercase tracking-tight mb-1">{label}</span>
+        <span className={`text-sm font-black ${color}`}>{value}</span>
+    </div>
+);
+
+const getStatusStyle = (status: string) => {
+    if (status.includes('FERIADO')) return 'bg-orange-500/10 text-orange-600 border-orange-200';
+    if (status.includes('TRABAJADO')) return 'bg-green-500/10 text-green-600 border-green-200';
+    if (status === 'FALTA JUSTIFICADA') return 'bg-blue-500/10 text-blue-600 border-blue-200';
+    if (status.includes('TARDE') || status === 'INCOMPLETO') return 'bg-yellow-500/10 text-yellow-600 border-yellow-200';
+    if (status === 'FALTA' || status.includes('REGISTRO INCOMPLETO')) return 'bg-red-500/10 text-red-600 border-red-200';
+    if (status === 'NO TRABAJA') return 'bg-surfaceHighlight text-muted border-surfaceHighlight opacity-40';
+    return 'bg-surfaceHighlight text-muted border-surfaceHighlight';
+};
+
+const SedeBonusCard: React.FC<{ location: string, settings?: GlobalAttendanceSettings, onSave: () => void }> = ({ location, settings, onSave }) => {
+    const [b1, setB1] = useState(settings?.bonus_1 || 30000);
+    const [b2, setB2] = useState(settings?.bonus_2 || 20000);
+    const [isSaving, setIsSaving] = useState(false);
+
+    const handleSave = async () => {
+        setIsSaving(true);
+        const { error } = await supabase.from('attendance_settings').upsert({ location, bonus_1: b1, bonus_2: b2 });
+        if (!error) onSave();
+        setIsSaving(false);
+    };
+
+    return (
+        <div className="bg-surface border border-surfaceHighlight rounded-[2.5rem] p-8 space-y-6 shadow-sm">
+            <h3 className="text-xl font-black text-text uppercase italic leading-none">{location}</h3>
+            <div className="space-y-4">
+                <div className="space-y-1">
+                    <label className="text-[10px] font-black text-muted uppercase ml-1">Bono 1 (Excelencia)</label>
+                    <input type="number" value={b1} onChange={e => setB1(parseFloat(e.target.value)||0)} className="w-full bg-white dark:bg-background border border-surfaceHighlight rounded-2xl p-4 font-black text-primary shadow-sm" />
+                </div>
+                <div className="space-y-1">
+                    <label className="text-[10px] font-black text-muted uppercase ml-1">Bono 2 (Cumplimiento)</label>
+                    <input type="number" value={b2} onChange={e => setB2(parseFloat(e.target.value)||0)} className="w-full bg-white dark:bg-background border border-surfaceHighlight rounded-2xl p-4 font-black text-text shadow-sm" />
+                </div>
+            </div>
+            <button onClick={handleSave} disabled={isSaving} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black uppercase text-xs shadow-lg active:scale-95 transition-all">
+                {isSaving ? <Loader2 size={16} className="animate-spin mx-auto"/> : 'Actualizar Bonos'}
+            </button>
         </div>
     );
 };

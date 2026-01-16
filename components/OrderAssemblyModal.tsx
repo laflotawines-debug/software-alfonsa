@@ -143,7 +143,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(22);
         doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-        doc.text('ALFONSA DISTRIBUIDORA', 20, 25);
+        doc.text('DISTRIBUIDORA DE BEBIDAS', 20, 25);
 
         doc.setFontSize(10);
         doc.setTextColor(textColor[0], textColor[1], textColor[2]);
@@ -285,7 +285,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
             if (isMobile && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
                 await navigator.share({
                     files: [file],
-                    title: 'Factura Alfonsa',
+                    title: 'Factura Distribuidora',
                     text: message,
                 });
             } else {

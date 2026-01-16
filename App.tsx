@@ -158,17 +158,31 @@ export default function App() {
         const { data: dbOrders } = await supabase.from('orders').select('*, order_items(*)');
         if (dbOrders) {
             const mappedOrders: DetailedOrder[] = dbOrders.map(o => ({
-                id: o.id, displayId: o.display_id, clientName: o.client_name, zone: o.zone, 
-                status: o.status as OrderStatus, createdDate: new Date(o.created_at).toLocaleDateString('es-AR'), 
-                total: Number(o.total || 0), observations: o.observations, payment_method: o.payment_method, 
-                assemblerId: o.assembler_id, assemblerName: o.assembler_name, controllerId: o.controller_id, 
-                controllerName: o.controller_name, invoicerName: o.invoicer_name, history: o.history || [], 
+                id: o.id, 
+                displayId: o.display_id, 
+                clientName: o.client_name, 
+                zone: o.zone, 
+                status: o.status as OrderStatus, 
+                createdDate: new Date(o.created_at).toLocaleDateString('es-AR'), 
+                total: Number(o.total || 0), 
+                observations: o.observations, 
+                paymentMethod: o.payment_method, // Se corrige el nombre de la propiedad a camelCase
+                assemblerId: o.assembler_id, 
+                assemblerName: o.assembler_name, 
+                controllerId: o.controller_id, 
+                controllerName: o.controller_name, 
+                invoicerName: o.invoicer_name, 
+                history: o.history || [], 
                 productCount: o.order_items?.length || 0,
                 products: (o.order_items || []).map((item: any) => ({
-                    code: item.code, name: item.name, originalQuantity: item.original_quantity, 
+                    code: item.code, 
+                    name: item.name, 
+                    originalQuantity: item.original_quantity, 
                     quantity: item.quantity, 
                     shippedQuantity: item.shipped_quantity, 
-                    unitPrice: Number(item.unit_price || 0), subtotal: Number(item.subtotal || 0), isChecked: item.is_checked
+                    unitPrice: Number(item.unit_price || 0), 
+                    subtotal: Number(item.subtotal || 0), 
+                    isChecked: item.is_checked
                 }))
             }));
             setOrders(mappedOrders.sort((a, b) => b.id.localeCompare(a.id)));
@@ -604,7 +618,7 @@ export default function App() {
                 {currentView === View.ORDER_SHEET && (
                     <OrderSheet currentUser={currentUser} orders={orders} trips={trips} onSaveTrip={handleSaveTrip} onDeleteTrip={handleDeleteTrip} selectedTripId={selectedTripId} onSelectTrip={setSelectedTripId} />
                 )}
-                {currentView === View.ATTENDANCE && <Attendance />}
+                {currentView === View.ATTENDANCE && <Attendance currentUser={currentUser} />}
                 {currentView === View.CREATE_BUDGET && <CreateBudget onNavigate={setCurrentView} onCreateOrder={handleCreateOrder} currentUser={currentUser} />}
                 {currentView === View.PAYMENTS_OVERVIEW && (
                     <PaymentsOverview 
