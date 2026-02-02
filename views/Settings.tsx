@@ -42,7 +42,7 @@ import {
 } from 'lucide-react';
 import { User, MasterProduct, AppPermission, View } from '../types';
 import { supabase } from '../supabase';
-import { SYSTEM_NAV_STRUCTURE } from '../logic';
+import { SYSTEM_NAV_STRUCTURE, EXTRA_PERMISSIONS } from '../logic';
 import * as XLSX from 'xlsx';
 
 interface SettingsProps {
@@ -118,6 +118,7 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
         setIsPermsLoading(true);
         try {
             const keysToSync: any[] = [];
+            
             SYSTEM_NAV_STRUCTURE.forEach(item => {
                 if (item.permission && item.permission !== 'tools.sql_editor') {
                     keysToSync.push({ key: item.permission, module: item.module, label: item.label });
@@ -130,6 +131,11 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                     });
                 }
             });
+
+            EXTRA_PERMISSIONS.forEach(perm => {
+                 keysToSync.push({ key: perm.key, module: perm.module, label: perm.label });
+            });
+
             const { error } = await supabase.from('app_permissions').upsert(keysToSync, { onConflict: 'key' });
             if (error) throw error;
             await fetchPermData();

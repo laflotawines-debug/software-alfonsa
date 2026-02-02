@@ -30,7 +30,10 @@ import {
     MinusCircle,
     LayoutList,
     Activity,
-    ChevronRight
+    ChevronRight,
+    PlusCircle,
+    Coins,
+    ChevronLeft
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { User, WorkerAttendanceConfig, GlobalAttendanceSettings } from '../types';
@@ -63,7 +66,7 @@ interface ParsedDay {
     status: string;
     isEarly: boolean;
     isLate: boolean;
-    minutesLate: number; // Para tracking interno
+    minutesLate: number;
 }
 
 interface PerformanceRecord {
@@ -95,7 +98,11 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
     const [parsedReport, setParsedReport] = useState<ParsedDay[]>([]);
     const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
     const [perfSaveStatus, setPerfSaveStatus] = useState<'idle' | 'saving' | 'success'>('idle');
+    
+    // Estados financieros locales (transitorios para el cálculo)
     const [debtAmount, setDebtAmount] = useState<number>(0);
+    const [extraHoursInput, setExtraHoursInput] = useState<number>(0);
+    const [manualExtraAmount, setManualExtraAmount] = useState<number>(0);
 
     const [selectedPerfDetail, setSelectedPerfDetail] = useState<PerformanceRecord | null>(null);
 
@@ -116,7 +123,8 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                 const configMap: Record<string, WorkerAttendanceConfig> = {};
                 configRes.data.forEach((c: any) => { configMap[c.user_id] = c; });
                 setWorkerConfigs(configMap);
-                if (profRes.data && profRes.data.length > 0 && !selectedWorkerId) {
+                // NOTA: En móvil no pre-seleccionamos para mostrar la lista primero
+                if (profRes.data && profRes.data.length > 0 && !selectedWorkerId && window.innerWidth >= 768) {
                     setSelectedWorkerId(profRes.data[0].id);
                 }
             }
@@ -136,6 +144,13 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
     };
 
     useEffect(() => { loadData(); }, []);
+
+    // Resetear valores temporales al cambiar de trabajador
+    useEffect(() => {
+        setDebtAmount(0);
+        setExtraHoursInput(0);
+        setManualExtraAmount(0);
+    }, [selectedWorkerId]);
 
     const selectedWorker = useMemo(() => 
         armadores.find(w => w.id === selectedWorkerId), 
@@ -216,10 +231,15 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                     results.push({ date, dayName: dayFull, entry, exit, observation: "", isFeriado: false, isJustified: false, hours: 0, penaltyHours: 0, status: '', isEarly: false, isLate: false, minutesLate: 0 });
                 }
             } else {
-                const llerenaRegex = /^(\d{2})\s+([A-Z][a-z])\s+([\d:]*)\s*([\d:]*)/;
+                const llerenaRegex = /^(\d{2})\s+([A-Z][a-z])(.*)/;
                 const match = trimmed.match(llerenaRegex);
                 if (match) {
-                    const date = match[1]; const dayShort = match[2]; const entry = match[3] || ""; const exit = match[4] || "";
+                    const date = match[1]; 
+                    const dayShort = match[2]; 
+                    const timesMatch = match[3].match(/(\d{1,2}:\d{2})/g) || [];
+                    const entry = timesMatch.length > 0 ? timesMatch[0] : ""; 
+                    const exit = timesMatch.length > 1 ? timesMatch[1] : "";
+                    
                     results.push({ date, dayName: DAY_MAP[dayShort] || dayShort, entry, exit, observation: "", isFeriado: false, isJustified: false, hours: 0, penaltyHours: 0, status: '', isEarly: false, isLate: false, minutesLate: 0 });
                 }
             }
@@ -296,21 +316,18 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                 hours = (exitMins! - entryMins!) / 60;
                 diffMinutes = entryMins! - targetEntry;
 
-                // REGLA: Llegar 10 minutos antes (o más temprano) -> Cuenta para Bono 1
                 if (diffMinutes <= -10) {
                     isEarly = true;
                 }
 
-                // REGLA: Llegada Tarde estricta (para bonos)
                 if (diffMinutes > 0) {
-                    isLate = true; // Marca visual: llegó tarde al horario (afecta bono)
-                    
-                    // REGLA: Tolerancia hasta 10 minutos inclusive para PENALIZACIÓN DE HORA
+                    isLate = true;
+                    // REGLA: Si llega > 10 min tarde, se penaliza hora Y se pierde bono.
+                    // Si llega 1-10 min tarde, NO se penaliza hora, pero afecta bono si no es excelencia.
                     if (diffMinutes <= 10) {
-                        status = "TARDE (TOLERANCIA)"; // No descuenta hora, pero "rompe" el perfecto para bono 2 si no se justifica
+                        status = "TARDE (TOLERANCIA)"; 
                     } else {
-                        // Minuto 11 en adelante -> Descuento de hora
-                        totalLateCount++; // Cuenta como incidencia grave en contadores
+                        totalLateCount++; // Penalización grave
                         if (diffMinutes >= 120) { 
                             penaltyHours = 4;
                             status = "TARDE (>2H) -4Hs";
@@ -318,14 +335,12 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                             penaltyHours = 2;
                             status = "TARDE (>1H) -2Hs";
                         } else {
-                            // Entre 11 y 59 minutos
                             penaltyHours = 1;
                             status = "TARDE (>10m) -1Hs";
                         }
                     }
                 }
             } else if ((day.entry && !day.exit) || (!day.entry && day.exit)) {
-                // REGLA: No registra ingreso (o incompleto) -> -6 horas
                 status = "REGISTRO INCOMPLETO (-6Hs)";
                 penaltyHours = 6;
                 totalLateCount++; 
@@ -337,7 +352,9 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                     } else { 
                         status = "FALTA"; 
                     }
-                } else { status = "NO TRABAJA"; }
+                } else { 
+                    status = "NO TRABAJA"; 
+                }
             }
 
             totalAccumulatedHours += (hours - penaltyHours);
@@ -349,55 +366,69 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
         const roundedHours = Math.round(totalAccumulatedHours);
         const subtotal = roundedHours * currentConfig.hourly_rate;
 
-        // Lógica de Bonos Actualizada
+        // LÓGICA DE BONOS
         const workedDays = detailedDays.filter(d => d.entry && d.exit);
-        
-        // Bono 1: Asistencia Perfecta, Sin Faltas, Sin Tardanzas Estrictas (>0 min), SIEMPRE TEMPRANO (-10m)
-        // NOTA: Si llega 1 min tarde, pierde Bono 1.
-        const isAlwaysEarly10Min = workedDays.length > 0 && workedDays.every(d => d.isEarly);
-        const anyAbsenceOrIncomplete = detailedDays.some(d => d.status === 'FALTA' || d.status.includes('INCOMPLETO'));
-        
-        // Bono 2: Se pierde si hay llegadas tarde (>0 min) NO justificadas o faltas NO justificadas.
-        // Tolerancia de 10 min sirve para NO descontar hora, pero cuenta como tarde para el bono.
-        const hasUnjustifiedIssues = detailedDays.some(d => {
-            // Si llegó tarde (>0 min) y NO está justificado -> Pierde
-            if (d.minutesLate > 0 && !d.isJustified) return true;
-            // Si faltó y NO está justificado -> Pierde
-            if (d.status === 'FALTA') return true;
-            // Registro incompleto -> Pierde
-            if (d.status.includes('INCOMPLETO')) return true;
+        const isAlwaysEarly = workedDays.length > 0 && workedDays.every(d => d.isEarly);
+        const hasFatalIssues = detailedDays.some(d => {
+            if (d.minutesLate > 10 && !d.isJustified) return true;
+            if ((d.status === 'FALTA' || d.status.includes('INCOMPLETO')) && !d.isJustified) return true;
             return false;
         });
+        const hasJustifiedAbsence = detailedDays.some(d => d.status === 'FALTA JUSTIFICADA');
+        const hasJustifiedLateness = detailedDays.some(d => d.minutesLate > 10 && d.isJustified);
 
         let bonusAmount = 0;
         let bonusStatus = "SIN BONO";
 
-        if (!anyAbsenceOrIncomplete && isAlwaysEarly10Min) {
-            // Caso ideal: Siempre temprano (-10m), nunca tarde, nunca falta.
-            bonusAmount = settings.bonus_1;
-            bonusStatus = "BONO EXCELENCIA (1)";
-        } else if (!hasUnjustifiedIssues) {
-            // Caso cumplimiento: Pudo llegar tarde (dentro o fuera de tolerancia) pero JUSTIFICADO.
-            // O faltó pero JUSTIFICADO.
-            // O llegó puntual (entre -9 y 0).
-            bonusAmount = settings.bonus_2;
-            bonusStatus = "BONO CUMPLIMIENTO (2)";
+        if (!hasFatalIssues) {
+            if (isAlwaysEarly && !hasJustifiedAbsence && !hasJustifiedLateness) {
+                bonusAmount = settings.bonus_1;
+                bonusStatus = "BONO EXCELENCIA (1)";
+            } else {
+                bonusAmount = settings.bonus_2;
+                bonusStatus = "BONO CUMPLIMIENTO (2)";
+            }
         }
+
+        // CÁLCULO DE EXTRAS Y FINAL
+        const calculatedExtraFromHours = extraHoursInput * currentConfig.hourly_rate;
+        const totalAdditions = calculatedExtraFromHours + manualExtraAmount;
+        const totalToPay = subtotal + bonusAmount + totalAdditions - debtAmount;
+
+        // LÓGICA DE MÉTRICAS
+        const markedCount = detailedDays.filter(d => {
+            if (d.entry && d.exit) return true;
+            if (d.status === 'FERIADO') return true;
+            if (d.isJustified) return true;
+            if (d.status === 'NO TRABAJA') return true;
+            return false;
+        }).length;
 
         const metrics = {
             user_id: selectedWorkerId,
             early_arrivals: detailedDays.filter(d => d.isEarly).length,
-            late_arrivals: totalLateCount, // Solo cuenta las > 10 min para estadísticas graves
+            late_arrivals: totalLateCount, 
             justified_count: detailedDays.filter(d => d.isJustified && (d.isLate || d.status.includes('FALTA'))).length,
             total_issues: detailedDays.filter(d => d.minutesLate > 0 || d.status === 'FALTA' || d.status.includes('INCOMPLETO')).length,
             holidays_worked: detailedDays.filter(d => d.status === 'FERIADO TRABAJADO').length,
             absences: detailedDays.filter(d => d.status === 'FALTA').length,
             scheduled_days: detailedDays.filter(d => currentConfig.work_days.includes(d.dayName)).length,
-            marked_days: detailedDays.filter(d => d.entry && d.exit).length
+            marked_days: markedCount
         };
 
-        return { detailedDays, totalHours: roundedHours, totalPenaltyHours, totalLateCount, subtotal, bonusAmount, bonusStatus, totalToPay: subtotal + bonusAmount - debtAmount, metrics };
-    }, [parsedReport, currentConfig, globalSettings, debtAmount]);
+        return { 
+            detailedDays, 
+            totalHours: roundedHours, 
+            totalPenaltyHours, 
+            totalLateCount, 
+            subtotal, 
+            bonusAmount, 
+            bonusStatus, 
+            totalToPay, 
+            metrics,
+            calculatedExtraFromHours
+        };
+    }, [parsedReport, currentConfig, globalSettings, debtAmount, extraHoursInput, manualExtraAmount]);
 
     const toggleFlag = (idx: number, field: 'isFeriado' | 'isJustified') => {
         const dayToFlag = finalReportData?.detailedDays[idx];
@@ -447,62 +478,51 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
 
     const rankingSorted = useMemo(() => {
         return [...performanceHistory].map(p => {
-            // NUEVA LÓGICA DE PUNTOS
             let score = 0;
-            
-            // Temprano: +1 punto por día
             score += (p.early_arrivals * 1);
-            
-            // Tarde: -1 punto por día
             score -= (p.late_arrivals * 1);
-            
-            // Ausencias: -1 punto por cada una
             score -= (p.absences * 1);
-            
-            // Justificación > 80% = +1 punto (si no, -1)
-            // Se calcula sobre el total de incidencias (tardanzas)
             if (p.late_arrivals > 0) {
                 const justRatio = p.justified_count / p.late_arrivals;
                 if (justRatio >= 0.8) score += 1;
                 else score -= 1;
             }
-
-            // Marcado de asistencia:
-            const markingEff = p.scheduled_days > 0 ? (p.marked_days / p.scheduled_days) : 0;
-            if (markingEff === 1) {
-                score += 2; // 100% = +2
-            } else if (markingEff > 0.7) {
-                score += 1; // +70% = +1
+            const baseDays = 12; 
+            const markingEff = (p.marked_days / (p.scheduled_days || baseDays));
+            
+            if (markingEff >= 1) {
+                score += 2;
+            } else if (markingEff > 0.8) {
+                score += 1;
             } else if (markingEff < 0.5) {
-                score -= 1; // -50% = -1
+                score -= 1;
             }
-
             return { ...p, score };
         }).sort((a, b) => (b.score || 0) - (a.score || 0));
     }, [performanceHistory]);
 
     return (
-        <div className="flex flex-col h-full animate-in fade-in duration-500 overflow-hidden -m-8">
-            <div className="bg-surface border-b border-surfaceHighlight px-8 flex justify-between items-center shrink-0">
-                <div className="flex gap-8">
-                    <button onClick={() => setActiveTab('workers')} className={`py-4 text-sm font-bold transition-all border-b-2 ${activeTab === 'workers' || activeTab === 'report' ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-text'}`}>
-                        <span className="flex items-center gap-2"><Users size={18}/> Gestión de Trabajadores</span>
+        <div className="flex flex-col h-full animate-in fade-in duration-500 overflow-hidden -m-4 md:-m-8">
+            <div className="bg-surface border-b border-surfaceHighlight px-4 md:px-8 flex justify-between items-center shrink-0">
+                <div className="flex gap-4 md:gap-8 overflow-x-auto no-scrollbar">
+                    <button onClick={() => setActiveTab('workers')} className={`py-4 text-sm font-bold transition-all border-b-2 whitespace-nowrap ${activeTab === 'workers' || activeTab === 'report' ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-text'}`}>
+                        <span className="flex items-center gap-2"><Users size={18}/> Gestión Trabajadores</span>
                     </button>
-                    <button onClick={() => setActiveTab('settings')} className={`py-4 text-sm font-bold transition-all border-b-2 ${activeTab === 'settings' ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-text'}`}>
+                    <button onClick={() => setActiveTab('settings')} className={`py-4 text-sm font-bold transition-all border-b-2 whitespace-nowrap ${activeTab === 'settings' ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-text'}`}>
                         <span className="flex items-center gap-2"><Settings size={18}/> Ajustes Globales</span>
                     </button>
                 </div>
                 {isVale && (
                     <button onClick={() => setActiveTab('performance')} className={`flex items-center gap-2 px-6 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-sm ${activeTab === 'performance' ? 'bg-primary text-white shadow-primary/20' : 'bg-surfaceHighlight text-muted hover:text-text'}`}>
-                        <Trophy size={16}/> Rendimiento de Asistencias
+                        <Trophy size={16}/> Rendimiento
                     </button>
                 )}
             </div>
 
-            <div className="flex-1 flex overflow-hidden">
+            <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0">
                 {activeTab === 'workers' && (
                     <>
-                        <div className="w-80 border-r border-surfaceHighlight bg-background/30 flex flex-col shrink-0">
+                        <div className={`w-full md:w-80 border-b md:border-b-0 md:border-r border-surfaceHighlight bg-background/30 flex flex-col shrink-0 ${selectedWorkerId ? 'hidden md:flex' : 'flex flex-1 min-h-0'}`}>
                             <div className="p-6 border-b border-surfaceHighlight flex justify-between items-center">
                                 <h3 className="text-[10px] font-black text-muted uppercase tracking-[0.2em]">Listado de Personal</h3>
                             </div>
@@ -511,7 +531,7 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                                     const isSelected = selectedWorkerId === w.id;
                                     const config = workerConfigs[w.id];
                                     return (
-                                        <button key={w.id} onClick={() => { setSelectedWorkerId(w.id); setRawReport(''); }} className={`w-full flex items-center justify-between p-4 rounded-2xl transition-all ${isSelected ? 'bg-primary text-white shadow-xl scale-[1.02]' : 'hover:bg-surfaceHighlight text-text'}`}>
+                                        <button key={w.id} onClick={() => { setSelectedWorkerId(w.id); setRawReport(''); }} className={`w-full flex items-center justify-between p-4 rounded-2xl transition-all ${isSelected ? 'bg-primary text-white shadow-xl scale-[1.02]' : 'hover:bg-surfaceHighlight text-text bg-surface md:bg-transparent shadow-sm md:shadow-none'}`}>
                                             <div className="flex items-center gap-3">
                                                 <div className={`h-10 w-10 rounded-xl overflow-hidden flex items-center justify-center font-black text-[10px] border ${isSelected ? 'bg-white/20 border-white/30' : 'bg-surfaceHighlight/50 border-surfaceHighlight'}`}>
                                                     {w.avatar_url ? <img src={w.avatar_url} className="h-full w-full object-cover" /> : w.name.substring(0, 2).toUpperCase()}
@@ -530,16 +550,21 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                             </div>
                         </div>
 
-                        <div className="flex-1 overflow-y-auto p-8 md:p-12 bg-white dark:bg-background">
+                        <div className={`flex-1 overflow-y-auto p-4 md:p-8 md:p-12 bg-white dark:bg-background ${!selectedWorkerId ? 'hidden md:block' : 'block'}`}>
                             {currentConfig && selectedWorker ? (
-                                <div className="max-w-3xl space-y-12 animate-in fade-in slide-in-from-bottom-4">
+                                <div className="max-w-3xl space-y-8 md:space-y-12 animate-in fade-in slide-in-from-right-4 md:slide-in-from-bottom-4">
+                                    {/* Botón Volver (Solo Móvil) */}
+                                    <button onClick={() => setSelectedWorkerId(null)} className="md:hidden flex items-center gap-2 text-muted hover:text-text transition-colors text-xs font-black uppercase tracking-widest mb-4">
+                                        <ChevronLeft size={16} /> Volver al Listado
+                                    </button>
+
                                     <div className="flex items-center gap-6">
-                                        <div className="h-24 w-24 rounded-[2.5rem] overflow-hidden border-4 border-surfaceHighlight shadow-2xl bg-background flex items-center justify-center">
+                                        <div className="h-24 w-24 rounded-[2.5rem] overflow-hidden border-4 border-surfaceHighlight shadow-2xl bg-background flex items-center justify-center shrink-0">
                                             {selectedWorker.avatar_url ? <img src={selectedWorker.avatar_url} className="h-full w-full object-cover" /> : <UserIcon size={48} className="text-muted" />}
                                         </div>
                                         <div>
-                                            <h2 className="text-4xl font-black text-text tracking-tighter flex items-center gap-3 uppercase italic">{selectedWorker.name}</h2>
-                                            <p className="text-muted text-sm font-medium mt-1 uppercase tracking-wider">Configuración individual de jornada y compensación.</p>
+                                            <h2 className="text-3xl md:text-4xl font-black text-text tracking-tighter flex items-center gap-3 uppercase italic leading-none">{selectedWorker.name}</h2>
+                                            <p className="text-muted text-sm font-medium mt-1 uppercase tracking-wider">Configuración individual.</p>
                                         </div>
                                     </div>
 
@@ -568,7 +593,7 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                                                     <button 
                                                         key={d.key} 
                                                         onClick={() => toggleDay(d.key)} 
-                                                        className={`px-6 py-3 rounded-2xl text-xs font-bold transition-all border ${currentConfig.work_days.includes(d.key) ? 'bg-primary/5 border-primary text-primary shadow-sm' : 'bg-white dark:bg-background text-muted border-surfaceHighlight hover:bg-surfaceHighlight/50'}`}
+                                                        className={`px-4 md:px-6 py-3 rounded-2xl text-[10px] md:text-xs font-bold transition-all border ${currentConfig.work_days.includes(d.key) ? 'bg-primary/5 border-primary text-primary shadow-sm' : 'bg-white dark:bg-background text-muted border-surfaceHighlight hover:bg-surfaceHighlight/50'}`}
                                                     >
                                                         {d.short}
                                                     </button>
@@ -634,26 +659,26 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                 )}
 
                 {activeTab === 'report' && finalReportData && (
-                    <div className="flex-1 bg-background p-8 md:p-12 overflow-y-auto animate-in zoom-in-95">
+                    <div className="flex-1 bg-background p-4 md:p-8 md:p-12 overflow-y-auto animate-in zoom-in-95">
                         <div className="max-w-6xl mx-auto space-y-10 pb-20">
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
                                 <div>
                                     <p className="text-primary font-black text-[10px] uppercase tracking-[0.3em] mb-1">Cálculo de Quincena</p>
-                                    <h1 className="text-4xl font-black text-text tracking-tighter uppercase italic leading-none">Informe Detallado</h1>
+                                    <h1 className="text-3xl md:text-4xl font-black text-text tracking-tighter uppercase italic leading-none">Informe Detallado</h1>
                                     <p className="text-muted text-sm font-medium mt-2 uppercase tracking-wide italic">Resumen de 14 días — {selectedWorker?.name}</p>
                                 </div>
-                                <div className="flex gap-3 w-full md:w-auto">
+                                <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
                                     {isVale && (
                                         <button onClick={handleSavePerformance} disabled={perfSaveStatus === 'saving'} className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-black text-xs transition-all shadow-lg ${perfSaveStatus === 'success' ? 'bg-green-600 text-white shadow-green-900/20' : 'bg-primary text-white shadow-primary/20 hover:bg-primaryHover'}`}>
                                             {perfSaveStatus === 'saving' ? <Loader2 size={16} className="animate-spin"/> : perfSaveStatus === 'success' ? <CheckCircle2 size={16}/> : <Save size={16}/>}
-                                            {perfSaveStatus === 'success' ? 'Rendimiento Guardado' : 'Guardar Informe en Rendimiento'}
+                                            {perfSaveStatus === 'success' ? 'Rendimiento Guardado' : 'Guardar Rendimiento'}
                                         </button>
                                     )}
                                     <button onClick={() => window.print()} className="flex-1 md:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-surface border border-surfaceHighlight text-text font-bold text-xs shadow-sm hover:bg-surfaceHighlight transition-all"><FileText size={16}/> PDF</button>
                                 </div>
                             </div>
 
-                            <div className="bg-surface border border-surfaceHighlight rounded-3xl p-8 grid grid-cols-2 md:grid-cols-6 lg:grid-cols-8 gap-8 shadow-sm">
+                            <div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 md:p-8 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-8 shadow-sm">
                                 <SummaryItem label="Horas Totales" value={finalReportData.totalHours.toString()} color="text-text" />
                                 <SummaryItem label="Multa (Hs)" value={finalReportData.totalPenaltyHours.toString()} color="text-red-500" />
                                 <SummaryItem label="Tardanzas" value={finalReportData.totalLateCount.toString()} color="text-orange-500" />
@@ -663,22 +688,45 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                                     <span className="text-[10px] font-bold text-muted uppercase tracking-widest">Bono</span>
                                     <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border self-start ${finalReportData.bonusAmount > 0 ? 'bg-green-500/10 text-green-600 border-green-200' : 'bg-surfaceHighlight text-muted'}`}>{finalReportData.bonusStatus}</span>
                                 </div>
-                                <div className="flex flex-col gap-2">
-                                    <span className="text-[10px] font-bold text-muted uppercase tracking-widest">Deuda</span>
-                                    <input type="number" value={debtAmount} onChange={(e) => setDebtAmount(parseFloat(e.target.value) || 0)} className="w-full bg-background border border-surfaceHighlight rounded-lg p-2 text-xs font-black text-red-500 outline-none focus:border-red-500 shadow-sm" />
+                                <div className="col-span-2 lg:col-span-2 flex flex-col gap-4 bg-background/30 p-4 rounded-2xl border border-surfaceHighlight">
+                                    <div className="flex justify-between items-center border-b border-surfaceHighlight pb-2">
+                                        <h4 className="text-[10px] font-black text-primary uppercase flex items-center gap-2"><PlusCircle size={12}/> Ajustes y Adicionales</h4>
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                        <div className="flex flex-col gap-1 relative">
+                                            <span className="text-[9px] font-bold text-muted uppercase tracking-tighter">Horas Extras</span>
+                                            <input type="number" value={extraHoursInput} onChange={(e) => setExtraHoursInput(parseFloat(e.target.value) || 0)} className="w-full bg-surface border border-surfaceHighlight rounded-lg p-2 text-xs font-black text-text outline-none focus:border-green-500 text-center shadow-inner" placeholder="0" />
+                                            {finalReportData.calculatedExtraFromHours > 0 && (
+                                                <span className="absolute -bottom-4 left-0 w-full text-[9px] font-black text-green-600 text-center">+ $ {Math.round(finalReportData.calculatedExtraFromHours).toLocaleString()}</span>
+                                            )}
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                            <span className="text-[9px] font-bold text-muted uppercase tracking-tighter">Extra Manual $</span>
+                                            <input type="number" value={manualExtraAmount} onChange={(e) => setManualExtraAmount(parseFloat(e.target.value) || 0)} className="w-full bg-surface border border-surfaceHighlight rounded-lg p-2 text-xs font-black text-green-600 outline-none focus:border-green-500 text-center shadow-inner" placeholder="$ 0" />
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                            <span className="text-[9px] font-bold text-muted uppercase tracking-tighter text-red-500">Deuda</span>
+                                            <input type="number" value={debtAmount} onChange={(e) => setDebtAmount(parseFloat(e.target.value) || 0)} className="w-full bg-surface border border-surfaceHighlight rounded-lg p-2 text-xs font-black text-red-500 outline-none focus:border-red-500 text-center shadow-inner" placeholder="$ 0" />
+                                        </div>
+                                    </div>
                                 </div>
-                                <SummaryItem label="Neto a Pagar" value={`$ ${finalReportData.totalToPay.toLocaleString()}`} color="text-blue-600" />
+                                <div className="col-span-2 md:col-span-4 lg:col-span-8 flex justify-end pt-4 border-t border-surfaceHighlight">
+                                    <div className="flex flex-col items-end">
+                                        <span className="text-xs font-bold text-muted uppercase tracking-widest mb-1">Neto Final a Pagar</span>
+                                        <span className="text-4xl font-black text-green-600 tracking-tighter">$ {finalReportData.totalToPay.toLocaleString()}</span>
+                                    </div>
+                                </div>
                             </div>
 
-                            <div className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm">
-                                <div className="p-4 border-b border-surfaceHighlight bg-background/20 flex justify-between items-center">
+                            <div className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm overflow-x-auto">
+                                <div className="p-4 border-b border-surfaceHighlight bg-background/20 flex justify-between items-center min-w-[800px]">
                                     <h3 className="text-xs font-black uppercase text-muted tracking-[0.2em]">Detalle Diario</h3>
                                     <div className="flex gap-4 text-[9px] font-black text-muted uppercase tracking-widest">
                                         <span className="flex items-center gap-1"><Circle size={8} fill="#f97316" className="text-orange-500"/> Feriado</span>
                                         <span className="flex items-center gap-1"><Circle size={8} fill="#2563eb" className="text-blue-600"/> Justificado (Tardanza/Falta)</span>
                                     </div>
                                 </div>
-                                <table className="w-full text-left">
+                                <table className="w-full text-left min-w-[800px]">
                                     <thead className="bg-background/40 text-[10px] text-muted font-black uppercase tracking-widest border-b border-surfaceHighlight">
                                         <tr>
                                             <th className="p-4 pl-8">Fecha</th>
@@ -693,33 +741,35 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-surfaceHighlight">
-                                        {finalReportData.detailedDays.map((day, idx) => (
-                                            <tr key={idx} className={`hover:bg-primary/5 transition-colors ${day.status === 'NO TRABAJA' ? 'opacity-40' : ''}`}>
-                                                <td className={`p-4 pl-8 text-xs font-black ${day.status === 'FALTA' ? 'text-red-600' : 'text-text'}`}>{day.date}</td>
-                                                <td className="p-4 text-xs font-bold text-blue-600">{day.dayName.substring(0, 2)}</td>
-                                                <td className="p-4 text-xs font-medium text-text">{day.entry || '--:--'}</td>
-                                                <td className="p-4 text-xs font-medium text-text">{day.exit || '--:--'}</td>
-                                                <td className="p-4 text-center text-xs font-black">{day.hours > 0 ? (day.hours - day.penaltyHours).toFixed(2) : '-'}</td>
-                                                <td className="p-4 text-center">
-                                                    {day.penaltyHours > 0 && <span className="text-xs font-black text-red-500">-{day.penaltyHours} hs</span>}
-                                                </td>
-                                                <td className="p-4">
-                                                    <div className="flex flex-col gap-0.5">
-                                                        <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${getStatusStyle(day.status)}`}>{day.status}</span>
-                                                        {day.isEarly && <span className="text-[7px] text-green-600 font-bold uppercase ml-1 italic tracking-tighter">Llegó temprano</span>}
-                                                        {day.isLate && !day.isJustified && day.minutesLate <= 10 && <span className="text-[7px] text-orange-500 font-bold uppercase ml-1 italic tracking-tighter">Sin multa, pierde bono</span>}
-                                                        {day.isLate && !day.isJustified && day.minutesLate > 10 && <span className="text-[7px] text-red-500 font-bold uppercase ml-1 italic tracking-tighter">Tardanza sin justificar</span>}
-                                                        {day.isLate && day.isJustified && <span className="text-[7px] text-blue-500 font-bold uppercase ml-1 italic tracking-tighter">Tardanza Justificada</span>}
-                                                    </div>
-                                                </td>
-                                                <td className="p-4 text-center">
-                                                    <button onClick={() => toggleFlag(idx, 'isFeriado')} className={`w-5 h-5 rounded-full border-2 transition-all ${day.isFeriado ? 'bg-orange-500 border-orange-600 shadow-sm' : 'border-surfaceHighlight hover:border-orange-200'}`} />
-                                                </td>
-                                                <td className="p-4 text-center">
-                                                    <button onClick={() => toggleFlag(idx, 'isJustified')} className={`w-5 h-5 rounded-full border-2 transition-all ${day.isJustified ? 'bg-blue-600 border-blue-700 shadow-sm' : 'border-surfaceHighlight hover:border-blue-200'}`} />
-                                                </td>
-                                            </tr>
-                                        ))}
+                                        {finalReportData.detailedDays.map((day, idx) => {
+                                            return (
+                                                <tr key={idx} className={`hover:bg-primary/5 transition-colors ${day.status === 'NO TRABAJA' ? 'opacity-40' : ''}`}>
+                                                    <td className={`p-4 pl-8 text-xs font-black ${day.status === 'FALTA' ? 'text-red-600' : 'text-text'}`}>{day.date}</td>
+                                                    <td className="p-4 text-xs font-bold text-blue-600">{day.dayName.substring(0, 2)}</td>
+                                                    <td className="p-4 text-xs font-medium text-text">{day.entry || '--:--'}</td>
+                                                    <td className="p-4 text-xs font-medium text-text">{day.exit || '--:--'}</td>
+                                                    <td className="p-4 text-center text-xs font-black">{day.hours > 0 ? (day.hours - day.penaltyHours).toFixed(2) : '-'}</td>
+                                                    <td className="p-4 text-center">
+                                                        {day.penaltyHours > 0 && <span className="text-xs font-black text-red-500">-{day.penaltyHours} hs</span>}
+                                                    </td>
+                                                    <td className="p-4">
+                                                        <div className="flex flex-col gap-0.5">
+                                                            <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${getStatusStyle(day.status)}`}>{day.status}</span>
+                                                            {day.isEarly && <span className="text-[7px] text-green-600 font-bold uppercase ml-1 italic tracking-tighter">Llegó temprano</span>}
+                                                            {day.isLate && !day.isJustified && day.minutesLate <= 10 && <span className="text-[7px] text-orange-500 font-bold uppercase ml-1 italic tracking-tighter">Tarde (Tolerancia)</span>}
+                                                            {day.isLate && !day.isJustified && day.minutesLate > 10 && <span className="text-[7px] text-red-500 font-bold uppercase ml-1 italic tracking-tighter">Tardanza sin justificar</span>}
+                                                            {day.isLate && day.isJustified && <span className="text-[7px] text-blue-500 font-bold uppercase ml-1 italic tracking-tighter">Tardanza Justificada</span>}
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-4 text-center">
+                                                        <button onClick={() => toggleFlag(idx, 'isFeriado')} className={`w-5 h-5 rounded-full border-2 transition-all ${day.isFeriado ? 'bg-orange-500 border-orange-600 shadow-sm' : 'border-surfaceHighlight hover:border-orange-200'}`} />
+                                                    </td>
+                                                    <td className="p-4 text-center">
+                                                        <button onClick={() => toggleFlag(idx, 'isJustified')} className={`w-5 h-5 rounded-full border-2 transition-all ${day.isJustified ? 'bg-blue-600 border-blue-700 shadow-sm' : 'border-surfaceHighlight hover:border-blue-200'}`} />
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
                                     </tbody>
                                 </table>
                             </div>
@@ -793,10 +843,10 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                                             <div className="pt-4 border-t border-surfaceHighlight/50">
                                                 <div className="flex justify-between items-center text-[9px] font-black uppercase mb-2 tracking-widest">
                                                     <span className="text-muted">Marcado de Asistencia</span>
-                                                    <span className="text-text">{Math.round((p.marked_days / (p.scheduled_days || 1)) * 100)}%</span>
+                                                    <span className="text-text">{Math.round((p.marked_days / (p.scheduled_days || 12)) * 100)}%</span>
                                                 </div>
                                                 <div className="h-2 w-full bg-surfaceHighlight rounded-full overflow-hidden shadow-inner">
-                                                    <div className="h-full bg-primary" style={{ width: `${(p.marked_days / (p.scheduled_days || 1)) * 100}%` }}></div>
+                                                    <div className="h-full bg-primary" style={{ width: `${(p.marked_days / (p.scheduled_days || 12)) * 100}%` }}></div>
                                                 </div>
                                             </div>
                                             
@@ -819,7 +869,7 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                 )}
 
                 {activeTab === 'settings' && (
-                    <div className="flex-1 p-8 md:p-16 max-w-4xl">
+                    <div className="flex-1 p-8 md:p-16 max-w-4xl overflow-y-auto">
                         <h2 className="text-3xl font-black text-text uppercase italic mb-8">Ajustes de Bonos Globales</h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                             <SedeBonusCard location="LLERENA" settings={globalSettings['LLERENA']} onSave={loadData} />
@@ -883,15 +933,15 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                             <div className="bg-background border border-surfaceHighlight rounded-3xl p-6 space-y-4">
                                 <div className="flex justify-between items-center text-[11px] font-black uppercase">
                                     <span className="text-muted">Efectividad de Marcado</span>
-                                    <span className="text-text">{selectedPerfDetail.marked_days} / {selectedPerfDetail.scheduled_days} días</span>
+                                    <span className="text-text">{selectedPerfDetail.marked_days} / {selectedPerfDetail.scheduled_days || 12} días</span>
                                 </div>
                                 <div className="h-3 w-full bg-surfaceHighlight rounded-full overflow-hidden shadow-inner">
-                                    <div className="h-full bg-primary" style={{ width: `${(selectedPerfDetail.marked_days / (selectedPerfDetail.scheduled_days || 1)) * 100}%` }}></div>
+                                    <div className="h-full bg-primary" style={{ width: `${(selectedPerfDetail.marked_days / (selectedPerfDetail.scheduled_days || 12)) * 100}%` }}></div>
                                 </div>
                                 <p className="text-[9px] text-muted font-bold text-center uppercase tracking-widest">
-                                    {Math.round((selectedPerfDetail.marked_days / (selectedPerfDetail.scheduled_days || 1)) * 100) === 100 ? '+2 puntos por asistencia perfecta' : 
-                                     Math.round((selectedPerfDetail.marked_days / (selectedPerfDetail.scheduled_days || 1)) * 100) > 70 ? '+1 punto por alta asistencia' : 
-                                     Math.round((selectedPerfDetail.marked_days / (selectedPerfDetail.scheduled_days || 1)) * 100) < 50 ? '-1 punto por baja asistencia' : '0 puntos adicionales'}
+                                    {Math.round((selectedPerfDetail.marked_days / (selectedPerfDetail.scheduled_days || 12)) * 100) === 100 ? '+2 puntos por asistencia perfecta' : 
+                                     Math.round((selectedPerfDetail.marked_days / (selectedPerfDetail.scheduled_days || 12)) * 100) > 70 ? '+1 punto por alta asistencia' : 
+                                     Math.round((selectedPerfDetail.marked_days / (selectedPerfDetail.scheduled_days || 12)) * 100) < 50 ? '-1 punto por baja asistencia' : '0 puntos adicionales'}
                                 </p>
                             </div>
                         </div>
