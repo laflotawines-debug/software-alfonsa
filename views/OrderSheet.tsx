@@ -14,21 +14,22 @@ import {
     ClipboardList, 
     Check, 
     Fuel, 
-    Lock,
-    Unlock,
-    User,
-    DollarSign,
-    CreditCard,
-    AlertCircle,
-    ChevronRight,
-    Edit3,
-    Receipt,
-    Wallet,
-    ArrowDownRight,
-    TrendingUp
+    Lock, 
+    Unlock, 
+    User, 
+    DollarSign, 
+    CreditCard, 
+    AlertCircle, 
+    ChevronRight, 
+    Edit3, 
+    Receipt, 
+    Wallet, 
+    ArrowDownRight, 
+    TrendingUp 
 } from 'lucide-react';
-import { Trip, TripClient, User as UserType, TripExpense, PaymentStatus, DetailedOrder, OrderStatus } from '../types';
+import { Trip, TripClient, User as UserType, TripExpense, PaymentStatus, DetailedOrder, OrderStatus, DeliveryZone, ExpenseType } from '../types';
 import { hasPermission } from '../logic';
+import { supabase } from '../supabase';
 
 interface OrderSheetProps {
     currentUser: UserType;
@@ -45,7 +46,7 @@ export const OrderSheet: React.FC<OrderSheetProps> = ({
     orders, 
     trips, 
     onSaveTrip, 
-    onDeleteTrip,
+    onDeleteTrip, 
     selectedTripId,
     onSelectTrip
 }) => {
@@ -122,7 +123,7 @@ const TripListView: React.FC<{
     const canManage = hasPermission(currentUser, 'orders.sheet_manage');
 
     return (
-        <div className="flex flex-col gap-6 pb-20">
+        <div className="flex flex-col gap-6 pb-20 animate-in fade-in">
             <div className="flex justify-between items-center">
                 <div>
                     <h2 className="text-2xl md:text-3xl font-black text-text tracking-tight">Planilla de Viajes</h2>
@@ -194,6 +195,7 @@ const TripDetailView: React.FC<{
     const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
     const [isReportOpen, setIsReportOpen] = useState(false);
     
+    // Estados para edición en línea de saldos
     const [editingPrevBal, setEditingPrevBal] = useState<string | null>(null); 
     const [tempPrevBal, setTempPrevBal] = useState<string>('');
 
@@ -224,14 +226,28 @@ const TripDetailView: React.FC<{
     const handleUpdatePayment = (clientId: string, cash: number, transfer: number, isTransferExpected: boolean, prevBalance?: number, currentInvoice?: number) => {
         const updatedClients = trip.clients.map(c => {
             if (c.id !== clientId) return c;
+            
+            // Si viene un valor explícito (desde edición) lo usamos, sino mantenemos el actual
             const bPrev = canManage && prevBalance !== undefined ? prevBalance : (c.previousBalance || 0);
             const bCurr = canManage && currentInvoice !== undefined ? currentInvoice : (c.currentInvoiceAmount || 0);
+            
             const totalDebt = bPrev + bCurr;
             const totalPaid = cash + transfer;
+            
             let status: PaymentStatus = 'PENDING';
+            // Tolerancia de $1 por decimales
             if (totalPaid >= totalDebt - 1) status = 'PAID'; 
             else if (totalPaid > 0) status = 'PARTIAL';
-            return { ...c, previousBalance: bPrev, currentInvoiceAmount: bCurr, paymentCash: cash, paymentTransfer: transfer, isTransferExpected, status };
+            
+            return { 
+                ...c, 
+                previousBalance: bPrev, 
+                currentInvoiceAmount: bCurr, 
+                paymentCash: cash, 
+                paymentTransfer: transfer, 
+                isTransferExpected, 
+                status 
+            };
         });
         onUpdateTrip({ ...trip, clients: updatedClients });
         setSelectedClient(null);
@@ -257,13 +273,14 @@ const TripDetailView: React.FC<{
     const saveInlineEdit = (client: TripClient) => {
         const newVal = parseFloat(tempPrevBal);
         if (!isNaN(newVal)) {
+            // Actualizamos solo el saldo anterior, manteniendo lo demás igual
             handleUpdatePayment(client.id, client.paymentCash, client.paymentTransfer, client.isTransferExpected, newVal, client.currentInvoiceAmount);
         }
         setEditingPrevBal(null);
     };
 
     return (
-        <div className="flex flex-col gap-6 pb-20">
+        <div className="flex flex-col gap-6 pb-20 animate-in fade-in">
             <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between">
                     <button onClick={onBack} className="p-2 -ml-2 rounded-full hover:bg-surfaceHighlight text-muted hover:text-text transition-colors"><ArrowLeft size={24} /></button>
@@ -289,16 +306,18 @@ const TripDetailView: React.FC<{
                 </div>
             </div>
 
+            {/* TOTALES */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                <SummaryCard label="Cobrar" value={tripTotals.expectedTotal} color="text-text" />
-                <SummaryCard label="Cobrado" value={tripTotals.collectedCash + tripTotals.collectedTransfer} color="text-green-500" />
+                <SummaryCard label="Total a Cobrar" value={tripTotals.expectedTotal} color="text-text" />
+                <SummaryCard label="Cobrado Total" value={tripTotals.collectedCash + tripTotals.collectedTransfer} color="text-green-500" />
                 <SummaryCard label="Gastos" value={tripTotals.totalExpenses} color="text-red-500" />
                 <div className="col-span-2 lg:col-span-1 bg-blue-600 rounded-xl p-4 md:p-6 text-white shadow-lg shadow-blue-500/20">
-                    <span className="text-[10px] font-bold uppercase opacity-80">Efectivo Neto</span>
+                    <span className="text-[10px] font-bold uppercase opacity-80">Efectivo Neto en Mano</span>
                     <p className="text-2xl md:text-3xl font-black mt-1">$ {(tripTotals.cashToRender || 0).toLocaleString()}</p>
                 </div>
             </div>
 
+            {/* BOTONES ACCIÓN */}
             <div className="flex gap-2">
                 {!isClosed && (
                     <button onClick={() => setIsExpenseModalOpen(true)} className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-red-500/10 text-red-500 font-bold text-sm border border-red-500/20">
@@ -316,7 +335,7 @@ const TripDetailView: React.FC<{
                 {/* VISTA MOBILE (TARJETAS) */}
                 <div className="md:hidden flex flex-col gap-4">
                     {(trip.clients || []).map(c => {
-                        const { totalDebt, totalPaid, remaining } = getClientTotals(c);
+                        const { totalDebt, totalPaid } = getClientTotals(c);
                         const isPaid = c.status === 'PAID';
                         return (
                             <div key={c.id} className="bg-surface border border-surfaceHighlight rounded-2xl p-5 shadow-sm space-y-4">
@@ -331,10 +350,16 @@ const TripDetailView: React.FC<{
                                     <div className="flex flex-col">
                                         <span className="text-[9px] font-black text-muted uppercase">Deuda Total</span>
                                         <span className="text-sm font-black text-text">$ {totalDebt.toLocaleString()}</span>
+                                        <span className="text-[9px] text-muted">Ant: ${c.previousBalance} + Fac: ${c.currentInvoiceAmount}</span>
                                     </div>
                                     <div className="flex flex-col text-right">
                                         <span className="text-[9px] font-black text-muted uppercase">Cobrado</span>
                                         <span className="text-sm font-black text-green-500">$ {totalPaid.toLocaleString()}</span>
+                                        {(c.paymentTransfer > 0 || c.paymentCash > 0) && (
+                                            <span className="text-[9px] text-muted">
+                                                Ef: ${c.paymentCash} / Tr: ${c.paymentTransfer}
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
                                 <button 
@@ -353,13 +378,13 @@ const TripDetailView: React.FC<{
                 <div className="hidden md:block bg-surface border border-surfaceHighlight rounded-2xl overflow-hidden shadow-sm">
                     <table className="w-full text-left">
                         <thead>
-                            <tr className="bg-background/50 border-b border-surfaceHighlight text-[10px] text-muted uppercase font-black">
+                            <tr className="bg-background/50 border-b border-surfaceHighlight text-[10px] text-muted uppercase font-black tracking-widest">
                                 <th className="p-4">Cliente</th>
-                                <th className="p-4 text-right">Anterior</th>
+                                <th className="p-4 text-right">Saldo Ant.</th>
                                 <th className="p-4 text-right">Factura</th>
-                                <th className="p-4 text-right">Total</th>
+                                <th className="p-4 text-right bg-surfaceHighlight/30">Total a Cobrar</th>
+                                <th className="p-4 text-right">Cobrado (Detalle)</th>
                                 <th className="p-4 text-center">Estado</th>
-                                <th className="p-4 text-right">Cobrado</th>
                                 <th className="p-4 text-center">Acción</th>
                             </tr>
                         </thead>
@@ -374,23 +399,48 @@ const TripDetailView: React.FC<{
                                             <p className="font-bold text-sm text-text">{c.name}</p>
                                             <p className="text-[10px] text-muted uppercase font-bold">{c.address}</p>
                                         </td>
-                                        <td className="p-4 text-right font-bold text-muted group/edit relative">
+                                        
+                                        {/* CELDA EDITABLE SALDO ANTERIOR */}
+                                        <td className="p-4 text-right font-bold text-muted group/edit relative cursor-pointer" onClick={() => startInlineEdit(c)}>
                                             {isEditing ? (
-                                                <input autoFocus type="number" value={tempPrevBal} onChange={e => setTempPrevBal(e.target.value)} onBlur={() => saveInlineEdit(c)} onKeyDown={e => e.key === 'Enter' && saveInlineEdit(c)} className="w-24 bg-background border border-primary rounded px-2 py-1 text-right font-bold text-text outline-none" />
+                                                <input 
+                                                    autoFocus 
+                                                    type="number" 
+                                                    value={tempPrevBal} 
+                                                    onChange={e => setTempPrevBal(e.target.value)} 
+                                                    onBlur={() => saveInlineEdit(c)} 
+                                                    onKeyDown={e => e.key === 'Enter' && saveInlineEdit(c)} 
+                                                    className="w-24 bg-background border border-primary rounded px-2 py-1 text-right font-bold text-text outline-none shadow-sm" 
+                                                />
                                             ) : (
-                                                <div onClick={() => startInlineEdit(c)} className={`inline-flex items-center gap-1 ${canManage && !isClosed ? 'cursor-edit hover:text-primary transition-colors' : ''}`}>
+                                                <div className={`inline-flex items-center justify-end gap-2 w-full ${canManage && !isClosed ? 'hover:text-primary' : ''}`}>
                                                     $ {(c.previousBalance || 0).toLocaleString()}
-                                                    {canManage && !isClosed && <Edit3 size={10} className="opacity-0 group-hover/edit:opacity-50" />}
+                                                    {canManage && !isClosed && <Edit3 size={12} className="opacity-0 group-hover/edit:opacity-100 transition-opacity" />}
                                                 </div>
                                             )}
                                         </td>
+                                        
                                         <td className="p-4 text-right text-muted font-bold">$ {(c.currentInvoiceAmount || 0).toLocaleString()}</td>
-                                        <td className="p-4 text-right font-black text-text">$ {(totalDebt || 0).toLocaleString()}</td>
+                                        <td className="p-4 text-right font-black text-text bg-surfaceHighlight/10">$ {(totalDebt || 0).toLocaleString()}</td>
+                                        
+                                        {/* DETALLE COBRADO */}
+                                        <td className="p-4 text-right">
+                                            <div className="flex flex-col items-end">
+                                                <span className={`font-bold ${totalPaid >= totalDebt - 1 ? 'text-green-600' : 'text-orange-500'}`}>
+                                                    $ {totalPaid.toLocaleString()}
+                                                </span>
+                                                {totalPaid > 0 && (
+                                                    <span className="text-[9px] text-muted uppercase font-bold">
+                                                        (Ef: {c.paymentCash} / Tr: {c.paymentTransfer})
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </td>
+                                        
                                         <td className="p-4 text-center"><StatusBadge status={c.status} /></td>
-                                        <td className="p-4 text-right font-bold text-green-500">$ {(totalPaid || 0).toLocaleString()}</td>
                                         <td className="p-4 text-center">
                                             <button onClick={() => setSelectedClient(c)} className={`px-4 py-1.5 rounded-lg font-bold text-xs transition-colors ${isPaid ? 'text-primary hover:bg-primary/5' : 'bg-primary text-white hover:bg-primaryHover'}`}>
-                                                {canManage ? (isPaid ? 'Editar' : 'Cobrar/Edit') : (isPaid ? 'Ver' : 'Cobrar')}
+                                                {canManage ? (isPaid ? 'Editar' : 'Cobrar') : (isPaid ? 'Ver' : 'Cobrar')}
                                             </button>
                                         </td>
                                     </tr>
@@ -420,43 +470,208 @@ const TripDetailView: React.FC<{
     );
 };
 
-const SummaryCard: React.FC<{ label: string, value: number, color: string }> = ({ label, value, color }) => (
-    <div className="bg-surface border border-surfaceHighlight rounded-xl p-4 md:p-6 shadow-sm flex flex-col justify-between">
-        <span className="text-[10px] font-bold text-muted uppercase tracking-wider">{label}</span>
-        <p className={`text-xl md:text-2xl font-black mt-1 ${color}`}>$ {(value || 0).toLocaleString()}</p>
+// --- SUB-COMPONENTES ---
+
+const SummaryCard: React.FC<{ label: string; value: number; color: string }> = ({ label, value, color }) => (
+    <div className="bg-surface border border-surfaceHighlight rounded-xl p-4 flex flex-col gap-1 shadow-sm">
+        <span className="text-[10px] font-bold text-muted uppercase tracking-widest">{label}</span>
+        <span className={`text-xl font-black ${color}`}>$ {value.toLocaleString('es-AR')}</span>
     </div>
 );
 
-const StatusBadge: React.FC<{ status: PaymentStatus }> = ({ status }) => (
-    <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider ${
-        status === 'PAID' ? 'bg-green-500/10 text-green-500 border-green-500/20' : 
-        status === 'PARTIAL' ? 'bg-orange-500/10 text-orange-500 border-orange-500/20' : 
-        'bg-gray-500/10 text-muted border-gray-500/20'
-    }`}>
-        {status === 'PAID' ? 'PAGADO' : status === 'PARTIAL' ? 'PARCIAL' : 'PENDIENTE'}
-    </span>
-);
+const StatusBadge: React.FC<{ status: PaymentStatus }> = ({ status }) => {
+    let color = 'bg-surfaceHighlight text-muted border-surfaceHighlight';
+    let label = 'Pendiente';
+    if (status === 'PARTIAL') { color = 'bg-orange-500/10 text-orange-500 border-orange-500/20'; label = 'Parcial'; }
+    if (status === 'PAID') { color = 'bg-green-500/10 text-green-500 border-green-500/20'; label = 'Pagado'; }
+    return (
+        <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase border ${color}`}>
+            {label}
+        </span>
+    );
+};
 
 const ManualClientModal: React.FC<{ onClose: () => void; onAdd: (data: any) => void }> = ({ onClose, onAdd }) => {
     const [name, setName] = useState('');
-    const [prev, setPrev] = useState('');
-    const [inv, setInv] = useState('');
     const [address, setAddress] = useState('');
+    const [amount, setAmount] = useState('');
+    const [prevBalance, setPrevBalance] = useState('');
+
+    const handleSubmit = () => {
+        if (!name) return;
+        onAdd({
+            name,
+            address,
+            currentInvoiceAmount: parseFloat(amount) || 0,
+            previousBalance: parseFloat(prevBalance) || 0
+        });
+    };
+
     return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-             <div className="bg-background w-full max-w-md rounded-2xl border border-surfaceHighlight p-6 shadow-2xl">
-                <h3 className="font-bold text-lg mb-6 text-text">Agregar Cliente Manual</h3>
-                <div className="space-y-4">
-                    <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" value={name} onChange={e => setName(e.target.value)} placeholder="Nombre" />
-                    <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" value={address} onChange={e => setAddress(e.target.value)} placeholder="Dirección/Zona" />
-                    <div className="grid grid-cols-2 gap-4">
-                        <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" type="number" value={prev} onChange={e => setPrev(e.target.value)} placeholder="Saldo Ant." />
-                        <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" type="number" value={inv} onChange={e => setInv(e.target.value)} placeholder="Factura" />
-                    </div>
-                    <button onClick={() => onAdd({ name, address, previousBalance: parseFloat(prev)||0, currentInvoiceAmount: parseFloat(inv)||0 })} className="w-full py-4 rounded-xl bg-primary text-white font-black shadow-lg shadow-primary/20 mt-4 transition-all">Agregar Cliente</button>
-                    <button onClick={onClose} className="w-full py-2 text-muted font-bold">Cancelar</button>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4">
+            <div className="bg-surface w-full max-w-sm rounded-2xl border border-surfaceHighlight p-6 shadow-2xl flex flex-col gap-4">
+                <h3 className="font-bold text-lg text-text">Agregar Cliente Manual</h3>
+                <input autoFocus placeholder="Nombre Cliente" className="bg-background border border-surfaceHighlight rounded-xl p-3 text-sm font-bold outline-none focus:border-primary" value={name} onChange={e => setName(e.target.value)} />
+                <input placeholder="Dirección / Zona" className="bg-background border border-surfaceHighlight rounded-xl p-3 text-sm font-bold outline-none focus:border-primary" value={address} onChange={e => setAddress(e.target.value)} />
+                <input type="number" placeholder="Monto Factura Actual ($)" className="bg-background border border-surfaceHighlight rounded-xl p-3 text-sm font-bold outline-none focus:border-primary" value={amount} onChange={e => setAmount(e.target.value)} />
+                <input type="number" placeholder="Saldo Anterior ($)" className="bg-background border border-surfaceHighlight rounded-xl p-3 text-sm font-bold outline-none focus:border-primary" value={prevBalance} onChange={e => setPrevBalance(e.target.value)} />
+                <div className="flex gap-2">
+                    <button onClick={onClose} className="flex-1 py-3 rounded-xl bg-surfaceHighlight text-text font-bold text-xs uppercase">Cancelar</button>
+                    <button onClick={handleSubmit} className="flex-1 py-3 rounded-xl bg-primary text-white font-bold text-xs uppercase">Agregar</button>
                 </div>
-             </div>
+            </div>
+        </div>
+    );
+};
+
+const PaymentModal: React.FC<{ client: TripClient; totals: any; onClose: () => void; onSave: (id: string, cash: number, transfer: number, expected: boolean, prevBal?: number) => void; isVale: boolean }> = ({ client, totals, onClose, onSave, isVale }) => {
+    const [cash, setCash] = useState(client.paymentCash === 0 ? '' : client.paymentCash.toString());
+    const [transfer, setTransfer] = useState(client.paymentTransfer === 0 ? '' : client.paymentTransfer.toString());
+    const [transferExpected, setTransferExpected] = useState(client.isTransferExpected);
+    
+    // Admin editing capability within modal
+    const [editPrev, setEditPrev] = useState(client.previousBalance.toString());
+
+    const cVal = parseFloat(cash) || 0;
+    const tVal = parseFloat(transfer) || 0;
+    const pBal = parseFloat(editPrev) || 0;
+    
+    const currentTotalDebt = pBal + client.currentInvoiceAmount;
+    const currentTotalPaid = cVal + tVal;
+    const remaining = currentTotalDebt - currentTotalPaid;
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 animate-in fade-in">
+            <div className="bg-surface w-full max-w-md rounded-3xl border border-surfaceHighlight shadow-2xl p-6 flex flex-col gap-5">
+                <div className="flex justify-between items-start">
+                    <div>
+                        <h3 className="text-xl font-black text-text uppercase leading-tight">{client.name}</h3>
+                        <p className="text-xs text-muted font-bold mt-1">Registro de Cobro</p>
+                    </div>
+                    <button onClick={onClose}><X size={24} className="text-muted hover:text-text transition-colors"/></button>
+                </div>
+
+                {isVale && (
+                    <div className="bg-orange-500/5 border border-orange-500/20 rounded-xl p-3">
+                        <label className="text-[10px] font-black uppercase text-orange-600 flex items-center gap-1 mb-1"><Edit3 size={10}/> Edición de Saldos (Admin)</label>
+                        <div className="flex gap-3">
+                            <div className="flex-1">
+                                <span className="text-[9px] font-bold text-muted uppercase">Saldo Ant.</span>
+                                <input type="number" value={editPrev} onChange={e => setEditPrev(e.target.value)} className="w-full bg-white border border-orange-200 rounded-lg px-2 py-1 text-sm font-black text-text outline-none focus:border-orange-500" />
+                            </div>
+                            <div className="flex-1">
+                                <span className="text-[9px] font-bold text-muted uppercase">Factura</span>
+                                <div className="w-full bg-surfaceHighlight/50 border border-surfaceHighlight rounded-lg px-2 py-1 text-sm font-bold text-muted cursor-not-allowed">
+                                    {client.currentInvoiceAmount}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                <div className="flex flex-col gap-1 p-4 bg-surfaceHighlight/20 rounded-2xl border border-surfaceHighlight">
+                    <div className="flex justify-between text-xs font-bold text-muted">
+                        <span>Total Deuda:</span>
+                        <span>$ {currentTotalDebt.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-lg font-black text-text">
+                        <span>Pagando:</span>
+                        <span className="text-green-600">$ {currentTotalPaid.toLocaleString()}</span>
+                    </div>
+                    {remaining > 0 && (
+                        <div className="flex justify-between text-xs font-bold text-red-500 mt-1 border-t border-surfaceHighlight pt-1">
+                            <span>Resta:</span>
+                            <span>$ {remaining.toLocaleString()}</span>
+                        </div>
+                    )}
+                </div>
+
+                <div className="space-y-4">
+                    <div>
+                        <label className="text-[10px] font-black uppercase text-muted tracking-widest ml-1">Efectivo Recibido</label>
+                        <input type="number" placeholder="0" value={cash} onChange={e => setCash(e.target.value)} className="w-full bg-background border border-surfaceHighlight rounded-2xl p-4 text-xl font-black text-text outline-none focus:border-primary shadow-inner" />
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-black uppercase text-muted tracking-widest ml-1">Transferencia Confirmada</label>
+                        <input type="number" placeholder="0" value={transfer} onChange={e => setTransfer(e.target.value)} className="w-full bg-background border border-surfaceHighlight rounded-2xl p-4 text-xl font-black text-text outline-none focus:border-primary shadow-inner" />
+                    </div>
+                    <div className="flex items-center gap-3 p-3 bg-background border border-surfaceHighlight rounded-xl cursor-pointer hover:bg-surfaceHighlight/30 transition-colors" onClick={() => setTransferExpected(!transferExpected)}>
+                        <div className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${transferExpected ? 'bg-primary border-primary' : 'border-muted bg-white'}`}>
+                            {transferExpected && <Check size={14} className="text-white" />}
+                        </div>
+                        <span className="text-xs font-bold text-text">Cliente promete transferir (Pendiente)</span>
+                    </div>
+                </div>
+
+                <button onClick={() => onSave(client.id, cVal, tVal, transferExpected, pBal)} className="w-full py-4 bg-green-600 hover:bg-green-700 text-white font-black rounded-2xl text-sm uppercase shadow-lg shadow-green-900/20 active:scale-95 transition-all">
+                    Confirmar Registro
+                </button>
+            </div>
+        </div>
+    );
+};
+
+const ExpenseModal: React.FC<{ onClose: () => void; onSave: (expense: any) => void }> = ({ onClose, onSave }) => {
+    const [type, setType] = useState<ExpenseType>('combustible');
+    const [amount, setAmount] = useState('');
+    const [note, setNote] = useState('');
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+            <div className="bg-surface w-full max-w-sm rounded-2xl border border-surfaceHighlight p-6 shadow-2xl flex flex-col gap-4">
+                <h3 className="font-bold text-lg text-text">Registrar Gasto</h3>
+                <select value={type} onChange={e => setType(e.target.value as ExpenseType)} className="bg-background border border-surfaceHighlight rounded-xl p-3 text-sm font-bold outline-none uppercase">
+                    <option value="combustible">Combustible</option>
+                    <option value="peaje">Peaje</option>
+                    <option value="viatico">Viático / Comida</option>
+                    <option value="otro">Otro</option>
+                </select>
+                <input type="number" placeholder="Monto ($)" value={amount} onChange={e => setAmount(e.target.value)} className="bg-background border border-surfaceHighlight rounded-xl p-3 text-sm font-bold outline-none" />
+                <input type="text" placeholder="Nota / Detalle" value={note} onChange={e => setNote(e.target.value)} className="bg-background border border-surfaceHighlight rounded-xl p-3 text-sm font-bold outline-none" />
+                <div className="flex gap-2">
+                    <button onClick={onClose} className="flex-1 py-3 rounded-xl bg-surfaceHighlight text-text font-bold text-xs uppercase">Cancelar</button>
+                    <button onClick={() => onSave({ type, amount: parseFloat(amount)||0, note })} className="flex-1 py-3 rounded-xl bg-red-500 text-white font-bold text-xs uppercase">Guardar</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const TripReportModal: React.FC<{ trip: Trip; onClose: () => void }> = ({ trip, onClose }) => {
+    const cashTotal = trip.clients.reduce((acc, c) => acc + (c.paymentCash || 0), 0);
+    const expensesTotal = trip.expenses.reduce((acc, e) => acc + (e.amount || 0), 0);
+    const netCash = cashTotal - expensesTotal;
+
+    return (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm">
+            <div className="bg-surface w-full max-w-md rounded-3xl border border-surfaceHighlight p-8 shadow-2xl flex flex-col gap-6 relative">
+                <button onClick={onClose} className="absolute top-4 right-4 p-2 rounded-full hover:bg-surfaceHighlight"><X size={20}/></button>
+                
+                <div className="text-center">
+                    <h3 className="text-2xl font-black text-text uppercase italic">Rendición de Viaje</h3>
+                    <p className="text-sm font-bold text-muted mt-1">{trip.name}</p>
+                </div>
+
+                <div className="space-y-4">
+                    <div className="flex justify-between items-center p-3 bg-background rounded-xl border border-surfaceHighlight">
+                        <span className="text-xs font-bold text-muted uppercase">Efectivo Cobrado</span>
+                        <span className="text-lg font-black text-green-600">$ {cashTotal.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between items-center p-3 bg-background rounded-xl border border-surfaceHighlight">
+                        <span className="text-xs font-bold text-muted uppercase">Gastos Totales</span>
+                        <span className="text-lg font-black text-red-500">$ {expensesTotal.toLocaleString()}</span>
+                    </div>
+                    <div className="h-px bg-surfaceHighlight my-2"></div>
+                    <div className="flex justify-between items-center p-4 bg-primary/10 rounded-2xl border border-primary/20">
+                        <span className="text-sm font-black text-primary uppercase">A Rendir (Neto)</span>
+                        <span className="text-2xl font-black text-primary">$ {netCash.toLocaleString()}</span>
+                    </div>
+                </div>
+
+                <div className="text-[10px] text-muted text-center font-bold uppercase tracking-widest mt-4">
+                    Generado el {new Date().toLocaleString()}
+                </div>
+            </div>
         </div>
     );
 };
@@ -493,197 +708,6 @@ const ImportOrdersModal: React.FC<{ orders: DetailedOrder[]; selectedRoute?: str
     );
 };
 
-const PaymentModal: React.FC<{ client: TripClient; totals: any; onClose: () => void; onSave: any; isVale: boolean }> = ({ client, totals, onClose, onSave, isVale }) => {
-    const [cash, setCash] = useState(client.paymentCash > 0 ? client.paymentCash.toString() : '');
-    const [transfer, setTransfer] = useState(client.paymentTransfer > 0 ? client.paymentTransfer.toString() : '');
-    const [isExpected, setIsExpected] = useState(client.isTransferExpected);
-    const [prevBal, setPrevBal] = useState((client.previousBalance || 0).toString());
-    const [currInv, setCurrInv] = useState((client.currentInvoiceAmount || 0).toString());
-    const handleConfirm = () => { onSave(client.id, parseFloat(cash)||0, parseFloat(transfer)||0, isExpected, isVale ? parseFloat(prevBal)||0 : undefined, isVale ? parseFloat(currInv)||0 : undefined); };
-    return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4">
-            <div className="bg-background w-full max-w-sm rounded-2xl border border-surfaceHighlight p-6 shadow-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
-                <div className="flex justify-between items-center"><h3 className="font-bold text-lg text-text">Registro de Cobro</h3><button onClick={onClose}><X size={24} className="text-muted"/></button></div>
-                <div className="p-4 bg-surfaceHighlight/20 rounded-xl border border-surfaceHighlight"><p className="text-[10px] font-bold text-muted uppercase">Cliente</p><p className="font-black text-text text-lg leading-tight mt-1">{client.name}</p></div>
-                {isVale && (
-                    <div className="p-4 bg-orange-500/5 rounded-xl border border-orange-500/20 space-y-4">
-                        <div className="flex items-center gap-2 text-orange-500 mb-2"><Edit3 size={16}/><span className="text-[10px] font-bold uppercase tracking-widest">Edición de Saldos (Admin)</span></div>
-                        <div className="grid grid-cols-2 gap-4">
-                            <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" type="number" value={prevBal} onChange={e => setPrevBal(e.target.value)} />
-                            <input className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-primary shadow-sm" type="number" value={currInv} onChange={e => setCurrInv(e.target.value)} />
-                        </div>
-                    </div>
-                )}
-                <div className="space-y-4">
-                    {!isVale && (<div className="bg-surfaceHighlight/20 p-4 rounded-xl"><span className="text-[10px] font-bold uppercase text-muted">Deuda Total</span><p className="text-2xl font-black text-text">$ {(totals.totalDebt || 0).toLocaleString()}</p></div>)}
-                    <div className="flex flex-col gap-4">
-                        <input type="number" value={cash} onChange={e => setCash(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-xl font-black text-green-500 shadow-inner" placeholder="Efectivo Recibido" />
-                        <input type="number" value={transfer} onChange={e => setTransfer(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-xl font-black text-blue-500 shadow-inner" placeholder="Transf. Confirmada" />
-                        <label className="flex items-center gap-3 p-4 bg-surfaceHighlight/30 rounded-xl cursor-pointer border border-surfaceHighlight transition-all hover:bg-surfaceHighlight/50">
-                            <input type="checkbox" checked={isExpected} onChange={e => setIsExpected(e.target.checked)} className="w-6 h-6 accent-primary rounded-md" />
-                            <div className="flex flex-col"><span className="text-sm font-bold text-text">Cliente promete transferir</span></div>
-                        </label>
-                    </div>
-                    <button onClick={handleConfirm} className="w-full py-4 rounded-xl bg-green-600 text-white font-black shadow-lg shadow-green-600/20 mt-4 active:scale-[0.98] transition-all">Confirmar Registro</button>
-                    <button onClick={onClose} className="w-full py-2 text-muted font-bold text-sm">Cancelar</button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const ExpenseModal: React.FC<{ onClose: () => void; onSave: any }> = ({ onClose, onSave }) => {
-    const [type, setType] = useState<TripExpense['type']>('combustible');
-    const [amount, setAmount] = useState('');
-    const [note, setNote] = useState('');
-    return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4">
-             <div className="bg-background w-full max-w-sm rounded-2xl border border-surfaceHighlight p-6 shadow-2xl">
-                <h3 className="font-bold text-lg mb-6 text-text flex items-center gap-2"><Fuel size={20} className="text-red-500" /> Registro de Gasto</h3>
-                <div className="space-y-4">
-                    <select value={type} onChange={e => setType(e.target.value as any)} className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 font-bold text-text outline-none focus:border-primary shadow-sm">
-                        <option value="combustible">⛽ Combustible</option>
-                        <option value="viatico">🥪 Viáticos / Comida</option>
-                        <option value="peaje">🛣️ Peajes</option>
-                        <option value="otro">⚙️ Otros</option>
-                    </select>
-                    <input type="number" value={amount} onChange={e => setAmount(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-xl font-black text-red-500 shadow-inner" placeholder="$ 0" />
-                    <input value={note} onChange={e => setNote(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm text-text outline-none focus:border-primary shadow-sm" placeholder="Observación" />
-                    <button onClick={() => onSave({ type, amount: parseFloat(amount)||0, note })} className="w-full py-4 rounded-xl bg-red-600 text-white font-black shadow-lg shadow-red-600/20 mt-4 active:scale-[0.98] transition-all">Guardar Gasto</button>
-                    <button onClick={onClose} className="w-full py-2 text-muted font-bold text-sm">Cancelar</button>
-                </div>
-             </div>
-        </div>
-    );
-};
-
-const TripReportModal: React.FC<{ trip: Trip; onClose: () => void }> = ({ trip, onClose }) => {
-    const cash = (trip.clients || []).reduce((acc, c) => acc + (c.paymentCash || 0), 0);
-    const trans = (trip.clients || []).reduce((acc, c) => acc + (c.paymentTransfer || 0), 0);
-    const exp = (trip.expenses || []).reduce((acc, e) => acc + (e.amount || 0), 0);
-    const net = cash - exp;
-
-    const pendingClients = useMemo(() => {
-        return (trip.clients || []).filter(c => {
-            const totalDebt = (c.previousBalance || 0) + (c.currentInvoiceAmount || 0);
-            const totalPaid = (c.paymentCash || 0) + (c.paymentTransfer || 0);
-            return totalPaid < totalDebt - 1; // Margen de error de 1 peso
-        });
-    }, [trip.clients]);
-
-    const totalPending = useMemo(() => {
-        return (trip.clients || []).reduce((acc, c) => {
-            const totalDebt = (c.previousBalance || 0) + (c.currentInvoiceAmount || 0);
-            const totalPaid = (c.paymentCash || 0) + (c.paymentTransfer || 0);
-            return acc + Math.max(0, totalDebt - totalPaid);
-        }, 0);
-    }, [trip.clients]);
-
-    return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-            <div className="bg-background w-full max-w-3xl rounded-[2.5rem] border border-surfaceHighlight shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
-                <div className="p-8 border-b border-surfaceHighlight flex justify-between items-center bg-surface shrink-0">
-                    <div className="flex items-center gap-4">
-                        <div className="p-3 bg-primary/10 text-primary rounded-2xl">
-                            <ClipboardList size={28} />
-                        </div>
-                        <div>
-                            <h3 className="font-black text-2xl text-text uppercase italic tracking-tight leading-none">Rendición de Viaje</h3>
-                            <p className="text-[10px] font-bold text-muted uppercase tracking-widest mt-2">{trip.name || trip.displayId}</p>
-                        </div>
-                    </div>
-                    <button onClick={onClose} className="p-2 -mr-2 text-muted hover:text-text transition-colors"><X size={28}/></button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-8 space-y-10 scrollbar-thin">
-                    {/* TOTALES PRINCIPALES */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <SummaryMiniCard label="Cobrado Efectivo" value={cash} icon={<Wallet size={16}/>} color="text-green-500" />
-                        <SummaryMiniCard label="Cobrado Transf." value={trans} icon={<CreditCard size={16}/>} color="text-blue-500" />
-                        <SummaryMiniCard label="Total Gastos" value={exp} icon={<Fuel size={16}/>} color="text-red-500" />
-                    </div>
-
-                    {/* SALDO NETO DESTACADO */}
-                    <div className="bg-blue-600 p-8 rounded-3xl text-white text-center shadow-xl shadow-blue-500/20 relative overflow-hidden">
-                        <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl"></div>
-                        <span className="text-xs font-black uppercase tracking-[0.2em] opacity-80">Saldo Neto a Entregar (Efectivo)</span>
-                        <p className="text-6xl font-black mt-3 leading-none italic tracking-tighter">$ {(net || 0).toLocaleString()}</p>
-                        <p className="text-[10px] font-bold uppercase mt-4 opacity-60">(Efectivo - Gastos)</p>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                        {/* LISTADO DE PENDIENTES */}
-                        <div className="space-y-4">
-                            <div className="flex items-center justify-between border-b border-surfaceHighlight pb-2">
-                                <h4 className="text-sm font-black text-text uppercase flex items-center gap-2">
-                                    <ArrowDownRight size={18} className="text-orange-500" /> Saldo Pendiente
-                                </h4>
-                                <span className="text-xs font-black text-orange-500 bg-orange-500/10 px-2 py-0.5 rounded-full">$ {totalPending.toLocaleString()}</span>
-                            </div>
-                            <div className="space-y-2">
-                                {pendingClients.map(c => {
-                                    const totalDebt = (c.previousBalance || 0) + (c.currentInvoiceAmount || 0);
-                                    const totalPaid = (c.paymentCash || 0) + (c.paymentTransfer || 0);
-                                    const pending = totalDebt - totalPaid;
-                                    return (
-                                        <div key={c.id} className="flex justify-between items-center p-3 bg-surface border border-surfaceHighlight rounded-xl shadow-sm">
-                                            <div className="flex flex-col">
-                                                <span className="text-xs font-black text-text uppercase leading-tight">{c.name}</span>
-                                                <span className="text-[9px] font-bold text-muted uppercase">Deuda: $ {totalDebt.toLocaleString()}</span>
-                                            </div>
-                                            <span className="text-xs font-black text-red-500">$ {pending.toLocaleString()}</span>
-                                        </div>
-                                    );
-                                })}
-                                {pendingClients.length === 0 && <p className="text-center py-6 text-[10px] font-bold text-muted uppercase italic">Todo cobrado</p>}
-                            </div>
-                        </div>
-
-                        {/* LISTADO DE GASTOS */}
-                        <div className="space-y-4">
-                            <div className="flex items-center justify-between border-b border-surfaceHighlight pb-2">
-                                <h4 className="text-sm font-black text-text uppercase flex items-center gap-2">
-                                    <Fuel size={18} className="text-red-500" /> Detalle de Gastos
-                                </h4>
-                            </div>
-                            <div className="space-y-2">
-                                {(trip.expenses || []).map(e => (
-                                    <div key={e.id} className="p-3 bg-surface border border-surfaceHighlight rounded-xl shadow-sm space-y-1">
-                                        <div className="flex justify-between items-center">
-                                            <span className="text-[9px] font-black text-red-500 uppercase tracking-widest bg-red-500/5 px-2 py-0.5 rounded">{e.type}</span>
-                                            <span className="text-sm font-black text-text">$ {e.amount.toLocaleString()}</span>
-                                        </div>
-                                        {e.note && (
-                                            <p className="text-[10px] font-bold text-muted uppercase italic leading-tight">
-                                                Obs: {e.note}
-                                            </p>
-                                        )}
-                                    </div>
-                                ))}
-                                {(trip.expenses || []).length === 0 && <p className="text-center py-6 text-[10px] font-bold text-muted uppercase italic">Sin gastos registrados</p>}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="p-8 border-t border-surfaceHighlight bg-surface shrink-0">
-                    <button onClick={onClose} className="w-full py-5 rounded-[1.5rem] bg-surfaceHighlight font-black text-text uppercase text-xs tracking-[0.2em] transition-all hover:bg-surfaceHighlight/80 active:scale-[0.98]">Cerrar Rendición</button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const SummaryMiniCard: React.FC<{ label: string, value: number, color: string, icon: React.ReactNode }> = ({ label, value, color, icon }) => (
-    <div className="bg-surface border border-surfaceHighlight rounded-2xl p-5 shadow-sm flex flex-col justify-between hover:border-primary/20 transition-all">
-        <div className="flex items-center gap-2 mb-2">
-            <span className="text-muted">{icon}</span>
-            <span className="text-[9px] font-black text-muted uppercase tracking-widest">{label}</span>
-        </div>
-        <p className={`text-xl font-black ${color}`}>$ {(value || 0).toLocaleString()}</p>
-    </div>
-);
-
 const TripEditor: React.FC<{
     initialData: Trip | null;
     onClose: () => void;
@@ -697,10 +721,18 @@ const TripEditor: React.FC<{
     const [clients, setClients] = useState<TripClient[]>(initialData?.clients || []);
     const [isManualAddOpen, setIsManualAddOpen] = useState(false);
     const [isImportOpen, setIsImportOpen] = useState(false);
+    const [zones, setZones] = useState<DeliveryZone[]>([]);
+
+    useEffect(() => {
+        const fetchZones = async () => {
+            const { data } = await supabase.from('delivery_zones').select('*').eq('active', true).order('name');
+            if (data) setZones(data);
+        };
+        fetchZones();
+    }, []);
     
     const handleSave = () => { 
         if (!name || !driverName) { alert("Complete Nombre y Conductor"); return; } 
-        // No generamos 'id' si es nuevo, dejamos que App.tsx lo maneje o mandamos undefined
         onSave({ 
             id: initialData?.id || '', 
             displayId: initialData?.displayId || `#${Math.floor(Math.random()*10000)}`, 
@@ -720,7 +752,11 @@ const TripEditor: React.FC<{
             <div className="bg-surface border border-surfaceHighlight rounded-2xl p-6 grid grid-cols-1 md:grid-cols-3 gap-6 shadow-sm">
                 <input className="md:col-span-3 bg-surface border border-surfaceHighlight rounded-xl p-3 text-lg font-bold outline-none focus:border-primary shadow-sm" value={name} onChange={e => setName(e.target.value)} placeholder="Nombre del Viaje" />
                 <input className="bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold shadow-sm" value={driverName} onChange={e => setDriverName(e.target.value)} placeholder="Conductor" />
-                <select className="bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold shadow-sm" value={route} onChange={e => setRoute(e.target.value)}><option value="">-- Seleccionar Zona --</option><option value="V. Mercedes">V. Mercedes</option><option value="San Luis">San Luis</option><option value="Norte">Norte</option></select>
+                <select className="bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold shadow-sm uppercase" value={route} onChange={e => setRoute(e.target.value)}>
+                    <option value="">-- Seleccionar Zona --</option>
+                    {zones.map(z => <option key={z.id} value={z.name}>{z.name}</option>)}
+                    {zones.length === 0 && <option value="V. Mercedes">V. Mercedes (Default)</option>}
+                </select>
                 <input className="bg-surface border border-surfaceHighlight rounded-xl p-3 text-sm font-bold shadow-sm" value={date} onChange={e => setDate(e.target.value)} />
             </div>
             <div className="bg-surface border border-surfaceHighlight rounded-2xl p-6 flex flex-col gap-6 shadow-sm">

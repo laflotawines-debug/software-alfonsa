@@ -62,6 +62,12 @@ export interface GlobalAttendanceSettings {
 }
 
 // --- REST OF DOMAIN MODELS ---
+export interface DeliveryZone {
+    id: string;
+    name: string;
+    active: boolean;
+}
+
 export interface AccountMovement {
     id: string;
     client_code: string;
@@ -340,7 +346,7 @@ export interface HistoryEntry {
     newState?: OrderStatus;
 }
 export type PaymentMethod = 'Efectivo' | 'Transferencia' | 'Cheque' | 'Cta Cte' | 'Pendiente';
-export type OrderZone = 'V. Mercedes' | 'San Luis' | 'Norte';
+export type OrderZone = string; // Changed from union type to string to support dynamic zones
 export interface Order {
     id: string;
     displayId: string;

@@ -128,12 +128,17 @@ export const getStatusColor = (status: OrderStatus) => {
 };
 
 export const getZoneStyles = (zone?: OrderZone) => {
-    switch (zone) {
-        case 'V. Mercedes': return { borderColor: 'border-blue-500', badgeBg: 'bg-blue-500/10', badgeText: 'text-blue-500' };
-        case 'San Luis': return { borderColor: 'border-purple-500', badgeBg: 'bg-purple-500/10', badgeText: 'text-purple-500' };
-        case 'Norte': return { borderColor: 'border-orange-500', badgeBg: 'bg-orange-500/10', badgeText: 'text-orange-500' };
-        default: return { borderColor: 'border-surfaceHighlight', badgeBg: 'bg-surfaceHighlight', badgeText: 'text-muted' };
-    }
+    if (!zone) return { borderColor: 'border-surfaceHighlight', badgeBg: 'bg-surfaceHighlight', badgeText: 'text-muted' };
+    
+    // Normalize string for checking known zones
+    const zoneLower = zone.toLowerCase().trim();
+
+    if (zoneLower.includes('mercedes')) return { borderColor: 'border-blue-500', badgeBg: 'bg-blue-500/10', badgeText: 'text-blue-500' };
+    if (zoneLower.includes('san luis')) return { borderColor: 'border-purple-500', badgeBg: 'bg-purple-500/10', badgeText: 'text-purple-500' };
+    if (zoneLower.includes('norte')) return { borderColor: 'border-orange-500', badgeBg: 'bg-orange-500/10', badgeText: 'text-orange-500' };
+    
+    // Default style for new dynamic zones (e.g. Merlo)
+    return { borderColor: 'border-emerald-500', badgeBg: 'bg-emerald-500/10', badgeText: 'text-emerald-500' };
 };
 
 /**

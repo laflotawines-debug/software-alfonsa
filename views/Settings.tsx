@@ -39,9 +39,12 @@ import {
     Sun,
     Moon,
     Monitor,
-    Warehouse
+    Warehouse,
+    MapPin,
+    Plus,
+    Trash2
 } from 'lucide-react';
-import { User, MasterProduct, AppPermission, View } from '../types';
+import { User, MasterProduct, AppPermission, View, DeliveryZone } from '../types';
 import { supabase } from '../supabase';
 import { SYSTEM_NAV_STRUCTURE, EXTRA_PERMISSIONS } from '../logic';
 import * as XLSX from 'xlsx';
@@ -53,7 +56,7 @@ interface SettingsProps {
     onToggleTheme: () => void;
 }
 
-type Tab = 'profile' | 'catalog_prices' | 'catalog_stock' | 'permissions';
+type Tab = 'profile' | 'catalog_prices' | 'catalog_stock' | 'permissions' | 'zones';
 
 export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile, isDarkMode, onToggleTheme }) => {
     const [name, setName] = useState(currentUser.name);
@@ -81,13 +84,63 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
     const [isPermsLoading, setIsPermsLoading] = useState(false);
     const [permSearch, setPermSearch] = useState('');
 
+    // --- ZONES STATE ---
+    const [zones, setZones] = useState<DeliveryZone[]>([]);
+    const [newZoneName, setNewZoneName] = useState('');
+    const [isZoneLoading, setIsZoneLoading] = useState(false);
+
     const isVale = currentUser.role === 'vale';
 
     useEffect(() => {
         if (activeTab === 'permissions' && isVale) {
             fetchPermData();
         }
+        if (activeTab === 'zones' && isVale) {
+            fetchZones();
+        }
     }, [activeTab, isVale]);
+
+    const fetchZones = async () => {
+        setIsZoneLoading(true);
+        try {
+            const { data, error } = await supabase.from('delivery_zones').select('*').order('name');
+            if (error) throw error;
+            setZones(data || []);
+        } catch (e) {
+            console.error("Error fetching zones", e);
+        } finally {
+            setIsZoneLoading(false);
+        }
+    };
+
+    const handleAddZone = async () => {
+        if (!newZoneName.trim()) return;
+        setIsZoneLoading(true);
+        try {
+            const { error } = await supabase.from('delivery_zones').insert({ name: newZoneName.trim() });
+            if (error) throw error;
+            setNewZoneName('');
+            await fetchZones();
+        } catch (e: any) {
+            alert("Error al agregar zona: " + e.message);
+        } finally {
+            setIsZoneLoading(false);
+        }
+    };
+
+    const handleDeleteZone = async (id: string) => {
+        if (!confirm("¿Eliminar esta zona?")) return;
+        setIsZoneLoading(true);
+        try {
+            const { error } = await supabase.from('delivery_zones').delete().eq('id', id);
+            if (error) throw error;
+            await fetchZones();
+        } catch (e: any) {
+            alert("Error al eliminar: " + e.message);
+        } finally {
+            setIsZoneLoading(false);
+        }
+    };
 
     const fetchPermData = async () => {
         setIsPermsLoading(true);
@@ -369,6 +422,9 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                     </button>
                     {isVale && (
                         <>
+                            <button onClick={() => { setActiveTab('zones'); }} className={`w-full flex items-center gap-3 px-5 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest text-left transition-all border ${activeTab === 'zones' ? 'bg-primary text-white border-primary shadow-lg' : 'text-muted border-surfaceHighlight bg-surface hover:bg-surfaceHighlight'}`}>
+                                <MapPin size={16} /> Zonas de Entrega
+                            </button>
                             <button onClick={() => { setActiveTab('permissions'); setPermSearch(''); }} className={`w-full flex items-center gap-3 px-5 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest text-left transition-all border ${activeTab === 'permissions' ? 'bg-primary text-white border-primary shadow-lg' : 'text-muted border-surfaceHighlight bg-surface hover:bg-surfaceHighlight'}`}>
                                 <ShieldCheck size={16} /> Permisos (Global)
                             </button>
@@ -498,6 +554,61 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                                 </div>
                             </section>
                         </div>
+                    )}
+
+                    {activeTab === 'zones' && isVale && (
+                        <section className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm animate-in fade-in flex flex-col min-h-[600px]">
+                            <div className="p-8 border-b border-surfaceHighlight bg-background/20 flex justify-between items-center">
+                                <div>
+                                    <h3 className="text-xl font-black text-text flex items-center gap-3 uppercase tracking-tight italic">
+                                        <MapPin size={24} className="text-primary" /> Zonas de Entrega
+                                    </h3>
+                                    <p className="text-[10px] font-bold text-muted uppercase mt-1">Administra los lugares habilitados para envíos.</p>
+                                </div>
+                            </div>
+                            
+                            <div className="p-8 space-y-6">
+                                <div className="flex gap-4">
+                                    <input 
+                                        type="text" 
+                                        value={newZoneName} 
+                                        onChange={(e) => setNewZoneName(e.target.value)}
+                                        placeholder="Nombre de nueva zona (ej: Merlo)"
+                                        className="flex-1 bg-background border border-surfaceHighlight rounded-2xl px-5 py-4 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase"
+                                        onKeyDown={(e) => e.key === 'Enter' && handleAddZone()}
+                                    />
+                                    <button 
+                                        onClick={handleAddZone} 
+                                        disabled={isZoneLoading || !newZoneName.trim()}
+                                        className="bg-primary hover:bg-primaryHover text-white px-6 rounded-2xl font-black uppercase text-xs shadow-lg transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2"
+                                    >
+                                        {isZoneLoading ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
+                                        Agregar
+                                    </button>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    {zones.length === 0 ? (
+                                        <div className="col-span-full py-12 text-center text-muted italic font-bold">No hay zonas configuradas.</div>
+                                    ) : (
+                                        zones.map(zone => (
+                                            <div key={zone.id} className="bg-background border border-surfaceHighlight rounded-2xl p-4 flex items-center justify-between group hover:border-primary/50 transition-colors">
+                                                <div className="flex items-center gap-3">
+                                                    <MapPin size={18} className="text-primary" />
+                                                    <span className="font-black text-sm text-text uppercase">{zone.name}</span>
+                                                </div>
+                                                <button 
+                                                    onClick={() => handleDeleteZone(zone.id)}
+                                                    className="p-2 text-muted hover:text-red-500 rounded-xl hover:bg-red-500/10 transition-colors opacity-0 group-hover:opacity-100"
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        </section>
                     )}
 
                     {activeTab === 'permissions' && isVale && (

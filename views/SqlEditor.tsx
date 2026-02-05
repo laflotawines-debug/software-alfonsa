@@ -50,6 +50,25 @@ CREATE POLICY "Enable all access collections" ON public.client_collections FOR A
 ALTER TABLE public.client_account_movements ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Enable all access movements" ON public.client_account_movements;
 CREATE POLICY "Enable all access movements" ON public.client_account_movements FOR ALL USING (true) WITH CHECK (true);
+
+-- 5. Tabla de Zonas de Entrega (FIX ERROR PGRST205)
+CREATE TABLE IF NOT EXISTS public.delivery_zones (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    name text NOT NULL,
+    active boolean DEFAULT true,
+    created_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT delivery_zones_pkey PRIMARY KEY (id),
+    CONSTRAINT delivery_zones_name_key UNIQUE (name)
+);
+
+ALTER TABLE public.delivery_zones ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Enable all access zones" ON public.delivery_zones;
+CREATE POLICY "Enable all access zones" ON public.delivery_zones FOR ALL USING (true) WITH CHECK (true);
+
+-- Insertar zonas por defecto si no existen
+INSERT INTO public.delivery_zones (name) 
+VALUES ('V. Mercedes'), ('San Luis'), ('Norte') 
+ON CONFLICT (name) DO NOTHING;
 `);
 
     const copyToClipboard = () => {

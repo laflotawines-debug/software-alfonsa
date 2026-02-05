@@ -1,27 +1,25 @@
 
-// ... imports ... (keep existing)
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   User as UserIcon, 
-  // ... other icons
   MapPin, 
   HelpCircle, 
   FileText, 
   Eraser, 
   Plus, 
   Trash2, 
-  ArrowLeft,
-  Save,
-  Loader2,
-  Compass,
-  Search,
-  Check,
-  Zap,
-  RotateCcw,
-  CheckCircle2,
-  Package
+  ArrowLeft, 
+  Save, 
+  Loader2, 
+  Compass, 
+  Search, 
+  Check, 
+  Zap, 
+  RotateCcw, 
+  CheckCircle2, 
+  Package 
 } from 'lucide-react';
-import { View, Product, OrderStatus, DetailedOrder, User, OrderZone, ClientMaster, SavedBudget, MasterProduct } from '../types';
+import { View, Product, OrderStatus, DetailedOrder, User, OrderZone, ClientMaster, SavedBudget, MasterProduct, DeliveryZone } from '../types';
 import { parseOrderText } from '../logic';
 import { supabase } from '../supabase';
 
@@ -33,7 +31,8 @@ interface CreateBudgetProps {
 
 export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreateOrder, currentUser }) => {
   const [clientName, setClientName] = useState('');
-  const [selectedZone, setSelectedZone] = useState<OrderZone>('V. Mercedes');
+  const [selectedZone, setSelectedZone] = useState<string>('');
+  const [availableZones, setAvailableZones] = useState<DeliveryZone[]>([]);
   const [rawText, setRawText] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -57,6 +56,23 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
   
   const dropdownRef = useRef<HTMLDivElement>(null);
   const productDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Cargar zonas disponibles
+  useEffect(() => {
+      const fetchZones = async () => {
+          const { data } = await supabase.from('delivery_zones').select('*').eq('active', true).order('name');
+          if (data && data.length > 0) {
+              setAvailableZones(data);
+              // Set default if exists, preferably 'V. Mercedes' or first one
+              const defaultZone = data.find(z => z.name === 'V. Mercedes') || data[0];
+              setSelectedZone(defaultZone.name);
+          } else {
+              // Fallback if no data or offline
+              setSelectedZone('V. Mercedes');
+          }
+      };
+      fetchZones();
+  }, []);
 
   // Manejar clics fuera del dropdown para cerrarlo
   useEffect(() => {
@@ -125,10 +141,17 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
     setShowClientDropdown(false);
     fetchSavedBudgets(client.codigo);
     
+    // Auto-select zone based on location string match if possible
     const loc = (client.localidad || '').toLowerCase();
-    if (loc.includes('mercedes')) setSelectedZone('V. Mercedes');
-    else if (loc.includes('san luis')) setSelectedZone('San Luis');
-    else if (loc.includes('norte')) setSelectedZone('Norte');
+    const matchedZone = availableZones.find(z => loc.includes(z.name.toLowerCase()));
+    if (matchedZone) {
+        setSelectedZone(matchedZone.name);
+    } else {
+        // Fallback checks
+        if (loc.includes('mercedes')) setSelectedZone('V. Mercedes');
+        else if (loc.includes('san luis')) setSelectedZone('San Luis');
+        else if (loc.includes('norte')) setSelectedZone('Norte');
+    }
   };
 
   const handleSearchProduct = async (val: string) => {
@@ -311,7 +334,12 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
         
     } catch (err: any) {
         console.error("Error saving order:", err);
-        alert("Error al guardar el pedido: " + (err.message || "Error de servidor"));
+        // Detección específica del error de ENUM para zonas nuevas
+        if (err.code === '22P02' && err.message?.includes('order_zone')) {
+            alert("ERROR DE SISTEMA: La base de datos no reconoce la nueva zona. \n\nPor favor, ejecuta el script de corrección en el Editor SQL para permitir zonas personalizadas.");
+        } else {
+            alert("Error al guardar el pedido: " + (err.message || "Error de servidor"));
+        }
     } finally {
         setIsSaving(false);
     }
@@ -365,10 +393,11 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
                 <label className="text-xs font-bold text-muted uppercase tracking-wider">Zona de Entrega</label>
                 <div className="relative">
                     <Compass className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={18} />
-                    <select value={selectedZone} onChange={(e) => setSelectedZone(e.target.value as OrderZone)} className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3.5 pl-10 pr-4 text-sm text-text focus:border-primary outline-none transition-colors appearance-none cursor-pointer shadow-sm font-bold">
-                        <option value="V. Mercedes">V. Mercedes</option>
-                        <option value="San Luis">San Luis</option>
-                        <option value="Norte">Norte</option>
+                    <select value={selectedZone} onChange={(e) => setSelectedZone(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3.5 pl-10 pr-4 text-sm text-text focus:border-primary outline-none transition-colors appearance-none cursor-pointer shadow-sm font-bold uppercase">
+                        {availableZones.map(z => (
+                            <option key={z.id} value={z.name}>{z.name}</option>
+                        ))}
+                        {availableZones.length === 0 && <option value="V. Mercedes">V. Mercedes (Default)</option>}
                     </select>
                 </div>
             </div>

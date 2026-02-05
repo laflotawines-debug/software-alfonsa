@@ -31,7 +31,7 @@ import { SupplierOrders } from './views/SupplierOrders';
 import { ListaChina } from './views/ListaChina';
 import { Expirations } from './views/Expirations'; // Added Import
 import { OrderAssemblyModal } from './components/OrderAssemblyModal';
-import { View, User, DetailedOrder, Trip, ProductExpiration, Provider, Transfer, OrderStatus, Product } from './types';
+import { View, User, DetailedOrder, Trip, ProductExpiration, Provider, Transfer, OrderStatus, Product, ExpirationStatus } from './types';
 import { 
     advanceOrderStatus, 
     updatePaymentMethod, 
@@ -100,6 +100,7 @@ export default function App() {
             
             setCurrentUser({ ...data, permissions });
             fetchOrders();
+            fetchExpirations();
         }
     };
 
@@ -139,6 +140,73 @@ export default function App() {
                 }))
             }));
             setOrders(mappedOrders);
+        }
+    };
+
+    const fetchExpirations = async () => {
+        try {
+            const [manualRes, systemRes] = await Promise.all([
+                supabase.from('product_expirations').select('*'),
+                supabase.from('stock_inbound_items')
+                    .select('*, master_products(desart)')
+                    .not('expiry_date', 'is', null)
+            ]);
+
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            
+            let allItems: ProductExpiration[] = [];
+
+            if (manualRes.data) {
+                const manual = manualRes.data.map((item: any) => {
+                    const expiryDate = new Date(item.expiry_date + 'T12:00:00');
+                    const diffTime = expiryDate.getTime() - today.getTime();
+                    const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    
+                    let status: ExpirationStatus = 'NORMAL';
+                    if (daysRemaining < 30) status = 'CRÍTICO';
+                    else if (daysRemaining < 90) status = 'PRÓXIMO';
+                    else if (daysRemaining < 180) status = 'MODERADO';
+
+                    return {
+                        id: item.id,
+                        productName: item.product_name,
+                        quantity: String(item.total_quantity),
+                        expiryDate,
+                        daysRemaining,
+                        status
+                    };
+                });
+                allItems = [...allItems, ...manual];
+            }
+
+            if (systemRes.data) {
+                const system = systemRes.data.map((item: any) => {
+                    const expiryDate = new Date(item.expiry_date + 'T12:00:00');
+                    const diffTime = expiryDate.getTime() - today.getTime();
+                    const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    
+                    let status: ExpirationStatus = 'NORMAL';
+                    if (daysRemaining < 30) status = 'CRÍTICO';
+                    else if (daysRemaining < 90) status = 'PRÓXIMO';
+                    else if (daysRemaining < 180) status = 'MODERADO';
+
+                    return {
+                        id: item.id,
+                        productName: item.master_products?.desart || 'Desconocido',
+                        quantity: String(item.quantity),
+                        expiryDate,
+                        daysRemaining,
+                        status
+                    };
+                });
+                allItems = [...allItems, ...system];
+            }
+
+            allItems.sort((a, b) => a.daysRemaining - b.daysRemaining);
+            setExpirations(allItems);
+        } catch (error) {
+            console.error('Error fetching expirations:', error);
         }
     };
 

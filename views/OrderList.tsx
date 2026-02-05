@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Plus, 
   Search, 
@@ -24,9 +24,10 @@ import {
   Activity, 
   ArrowDownLeft, 
   CalendarDays, 
-  X
+  X,
+  Filter // Added Filter icon
 } from 'lucide-react';
-import { DetailedOrder, View, OrderStatus, User } from '../types';
+import { DetailedOrder, View, OrderStatus, User, DeliveryZone } from '../types';
 import { 
     ORDER_WORKFLOW, 
     getStatusColor, 
@@ -35,6 +36,7 @@ import {
     hasPermission, 
     getOrderRefundTotal 
 } from '../logic';
+import { supabase } from '../supabase';
 
 interface OrderListProps {
   onNavigate: (view: View) => void;
@@ -68,8 +70,23 @@ export const OrderList: React.FC<OrderListProps> = ({
   const [currentTab, setCurrentTab] = useState<TabType>('active');
   const [searchTerm, setSearchTerm] = useState('');
   const [zoneFilter, setZoneFilter] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<string>(''); // Nuevo estado para filtro de status
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [confirmingBatchDelete, setConfirmingBatchDelete] = useState<string | null>(null);
+  const [zones, setZones] = useState<DeliveryZone[]>([]);
+
+  useEffect(() => {
+      const fetchZones = async () => {
+          const { data } = await supabase.from('delivery_zones').select('*').eq('active', true).order('name');
+          if (data) setZones(data);
+      };
+      fetchZones();
+  }, []);
+
+  // Resetear el filtro de estado cuando se cambia de pestaña (Activos <-> Entregados)
+  useEffect(() => {
+      setStatusFilter('');
+  }, [currentTab]);
 
   const activeOrders = orders.filter(o => o.status !== OrderStatus.ENTREGADO && o.status !== OrderStatus.PAGADO);
   const deliveredOrders = orders.filter(o => o.status === OrderStatus.ENTREGADO || o.status === OrderStatus.PAGADO);
@@ -81,7 +98,8 @@ export const OrderList: React.FC<OrderListProps> = ({
       const textToSearch = `${order.clientName} ${order.displayId}`.toLowerCase();
       const keywordsMatch = keywords.every(k => textToSearch.includes(k));
       const matchesZone = zoneFilter ? order.zone === zoneFilter : true;
-      return keywordsMatch && matchesZone;
+      const matchesStatus = statusFilter ? order.status === statusFilter : true; // Lógica nueva
+      return keywordsMatch && matchesZone && matchesStatus;
   });
 
   // Agrupación por Mes para pedidos entregados con tipado explícito
@@ -131,6 +149,16 @@ export const OrderList: React.FC<OrderListProps> = ({
       onDeleteOrders(orderIds);
       setConfirmingBatchDelete(null);
   };
+
+  // Obtener las opciones de estado disponibles según la pestaña actual
+  const availableStatusOptions = useMemo(() => {
+      const allStatuses = Object.keys(ORDER_WORKFLOW) as OrderStatus[];
+      if (currentTab === 'active') {
+          return allStatuses.filter(s => s !== OrderStatus.ENTREGADO && s !== OrderStatus.PAGADO);
+      } else {
+          return [OrderStatus.ENTREGADO, OrderStatus.PAGADO];
+      }
+  }, [currentTab]);
 
   return (
     <div className="flex flex-col gap-6 pb-10">
@@ -187,13 +215,30 @@ export const OrderList: React.FC<OrderListProps> = ({
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={20} />
             <input type="text" placeholder="Buscar por cliente o ID de pedido" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-surface border border-surfaceHighlight focus:border-primary focus:ring-1 focus:ring-primary text-text placeholder-muted text-sm outline-none transition-all shadow-sm" />
           </div>
-          <div className="relative min-w-[220px]">
+          
+          {/* FILTRO DE ZONA */}
+          <div className="relative min-w-[200px]">
              <Compass className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
-             <select value={zoneFilter} onChange={(e) => setZoneFilter(e.target.value)} className="w-full appearance-none pl-11 pr-10 py-3.5 rounded-xl bg-surface border border-surfaceHighlight focus:border-primary text-text text-sm cursor-pointer outline-none shadow-sm font-bold">
+             <select value={zoneFilter} onChange={(e) => setZoneFilter(e.target.value)} className="w-full appearance-none pl-11 pr-10 py-3.5 rounded-xl bg-surface border border-surfaceHighlight focus:border-primary text-text text-sm cursor-pointer outline-none shadow-sm font-bold uppercase">
                 <option value="">Todas las Zonas</option>
-                <option value="V. Mercedes">V. Mercedes</option>
-                <option value="San Luis">San Luis</option>
-                <option value="Norte">Norte</option>
+                {zones.map(z => (
+                    <option key={z.id} value={z.name}>{z.name}</option>
+                ))}
+                {zones.length === 0 && <option value="V. Mercedes">V. Mercedes (Default)</option>}
+            </select>
+            <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-muted pointer-events-none" size={18} />
+          </div>
+
+          {/* NUEVO FILTRO DE ESTADO */}
+          <div className="relative min-w-[220px]">
+             <Filter className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+             <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-full appearance-none pl-11 pr-10 py-3.5 rounded-xl bg-surface border border-surfaceHighlight focus:border-primary text-text text-sm cursor-pointer outline-none shadow-sm font-bold uppercase">
+                <option value="">Todos los Estados</option>
+                {availableStatusOptions.map(status => (
+                    <option key={status} value={status}>
+                        {ORDER_WORKFLOW[status]?.label || status}
+                    </option>
+                ))}
             </select>
             <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-muted pointer-events-none" size={18} />
           </div>
@@ -215,7 +260,7 @@ export const OrderList: React.FC<OrderListProps> = ({
               {filteredOrders.length === 0 && (
                   <div className="col-span-full py-24 text-center text-muted border-2 border-dashed border-surfaceHighlight rounded-3xl bg-surface/30 shadow-inner">
                       <Package size={56} className="mx-auto mb-4 opacity-20" />
-                      <p className="font-bold text-xl">Sin pedidos activos</p>
+                      <p className="font-bold text-xl">Sin pedidos activos con este filtro</p>
                   </div>
               )}
           </div>
@@ -224,7 +269,7 @@ export const OrderList: React.FC<OrderListProps> = ({
               {Object.keys(groupedDeliveredOrders).length === 0 && (
                   <div className="py-24 text-center text-muted border-2 border-dashed border-surfaceHighlight rounded-3xl bg-surface/30 shadow-inner">
                       <Package size={56} className="mx-auto mb-4 opacity-20" />
-                      <p className="font-bold text-xl">Sin historial de entregas</p>
+                      <p className="font-bold text-xl">Sin historial de entregas con este filtro</p>
                   </div>
               )}
               
