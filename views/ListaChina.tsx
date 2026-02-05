@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
     Copy, 
@@ -70,22 +69,6 @@ const SUB_CONFIG: Record<string, { label: string, emoji: string }> = {
     'ESTUCHE': { label: 'ESTUCHERIA Y GIFTPACK', emoji: '📦' },
     'GIFTPACK': { label: 'ESTUCHERIA Y GIFTPACK', emoji: '📦' }
 };
-
-// ==========================================
-// 2. ORDEN OBLIGATORIO DE BEBIDAS (REGLA 3)
-// ==========================================
-const BEBIDAS_ORDER = [
-    'CERVEZAS',
-    'CHAMPAGNE & ESPUMANTES',
-    'GIN Y GINEBRAS',
-    'VODKAS',
-    'RON',
-    'TEQUILAS',
-    'WHISKY',
-    'LICORES',
-    'GRAPAS',
-    'SIN ALCOHOL Y ENERGIZANTES'
-];
 
 export const ListaChina: React.FC = () => {
     const [products, setProducts] = useState<MasterProduct[]>([]);
@@ -190,8 +173,15 @@ export const ListaChina: React.FC = () => {
                 mainKey = '📋 OTROS';
             }
 
-            if (!hierarchy[mainKey][subLabel]) hierarchy[mainKey][subLabel] = [];
-            hierarchy[mainKey][subLabel].push(p);
+            // REGLA: VINOS SIN SUBCATEGORÍAS
+            // Si es vinos, usamos una key genérica para agrupar todo
+            if (mainKey === '🍷 VINOS') {
+                if (!hierarchy[mainKey]['__ALL__']) hierarchy[mainKey]['__ALL__'] = [];
+                hierarchy[mainKey]['__ALL__'].push(p);
+            } else {
+                if (!hierarchy[mainKey][subLabel]) hierarchy[mainKey][subLabel] = [];
+                hierarchy[mainKey][subLabel].push(p);
+            }
         });
 
         let text = "";
@@ -209,27 +199,18 @@ export const ListaChina: React.FC = () => {
 
             text += `${mainTitle}\n\n`;
 
-            // Ordenar subcategorías
-            let subKeys = Object.keys(subs);
-            if (mainTitle === '🥂 BEBIDAS') {
-                subKeys = subKeys.sort((a, b) => {
-                    const labelA = a.split(' ').slice(1).join(' ');
-                    const labelB = b.split(' ').slice(1).join(' ');
-                    const idxA = BEBIDAS_ORDER.indexOf(labelA);
-                    const idxB = BEBIDAS_ORDER.indexOf(labelB);
-                    if (idxA === -1 && idxB === -1) return a.localeCompare(b);
-                    if (idxA === -1) return 1;
-                    if (idxB === -1) return -1;
-                    return idxA - idxB;
-                });
-            } else {
-                subKeys = subKeys.sort();
-            }
+            // Ordenar subcategorías alfabéticamente (REGLA: BEBIDAS y OTROS alfabético, VINOS es lista plana)
+            const subKeys = Object.keys(subs).sort(); 
 
             subKeys.forEach((subLabel) => {
                 const items = subs[subLabel];
-                text += `${subLabel}\n\n`;
                 
+                // Si no es la categoría especial unificada de Vinos, imprimimos el subtítulo
+                if (mainTitle !== '🍷 VINOS') {
+                    text += `${subLabel}\n\n`;
+                }
+                
+                // Ordenar productos alfabéticamente
                 items.sort((a, b) => a.desart.localeCompare(b.desart)).forEach(p => {
                     const isNew = baseExists && snapshotMap[p.codart] === undefined;
                     text += `${p.desart.toUpperCase()} $${Math.round(p.pventa_4)}${isNew ? ' 🆕' : ''}\n`;
@@ -238,7 +219,9 @@ export const ListaChina: React.FC = () => {
                 text += "\n";
             });
 
-            text += "\n";
+            if (mainTitle !== '🍷 VINOS') {
+               // Ya agregamos salto de línea en el loop, si es necesario un separador extra
+            }
         });
 
         return text.trim();
@@ -257,7 +240,7 @@ export const ListaChina: React.FC = () => {
             await supabase.from('whatsapp_list_snapshot').delete().neq('codart', '._._._.'); 
             const payload = products.map(p => ({ 
                 codart: p.codart, 
-                desart: p.desart,
+                desart: p.desart, 
                 last_price: p.pventa_4 
             }));
 

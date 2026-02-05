@@ -1,47 +1,38 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   Plus, 
   Search, 
   ChevronDown, 
   Package, 
   RefreshCw, 
-  Edit2,
-  Trash2,
-  CheckCircle,
-  ShieldCheck,
-  Box,
-  AlertTriangle,
-  Play,
-  UserCheck,
-  Lock,
-  Eye,
-  XCircle,
-  FileText,
-  Loader2,
-  ClipboardCheck,
-  Truck,
-  MapPin,
-  RotateCcw,
-  Compass,
-  Calendar,
-  ChevronRight,
-  ArrowRight,
-  Receipt,
-  Send,
-  Undo2,
-  History,
-  Activity,
-  ArrowDownLeft
+  Trash2, 
+  CheckCircle, 
+  ShieldCheck, 
+  Box, 
+  AlertTriangle, 
+  Play, 
+  Lock, 
+  Eye, 
+  XCircle, 
+  Loader2, 
+  ClipboardCheck, 
+  Truck, 
+  Compass, 
+  Receipt, 
+  History, 
+  Activity, 
+  ArrowDownLeft, 
+  CalendarDays, 
+  X
 } from 'lucide-react';
-import { DetailedOrder, View, OrderStatus, User, OrderZone } from '../types';
+import { DetailedOrder, View, OrderStatus, User } from '../types';
 import { 
     ORDER_WORKFLOW, 
     getStatusColor, 
     getZoneStyles, 
     getMissingProducts, 
-    getReturnedProducts, 
-    hasPermission,
+    hasPermission, 
     getOrderRefundTotal 
 } from '../logic';
 
@@ -51,28 +42,39 @@ interface OrderListProps {
   currentUser: User;
   onOpenAssembly: (order: DetailedOrder) => void;
   onDeleteOrder: (orderId: string) => void; 
+  onDeleteOrders: (orderIds: string[]) => void;
   onAdvanceOrder: (order: DetailedOrder) => void;
+  onRefresh: () => Promise<void>;
 }
 
-type TabType = 'active' | 'unpaid' | 'delivered';
+type TabType = 'active' | 'delivered';
+
+// Interfaz para el agrupamiento de pedidos
+interface GroupedOrderData {
+    label: string;
+    orders: DetailedOrder[];
+}
 
 export const OrderList: React.FC<OrderListProps> = ({ 
     onNavigate, 
     orders, 
     currentUser, 
     onOpenAssembly, 
-    onDeleteOrder,
-    onAdvanceOrder 
+    onDeleteOrder, 
+    onDeleteOrders,
+    onAdvanceOrder,
+    onRefresh 
 }) => {
   const [currentTab, setCurrentTab] = useState<TabType>('active');
   const [searchTerm, setSearchTerm] = useState('');
   const [zoneFilter, setZoneFilter] = useState<string>('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [confirmingBatchDelete, setConfirmingBatchDelete] = useState<string | null>(null);
 
   const activeOrders = orders.filter(o => o.status !== OrderStatus.ENTREGADO && o.status !== OrderStatus.PAGADO);
   const deliveredOrders = orders.filter(o => o.status === OrderStatus.ENTREGADO || o.status === OrderStatus.PAGADO);
-  const unpaidOrders = orders.filter(o => o.status === OrderStatus.ENTREGADO);
 
-  let currentList = currentTab === 'active' ? activeOrders : currentTab === 'delivered' ? deliveredOrders : unpaidOrders;
+  let currentList = currentTab === 'active' ? activeOrders : deliveredOrders;
 
   const filteredOrders = currentList.filter(order => {
       const keywords = searchTerm.toLowerCase().split(/\s+/).filter(k => k.length > 0);
@@ -81,6 +83,54 @@ export const OrderList: React.FC<OrderListProps> = ({
       const matchesZone = zoneFilter ? order.zone === zoneFilter : true;
       return keywordsMatch && matchesZone;
   });
+
+  // Agrupación por Mes para pedidos entregados con tipado explícito
+  const groupedDeliveredOrders = useMemo<Record<string, GroupedOrderData>>(() => {
+      if (currentTab !== 'delivered') return {} as Record<string, GroupedOrderData>;
+      
+      const groups: Record<string, GroupedOrderData> = {};
+      
+      filteredOrders.forEach(order => {
+          const parts = order.createdDate.split('/');
+          if (parts.length === 3) {
+              const month = parseInt(parts[1], 10);
+              const year = parts[2];
+              const monthName = new Date(parseInt(year), month - 1, 1).toLocaleString('es-AR', { month: 'long' });
+              const key = `${year}-${month.toString().padStart(2, '0')}`;
+              const label = `${monthName} ${year}`;
+              
+              if (!groups[key]) {
+                  groups[key] = { label: label.charAt(0).toUpperCase() + label.slice(1), orders: [] };
+              }
+              groups[key].orders.push(order);
+          } else {
+              const key = 'otros';
+              if (!groups[key]) groups[key] = { label: 'Otros / Sin Fecha', orders: [] };
+              groups[key].orders.push(order);
+          }
+      });
+      
+      // Ordenar claves descendentemente (más reciente primero)
+      const sortedKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+      
+      const sortedGroups: Record<string, GroupedOrderData> = {};
+      sortedKeys.forEach(key => {
+          sortedGroups[key] = groups[key];
+      });
+      
+      return sortedGroups;
+  }, [filteredOrders, currentTab]);
+
+  const handleManualRefresh = async () => {
+      setIsRefreshing(true);
+      await onRefresh();
+      setIsRefreshing(false);
+  };
+
+  const handleBatchDelete = (key: string, orderIds: string[]) => {
+      onDeleteOrders(orderIds);
+      setConfirmingBatchDelete(null);
+  };
 
   return (
     <div className="flex flex-col gap-6 pb-10">
@@ -99,8 +149,13 @@ export const OrderList: React.FC<OrderListProps> = ({
           >
             <Box size={18} /> Control de Stock
           </button>
-          <button className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-surface text-text border border-surfaceHighlight hover:border-primary/50 transition-all text-sm font-bold shadow-sm">
-            <RefreshCw size={18} /> Actualizar
+          <button 
+            onClick={handleManualRefresh}
+            disabled={isRefreshing}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-surface text-text border border-surfaceHighlight hover:border-primary/50 transition-all text-sm font-bold shadow-sm disabled:opacity-50"
+          >
+            <RefreshCw size={18} className={isRefreshing ? 'animate-spin text-primary' : ''} /> 
+            {isRefreshing ? 'Actualizando...' : 'Actualizar'}
           </button>
           
           {hasPermission(currentUser, 'orders.create') && (
@@ -115,7 +170,6 @@ export const OrderList: React.FC<OrderListProps> = ({
         <div className="p-1 rounded-xl bg-surface w-full sm:w-fit flex gap-1 border border-surfaceHighlight shadow-sm">
           {[
             { id: 'active', label: 'Activos' },
-            { id: 'unpaid', label: 'Sin pagar' },
             { id: 'delivered', label: 'Entregados' }
           ].map((tab) => (
             <button 
@@ -123,7 +177,7 @@ export const OrderList: React.FC<OrderListProps> = ({
                 onClick={() => setCurrentTab(tab.id as TabType)} 
                 className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-sm font-black transition-all whitespace-nowrap ${currentTab === tab.id ? 'bg-surfaceHighlight text-text shadow-sm' : 'text-muted hover:text-text hover:bg-surfaceHighlight/50'}`}
             >
-              {tab.label} ({tab.id === 'active' ? activeOrders.length : tab.id === 'unpaid' ? unpaidOrders.length : deliveredOrders.length})
+              {tab.label} ({tab.id === 'active' ? activeOrders.length : deliveredOrders.length})
             </button>
           ))}
         </div>
@@ -146,24 +200,87 @@ export const OrderList: React.FC<OrderListProps> = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-in fade-in duration-500">
-          {filteredOrders.map((order) => (
-              <DetailedOrderCard 
-                  key={order.id} 
-                  order={order} 
-                  currentUser={currentUser} 
-                  onOpenAssembly={onOpenAssembly} 
-                  onDeleteOrder={onDeleteOrder} 
-                  onAdvanceOrder={onAdvanceOrder} 
-              />
-          ))}
-          {filteredOrders.length === 0 && (
-              <div className="col-span-full py-24 text-center text-muted border-2 border-dashed border-surfaceHighlight rounded-3xl bg-surface/30 shadow-inner">
-                  <Package size={56} className="mx-auto mb-4 opacity-20" />
-                  <p className="font-bold text-xl">Sin pedidos para mostrar</p>
-              </div>
-          )}
-      </div>
+      {currentTab === 'active' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-in fade-in duration-500">
+              {filteredOrders.map((order) => (
+                  <DetailedOrderCard 
+                      key={order.id} 
+                      order={order} 
+                      currentUser={currentUser} 
+                      onOpenAssembly={onOpenAssembly} 
+                      onDeleteOrder={onDeleteOrder} 
+                      onAdvanceOrder={onAdvanceOrder} 
+                  />
+              ))}
+              {filteredOrders.length === 0 && (
+                  <div className="col-span-full py-24 text-center text-muted border-2 border-dashed border-surfaceHighlight rounded-3xl bg-surface/30 shadow-inner">
+                      <Package size={56} className="mx-auto mb-4 opacity-20" />
+                      <p className="font-bold text-xl">Sin pedidos activos</p>
+                  </div>
+              )}
+          </div>
+      ) : (
+          <div className="space-y-12 animate-in fade-in duration-500">
+              {Object.keys(groupedDeliveredOrders).length === 0 && (
+                  <div className="py-24 text-center text-muted border-2 border-dashed border-surfaceHighlight rounded-3xl bg-surface/30 shadow-inner">
+                      <Package size={56} className="mx-auto mb-4 opacity-20" />
+                      <p className="font-bold text-xl">Sin historial de entregas</p>
+                  </div>
+              )}
+              
+              {Object.entries(groupedDeliveredOrders).map(([key, group]: [string, GroupedOrderData]) => (
+                  <div key={key} className="space-y-6">
+                      <div className="flex items-center justify-between border-b border-surfaceHighlight pb-2">
+                          <div className="flex items-center gap-3">
+                              <CalendarDays className="text-primary" size={24} />
+                              <h3 className="text-xl font-black text-text uppercase italic tracking-tight">{group.label}</h3>
+                              <span className="bg-surfaceHighlight text-muted px-2 py-0.5 rounded text-xs font-bold">{group.orders.length}</span>
+                          </div>
+                          
+                          {/* DELETE BATCH BUTTON */}
+                          {currentUser.role === 'vale' && (
+                              confirmingBatchDelete === key ? (
+                                  <div className="flex items-center gap-2 animate-in zoom-in-95">
+                                      <button 
+                                          onClick={() => handleBatchDelete(key, group.orders.map(o => o.id))}
+                                          className="px-4 py-2 bg-red-600 text-white rounded-xl font-black text-xs uppercase shadow-lg shadow-red-500/20 active:scale-95 transition-all"
+                                      >
+                                          ¿Confirmar Eliminar Lote?
+                                      </button>
+                                      <button 
+                                          onClick={() => setConfirmingBatchDelete(null)}
+                                          className="p-2 bg-surfaceHighlight text-text rounded-xl hover:bg-surfaceHighlight/80"
+                                      >
+                                          <X size={16} />
+                                      </button>
+                                  </div>
+                              ) : (
+                                  <button 
+                                      onClick={() => setConfirmingBatchDelete(key)}
+                                      className="flex items-center gap-2 px-4 py-2 text-muted hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all text-xs font-black uppercase"
+                                  >
+                                      <Trash2 size={16} /> Eliminar Mes
+                                  </button>
+                              )
+                          )}
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                          {group.orders.map((order) => (
+                              <DetailedOrderCard 
+                                  key={order.id} 
+                                  order={order} 
+                                  currentUser={currentUser} 
+                                  onOpenAssembly={onOpenAssembly} 
+                                  onDeleteOrder={onDeleteOrder} 
+                                  onAdvanceOrder={onAdvanceOrder} 
+                              />
+                          ))}
+                      </div>
+                  </div>
+              ))}
+          </div>
+      )}
     </div>
   );
 };
@@ -252,6 +369,23 @@ const DetailedOrderCard: React.FC<{ order: DetailedOrder; currentUser: User; onO
   };
 
   const getArmadorActions = () => {
+    if (order.status === OrderStatus.FACTURA_CONTROLADA) {
+        return (
+            <button onClick={() => onAdvanceOrder(order)} className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase text-[11px] shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2 active:scale-95 transition-all">
+                <Truck size={14} /> Salir a Reparto
+            </button>
+        );
+    }
+
+    // MODIFICACIÓN: Permitir al armador entrar a gestionar la entrega/devoluciones
+    if (order.status === OrderStatus.EN_TRANSITO) {
+        return (
+            <button onClick={() => onOpenAssembly(order)} className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black uppercase text-[11px] shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2 active:scale-95 transition-all">
+                <CheckCircle size={14} /> Gestionar Entrega / Devolución
+            </button>
+        );
+    }
+
     let label = "Ver Detalle";
     let icon = <Eye size={14} />;
     let className = "bg-surfaceHighlight text-text hover:bg-surfaceHighlight/80";

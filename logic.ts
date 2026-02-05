@@ -1,3 +1,4 @@
+
 import { 
     Order, 
     Product, 
@@ -66,6 +67,7 @@ export const SYSTEM_NAV_STRUCTURE = [
     module: 'Clientes',
     subItems: [
         { id: View.CLIENTS_MASTER, label: 'Gestión de clientes', permission: 'catalog.clients' },
+        { id: View.CLIENT_COLLECTIONS, label: 'Cobranzas', permission: 'catalog.collections' },
         { id: View.CLIENT_STATEMENTS, label: 'Estados de Cuenta', permission: 'catalog.statements' },
     ]
   },
@@ -98,7 +100,9 @@ export const SYSTEM_NAV_STRUCTURE = [
 
 export const EXTRA_PERMISSIONS = [
     { key: 'orders.sheet_manage', label: 'Gestionar/Borrar Viajes', module: 'Pedidos' },
-    { key: 'tools.attendance', label: 'Asistencia', module: 'Herramientas' }
+    { key: 'tools.attendance', label: 'Asistencia', module: 'Herramientas' },
+    { key: 'catalog.clients', label: 'Gestión de Clientes', module: 'Clientes' },
+    { key: 'catalog.collections', label: 'Cobranzas Clientes', module: 'Clientes' }
 ];
 
 export const roundToCommercial = (val: number): number => {

@@ -5,59 +5,52 @@ import { User } from '../types';
 
 export const SqlEditor: React.FC<{ currentUser: User }> = ({ currentUser }) => {
     const [query, setQuery] = useState(`-- ========================================================
--- SCRIPT DE REPARACIÓN OBLIGATORIO (EJECUTAR EN SUPABASE)
+-- SCRIPT DE MANTENIMIENTO: ESTRUCTURA BASE DE DATOS
 -- ========================================================
 
--- 1. FUNCIÓN PARA FIJAR CANTIDAD ENVIADA (REPARTO)
--- Soluciona el error PGRST202 al pasar a reparto
-CREATE OR REPLACE FUNCTION public.set_shipped_quantity_for_order(p_order_id uuid)
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-BEGIN
-  -- Al pasar a reparto, fijamos que lo enviado (shipped_quantity) 
-  -- es igual a lo que hay cargado actualmente (quantity)
-  UPDATE public.order_items
-  SET shipped_quantity = quantity
-  WHERE order_id = p_order_id;
-END;
-$$;
+-- 1. Agregar columna de Sucursal Preferida a Perfiles
+ALTER TABLE public.profiles 
+ADD COLUMN IF NOT EXISTS preferred_branch text DEFAULT 'LLERENA';
 
--- 2. ASEGURAR COLUMNA DE CANTIDAD ENVIADA (NOTA DE CRÉDITO)
-ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS shipped_quantity integer;
-
--- 3. ASIGNAR ROL "VALE" (ADMIN) A USUARIOS ESPECÍFICOS
-UPDATE public.profiles
-SET role = 'vale'
-WHERE id IN (
-  SELECT id FROM auth.users 
-  WHERE LOWER(email) IN ('sanchezgerman515@gmail.com', 'sattipablo@gmail.com')
+-- 2. Tabla de Historial de Cobranzas
+CREATE TABLE IF NOT EXISTS public.client_collections (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  client_code text NOT NULL,
+  amount numeric DEFAULT 0,
+  date date NOT NULL DEFAULT CURRENT_DATE,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT client_collections_pkey PRIMARY KEY (id),
+  CONSTRAINT client_collections_client_fkey FOREIGN KEY (client_code) REFERENCES public.clients_master(codigo)
 );
 
--- 4. INSERTAR PERMISOS FUNDAMENTALES
-INSERT INTO public.app_permissions (key, module, label)
-VALUES 
-    ('orders.view', 'Pedidos', 'Ver Gestión de Pedidos'),
-    ('orders.create', 'Pedidos', 'Crear Nuevo Pedido'),
-    ('orders.sheet', 'Pedidos', 'Ver Planilla de Viajes'),
-    ('orders.sheet_manage', 'Pedidos', 'Gestionar/Borrar Viajes'),
-    ('orders.view_financials', 'Pedidos', 'Ver Montos en Tarjetas'),
-    ('tools.price_management', 'Herramientas', 'Gestión de Precios'),
-    ('tools.stock_control', 'Herramientas', 'Gestión de Stock'),
-    ('tools.presupuestador', 'Herramientas', 'Presupuestador'),
-    ('tools.etiquetador', 'Herramientas', 'Etiquetador'),
-    ('tools.lista_china', 'Herramientas', 'Lista China'),
-    ('catalog.statements', 'Clientes', 'Estados de Cuenta'),
-    ('inventory.inbounds', 'Inventario', 'Gestionar Ingresos')
-ON CONFLICT (key) DO UPDATE 
-SET label = EXCLUDED.label, module = EXCLUDED.module;
+-- 3. Tabla de Cuenta Corriente (Movimientos)
+CREATE TABLE IF NOT EXISTS public.client_account_movements (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  client_code text NOT NULL,
+  date date NOT NULL DEFAULT CURRENT_DATE,
+  concept text,
+  debit numeric DEFAULT 0,
+  credit numeric DEFAULT 0,
+  order_id uuid,
+  collection_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  created_by uuid,
+  is_annulled boolean DEFAULT false,
+  CONSTRAINT client_account_movements_pkey PRIMARY KEY (id),
+  CONSTRAINT client_account_movements_client_fkey FOREIGN KEY (client_code) REFERENCES public.clients_master(codigo)
+);
 
--- 5. POLÍTICAS RLS (PERMITIR ELIMINACIÓN)
-DROP POLICY IF EXISTS "Permitir borrado a vales" ON public.clients_master;
-CREATE POLICY "Permitir borrado a vales" ON public.clients_master
-    FOR DELETE
-    USING (true);`);
+-- 4. Actualizar políticas de seguridad
+ALTER TABLE public.client_collections ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Enable all access collections" ON public.client_collections;
+CREATE POLICY "Enable all access collections" ON public.client_collections FOR ALL USING (true) WITH CHECK (true);
+
+ALTER TABLE public.client_account_movements ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Enable all access movements" ON public.client_account_movements;
+CREATE POLICY "Enable all access movements" ON public.client_account_movements FOR ALL USING (true) WITH CHECK (true);
+`);
 
     const copyToClipboard = () => {
         navigator.clipboard.writeText(query);
@@ -71,15 +64,15 @@ CREATE POLICY "Permitir borrado a vales" ON public.clients_master
                     <Database className="text-primary" size={32} /> Editor SQL
                 </h2>
                 <button onClick={copyToClipboard} className="flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-primaryHover transition-all">
-                    <ClipboardCheck size={18} /> Copiar Script de Reparación
+                    <ClipboardCheck size={18} /> Copiar Script
                 </button>
             </div>
             <div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 shadow-sm">
                 <div className="flex items-center justify-between mb-4">
                     <span className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-2">
-                        <Terminal size={14} className="text-primary" /> Scripts de Configuración
+                        <Terminal size={14} className="text-primary" /> SQL Console
                     </span>
-                    <span className="text-[9px] font-bold text-orange-500 uppercase bg-orange-500/10 px-2 py-1 rounded">Fix: Reparto & Nota de Crédito</span>
+                    <span className="text-[9px] font-bold text-green-500 uppercase bg-green-500/10 px-2 py-1 rounded">Sistema Fix</span>
                 </div>
                 <textarea 
                     value={query}

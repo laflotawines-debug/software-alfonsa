@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
     Truck, Plus, Search, Trash2, Loader2, Send, AlertCircle, 
@@ -25,6 +26,9 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
 
     const [reviewInbound, setReviewInbound] = useState<StockInbound | null>(null);
     const [detailsInbound, setDetailsInbound] = useState<StockInbound | null>(null);
+
+    // Estado para confirmación de eliminación
+    const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
 
     const [selectedProvider, setSelectedProvider] = useState('');
     const [supplierRef, setSupplierRef] = useState(''); 
@@ -217,11 +221,12 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
 
     const handleAnular = async (inb: StockInbound) => {
         if (inb.status === 'aprobado') return alert("No se puede anular un ingreso ya aprobado.");
-        if (!confirm("¿Realmente desea anular este ingreso?")) return;
+        // Se elimina el confirm del navegador, la UI maneja la confirmación
         setIsLoading(true);
         try {
             const { error } = await supabase.rpc('anular_ingreso_stock', { p_inbound_id: inb.id });
             if (error) throw error;
+            setConfirmingDeleteId(null);
             await fetchInitialData();
         } catch (e: any) { alert("Error: " + e.message); } finally { setIsLoading(false); }
     };
@@ -402,18 +407,30 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
                             </button>
                             {isExpanded && (
                                 <div className="p-4 bg-background/20 border-t border-surfaceHighlight space-y-3 animate-in slide-in-from-top-2">
-                                    {group.items.map(inb => (
-                                        <div key={inb.id} className="bg-surface border border-surfaceHighlight rounded-2xl p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 hover:border-primary/30 transition-all shadow-sm">
-                                            <div className="flex-1 space-y-2"><div className="flex items-center gap-3"><span className="text-[10px] font-black text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20">#{inb.display_number}</span><div className="flex items-center gap-2 text-text font-black uppercase text-sm italic"><FileText size={14} className="text-primary" />Ref: {inb.observations || 'S/REF'}</div></div>
-                                                <div className="flex flex-wrap gap-x-4 gap-y-1"><span className="text-[10px] font-bold text-muted uppercase flex items-center gap-1"><Calendar size={12} /> {new Date(inb.created_at).toLocaleDateString()}</span><span className="text-[10px] font-bold text-muted uppercase flex items-center gap-1"><Warehouse size={12} /> {inb.warehouse_name}</span><StatusBadge status={inb.status} /></div>
+                                    {group.items.map(inb => {
+                                        const isConfirming = confirmingDeleteId === inb.id;
+                                        return (
+                                            <div key={inb.id} className="bg-surface border border-surfaceHighlight rounded-2xl p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 hover:border-primary/30 transition-all shadow-sm">
+                                                <div className="flex-1 space-y-2"><div className="flex items-center gap-3"><span className="text-[10px] font-black text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20">#{inb.display_number}</span><div className="flex items-center gap-2 text-text font-black uppercase text-sm italic"><FileText size={14} className="text-primary" />Ref: {inb.observations || 'S/REF'}</div></div>
+                                                    <div className="flex flex-wrap gap-x-4 gap-y-1"><span className="text-[10px] font-bold text-muted uppercase flex items-center gap-1"><Calendar size={12} /> {new Date(inb.created_at).toLocaleDateString()}</span><span className="text-[10px] font-bold text-muted uppercase flex items-center gap-1"><Warehouse size={12} /> {inb.warehouse_name}</span><StatusBadge status={inb.status} /></div>
+                                                </div>
+                                                <div className="flex gap-2 w-full md:w-auto">
+                                                    <button onClick={() => setDetailsInbound(inb)} className="flex-1 md:flex-none px-4 py-2.5 rounded-xl border border-surfaceHighlight text-text hover:bg-surfaceHighlight font-black text-[10px] uppercase transition-all flex items-center justify-center gap-2 shadow-sm"><Eye size={16}/> Detalle</button>
+                                                    {inb.status === 'enviado' && currentUser.role === 'vale' && (<button onClick={() => setReviewInbound(inb)} className="flex-1 md:flex-none px-6 py-2.5 rounded-xl bg-green-600 text-white hover:bg-green-700 font-black text-[10px] uppercase shadow-lg shadow-green-900/20 transition-all active:scale-95 flex items-center justify-center gap-2"><Check size={16}/> Aprobar</button>)}
+                                                    {inb.status !== 'aprobado' && inb.status !== 'anulado' && (
+                                                        isConfirming ? (
+                                                            <div className="flex items-center gap-1 animate-in zoom-in-95">
+                                                                <button onClick={() => handleAnular(inb)} className="px-3 py-2.5 bg-red-600 text-white rounded-xl text-[9px] font-black uppercase shadow-lg shadow-red-500/20 active:scale-90 transition-all">Confirmar</button>
+                                                                <button onClick={() => setConfirmingDeleteId(null)} className="p-2.5 bg-surfaceHighlight text-text rounded-xl"><X size={14}/></button>
+                                                            </div>
+                                                        ) : (
+                                                            <button onClick={() => setConfirmingDeleteId(inb.id)} className="p-2.5 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-all shadow-sm" title="Anular Ingreso"><Trash2 size={16}/></button>
+                                                        )
+                                                    )}
+                                                </div>
                                             </div>
-                                            <div className="flex gap-2 w-full md:w-auto">
-                                                <button onClick={() => setDetailsInbound(inb)} className="flex-1 md:flex-none px-4 py-2.5 rounded-xl border border-surfaceHighlight text-text hover:bg-surfaceHighlight font-black text-[10px] uppercase transition-all flex items-center justify-center gap-2 shadow-sm"><Eye size={16}/> Detalle</button>
-                                                {inb.status === 'enviado' && currentUser.role === 'vale' && (<button onClick={() => setReviewInbound(inb)} className="flex-1 md:flex-none px-6 py-2.5 rounded-xl bg-green-600 text-white hover:bg-green-700 font-black text-[10px] uppercase shadow-lg shadow-green-900/20 transition-all active:scale-95 flex items-center justify-center gap-2"><Check size={16}/> Aprobar</button>)}
-                                                {inb.status !== 'aprobado' && inb.status !== 'anulado' && (<button onClick={() => handleAnular(inb)} className="p-2.5 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-all shadow-sm" title="Anular Ingreso"><Trash2 size={16}/></button>)}
-                                            </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>

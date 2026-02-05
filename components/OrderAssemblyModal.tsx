@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+
+import React, { useState, useEffect, useRef } from 'react';
 import { 
     X, 
     Check, 
@@ -29,9 +30,11 @@ import {
     LogOut,
     MessageCircle,
     Share2,
-    ArrowDownLeft
+    ArrowDownLeft,
+    Search,
+    Package
 } from 'lucide-react';
-import { Order, Product, User, OrderStatus, PaymentMethod } from '../types';
+import { Order, Product, User, OrderStatus, PaymentMethod, MasterProduct } from '../types';
 import { updatePaymentMethod } from '../logic';
 import { jsPDF } from 'jspdf';
 import { supabase } from '../supabase';
@@ -71,7 +74,12 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     const [isSharing, setIsSharing] = useState(false);
     const [clientPhone, setClientPhone] = useState<string | null>(null);
 
+    // Estados para agregar producto manual con búsqueda
     const [isAddingProduct, setIsAddingProduct] = useState(false);
+    const [searchProdTerm, setSearchProdTerm] = useState('');
+    const [prodSearchResults, setProdSearchResults] = useState<MasterProduct[]>([]);
+    const [isSearchingProd, setIsSearchingProd] = useState(false);
+    
     const [newProdCode, setNewProdCode] = useState('');
     const [newProdName, setNewProdName] = useState('');
     const [newProdQty, setNewProdQty] = useState('1');
@@ -107,6 +115,37 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         fetchClientPhone();
     }, [order.clientName]);
 
+    const handleSearchProduct = async (val: string) => {
+        setSearchProdTerm(val);
+        const trimmed = val.trim();
+        if (trimmed.length < 2) {
+            setProdSearchResults([]);
+            return;
+        }
+        setIsSearchingProd(true);
+        try {
+            const words = trimmed.split(/\s+/).filter(w => w.length > 0);
+            let query = supabase.from('master_products').select('*');
+            words.forEach(word => {
+                query = query.ilike('desart', `%${word}%`);
+            });
+            const { data } = await query.limit(5);
+            setProdSearchResults(data || []);
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setIsSearchingProd(false);
+        }
+    };
+
+    const selectNewProduct = (p: MasterProduct) => {
+        setNewProdCode(p.codart);
+        setNewProdName(p.desart);
+        setNewProdPrice(String(p.pventa_1 || 0));
+        setProdSearchResults([]);
+        setSearchProdTerm('');
+    };
+
     const isOriginalAssembler = order.assemblerId === currentUser.id;
     const isReadyForControl = order.status === OrderStatus.ARMADO;
     const selfControlBlocked = isOriginalAssembler && isReadyForControl && currentUser.role === 'armador';
@@ -120,13 +159,17 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         isVale || 
         (currentUser.role === 'armador' && order.status === OrderStatus.EN_ARMADO) ||
         (currentUser.role === 'armador' && isControlStep) ||
-        (currentUser.role === 'armador' && isTransitStep) ||
+        (currentUser.role === 'armador' && isTransitStep) || // Se habilita edición en tránsito para armador
         isInvoiceControlStep ||
         isReadyForTransit
     );
 
     const canEditMetadata = isVale && !occupiedByOther;
-    const showAdvanceButton = !isBillingStep && !isTransitStep && !isFinishedStep && !occupiedByOther; 
+    
+    // Armador puede avanzar estado si no está bloqueado, no es facturación, y no está terminado.
+    // También puede avanzar si está en tránsito (marcar entregado)
+    const showAdvanceButton = !isBillingStep && !isFinishedStep && !occupiedByOther; 
+    
     const assemblerName = order.history.find(h => h.newState === OrderStatus.ARMADO || h.details?.includes('Armado'))?.userName || order.assemblerName || '-';
     const showFinancials = isVale;
 
@@ -188,7 +231,6 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
             currentY += 5;
         }
 
-        // SECCIÓN FALTANTES (DE DEPÓSITO)
         const shortages = order.products.filter(p => p.originalQuantity > (p.shippedQuantity ?? p.quantity));
         if (shortages.length > 0) {
             currentY += 10;
@@ -220,7 +262,6 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
             });
         }
 
-        // SECCIÓN NOTA DE CRÉDITO / DEVOLUCIONES (DE REPARTO)
         const returns = order.products.filter(p => p.shippedQuantity && p.shippedQuantity > p.quantity);
         if (returns.length > 0) {
             currentY += 10;
@@ -359,20 +400,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         setNewProdName('');
         setNewProdQty('1');
         setNewProdPrice('0');
-    };
-
-    const handleDeleteOrderClick = (e: React.MouseEvent) => {
-        e.stopPropagation();
-        e.preventDefault();
-        if (isConfirmingDelete) {
-            if (onDeleteOrder) {
-                onDeleteOrder(order.id);
-                onClose();
-            }
-        } else {
-            setIsConfirmingDelete(true);
-            setTimeout(() => setIsConfirmingDelete(false), 4000);
-        }
+        setSearchProdTerm('');
     };
 
     const handleInvoiceClick = () => {
@@ -662,12 +690,12 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                             <div className={selfControlBlocked || occupiedByOther ? 'opacity-40 grayscale pointer-events-none' : ''}>
                                 <div className="flex justify-between items-center mb-4">
                                     <h3 className="text-lg font-bold text-text">Detalle de Productos</h3>
-                                    {isVale && !isAddingProduct && !isFinishedStep && (
+                                    {canEditProducts && !isAddingProduct && !isFinishedStep && (
                                         <button 
                                             onClick={() => setIsAddingProduct(true)}
-                                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surfaceHighlight border border-surfaceHighlight text-text text-xs font-bold transition-all"
+                                            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary/10 text-primary border border-primary/20 text-xs font-black uppercase transition-all hover:bg-primary hover:text-white shadow-sm"
                                         >
-                                            <Plus size={14} /> Agregar Manual
+                                            <Plus size={16} /> Agregar Producto
                                         </button>
                                     )}
                                 </div>
@@ -678,12 +706,40 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                             <h4 className="text-xs font-bold uppercase text-primary">Nuevo Producto</h4>
                                             <button onClick={() => setIsAddingProduct(false)}><X size={16}/></button>
                                         </div>
-                                        <div className="grid grid-cols-12 gap-2">
-                                            <input className="col-span-3 p-2 rounded bg-surface border border-surfaceHighlight text-xs" placeholder="Cód" value={newProdCode} onChange={e => setNewProdCode(e.target.value)}/>
-                                            <input className="col-span-5 p-2 rounded bg-surface border border-surfaceHighlight text-xs" placeholder="Nombre" value={newProdName} onChange={e => setNewProdName(e.target.value)}/>
-                                            <input className="col-span-2 p-2 rounded bg-surface border border-surfaceHighlight text-xs text-center" placeholder="Cant" type="number" value={newProdQty} onChange={e => setNewProdQty(e.target.value)}/>
-                                            {showFinancials && <input className="col-span-2 p-2 rounded bg-surface border border-surfaceHighlight text-xs text-right" placeholder="Precio" type="number" value={newProdPrice} onChange={e => setNewProdPrice(e.target.value)}/>}
-                                            <button onClick={handleSaveNewProduct} className="col-span-12 mt-2 py-2 bg-primary text-white font-bold rounded text-xs">Insertar</button>
+                                        <div className="space-y-3">
+                                            <div className="relative">
+                                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={14}/>
+                                                <input 
+                                                    autoFocus
+                                                    type="text" 
+                                                    value={searchProdTerm} 
+                                                    onChange={(e) => handleSearchProduct(e.target.value)} 
+                                                    placeholder="Buscar en maestro..." 
+                                                    className="w-full bg-background border border-surfaceHighlight rounded-lg py-2 pl-9 pr-4 text-xs font-bold uppercase outline-none focus:border-primary"
+                                                />
+                                                {isSearchingProd && <div className="absolute right-3 top-1/2 -translate-y-1/2"><Loader2 size={14} className="animate-spin text-primary"/></div>}
+                                                {prodSearchResults.length > 0 && (
+                                                    <div className="absolute top-full left-0 w-full bg-surface border border-primary/30 rounded-xl shadow-xl mt-1 z-50 max-h-40 overflow-y-auto">
+                                                        {prodSearchResults.map(p => (
+                                                            <button 
+                                                                key={p.codart} 
+                                                                onClick={() => selectNewProduct(p)}
+                                                                className="w-full p-2 text-left text-[10px] font-bold uppercase hover:bg-primary/5 border-b border-surfaceHighlight last:border-none flex justify-between"
+                                                            >
+                                                                <span>{p.desart}</span>
+                                                                <span className="text-muted">#{p.codart}</span>
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div className="grid grid-cols-12 gap-2">
+                                                <input className="col-span-3 p-2 rounded bg-surface border border-surfaceHighlight text-xs" placeholder="Cód" value={newProdCode} onChange={e => setNewProdCode(e.target.value)} />
+                                                <input className="col-span-5 p-2 rounded bg-surface border border-surfaceHighlight text-xs" placeholder="Nombre" value={newProdName} onChange={e => setNewProdName(e.target.value)}/>
+                                                <input className="col-span-2 p-2 rounded bg-surface border border-surfaceHighlight text-xs text-center" placeholder="Cant" type="number" value={newProdQty} onChange={e => setNewProdQty(e.target.value)}/>
+                                                {showFinancials && <input className="col-span-2 p-2 rounded bg-surface border border-surfaceHighlight text-xs text-right" placeholder="Precio" type="number" value={newProdPrice} onChange={e => setNewProdPrice(e.target.value)}/>}
+                                                <button onClick={handleSaveNewProduct} className="col-span-12 mt-2 py-2 bg-primary text-white font-bold rounded text-xs hover:bg-primaryHover transition-colors">Insertar</button>
+                                            </div>
                                         </div>
                                     </div>
                                 )}

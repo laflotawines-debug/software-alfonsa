@@ -1,13 +1,15 @@
 
+// ... imports ... (keep existing)
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   User as UserIcon, 
+  // ... other icons
   MapPin, 
   HelpCircle, 
   FileText, 
   Eraser, 
   Plus, 
-  Trash2,
+  Trash2, 
   ArrowLeft,
   Save,
   Loader2,
@@ -16,9 +18,10 @@ import {
   Check,
   Zap,
   RotateCcw,
-  CheckCircle2
+  CheckCircle2,
+  Package
 } from 'lucide-react';
-import { View, Product, OrderStatus, DetailedOrder, User, OrderZone, ClientMaster, SavedBudget } from '../types';
+import { View, Product, OrderStatus, DetailedOrder, User, OrderZone, ClientMaster, SavedBudget, MasterProduct } from '../types';
 import { parseOrderText } from '../logic';
 import { supabase } from '../supabase';
 
@@ -36,20 +39,33 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Estados para búsqueda de clientes y presupuestos
+  // Estados para búsqueda de clientes
   const [clientSearchResults, setClientSearchResults] = useState<ClientMaster[]>([]);
   const [selectedClient, setSelectedClient] = useState<ClientMaster | null>(null);
   const [isSearchingClient, setIsSearchingClient] = useState(false);
   const [showClientDropdown, setShowClientDropdown] = useState(false);
+  
+  // Estados para búsqueda de productos manual
+  const [productSearchTerm, setProductSearchTerm] = useState('');
+  const [productSearchResults, setProductSearchResults] = useState<MasterProduct[]>([]);
+  const [isSearchingProduct, setIsSearchingProduct] = useState(false);
+  const [showProductDropdown, setShowProductDropdown] = useState(false);
+
+  // Presupuestos guardados
   const [savedBudgets, setSavedBudgets] = useState<SavedBudget[]>([]);
   const [selectedBudgetId, setSelectedBudgetId] = useState<string | null>(null);
+  
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const productDropdownRef = useRef<HTMLDivElement>(null);
 
   // Manejar clics fuera del dropdown para cerrarlo
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setShowClientDropdown(false);
+      }
+      if (productDropdownRef.current && !productDropdownRef.current.contains(event.target as Node)) {
+        setShowProductDropdown(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -85,12 +101,10 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
     setShowClientDropdown(true);
 
     try {
-      // Lógica de búsqueda tipo Google: separar por palabras y buscar que el nombre contenga todas
       const words = trimmed.split(/\s+/).filter(w => w.length > 0);
       let query = supabase.from('clients_master').select('*');
       
       words.forEach(word => {
-        // En Supabase, encadenar ilike funciona como AND (todas las palabras deben estar)
         query = query.ilike('nombre', `%${word}%`);
       });
 
@@ -115,6 +129,63 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
     if (loc.includes('mercedes')) setSelectedZone('V. Mercedes');
     else if (loc.includes('san luis')) setSelectedZone('San Luis');
     else if (loc.includes('norte')) setSelectedZone('Norte');
+  };
+
+  const handleSearchProduct = async (val: string) => {
+    setProductSearchTerm(val);
+    const trimmed = val.trim();
+    if (trimmed.length < 2) {
+        setProductSearchResults([]);
+        setShowProductDropdown(false);
+        return;
+    }
+
+    setIsSearchingProduct(true);
+    setShowProductDropdown(true);
+
+    try {
+        const words = trimmed.split(/\s+/).filter(w => w.length > 0);
+        let query = supabase.from('master_products').select('*');
+        words.forEach(word => {
+            query = query.ilike('desart', `%${word}%`);
+        });
+        const { data, error } = await query.limit(10);
+        if (error) throw error;
+        setProductSearchResults(data || []);
+    } catch (err) {
+        console.error("Error buscando productos:", err);
+    } finally {
+        setIsSearchingProduct(false);
+    }
+  };
+
+  const addManualProduct = (masterProd: MasterProduct) => {
+      const newProduct: Product = {
+          code: masterProd.codart,
+          name: masterProd.desart,
+          originalQuantity: 1,
+          quantity: 1,
+          unitPrice: masterProd.pventa_1 || 0,
+          subtotal: (masterProd.pventa_1 || 0),
+          isChecked: false
+      };
+
+      // Verificar si ya existe para sumar cantidad o agregar nuevo
+      setProducts(prev => {
+          const exists = prev.find(p => p.code === newProduct.code);
+          if (exists) {
+              return prev.map(p => p.code === newProduct.code ? { 
+                  ...p, 
+                  quantity: p.quantity + 1,
+                  originalQuantity: p.originalQuantity + 1, 
+                  subtotal: (p.quantity + 1) * p.unitPrice 
+              } : p);
+          }
+          return [...prev, newProduct];
+      });
+
+      setProductSearchTerm('');
+      setShowProductDropdown(false);
   };
 
   const useSavedBudget = (budget: SavedBudget) => {
@@ -147,6 +218,34 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
       alert(`Se han cargado ${budgetProducts.length} artículos del presupuesto guardado.`);
   };
 
+  const updateRowQuantity = (idx: number, newVal: number) => {
+      if (newVal < 1) return;
+      setProducts(prev => prev.map((p, i) => {
+          if (i === idx) {
+              return { 
+                  ...p, 
+                  quantity: newVal, 
+                  originalQuantity: newVal, // Al crear, la original también cambia si editamos
+                  subtotal: newVal * p.unitPrice 
+              };
+          }
+          return p;
+      }));
+  };
+
+  const updateRowPrice = (idx: number, newVal: number) => {
+      setProducts(prev => prev.map((p, i) => {
+          if (i === idx) {
+              return { 
+                  ...p, 
+                  unitPrice: newVal, 
+                  subtotal: p.quantity * newVal 
+              };
+          }
+          return p;
+      }));
+  };
+
   const totalAmount = products.reduce((sum, p) => sum + p.subtotal, 0);
 
   const handleProcessText = () => {
@@ -158,7 +257,9 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
             if (parsedProducts.length === 0) {
                 alert("No se detectaron productos. Verifique que el texto tenga el formato correcto.");
             } else {
-                setProducts(parsedProducts);
+                // Combinar con productos existentes si los hay
+                setProducts(prev => [...prev, ...parsedProducts]);
+                setRawText(''); // Limpiar texto tras procesar
             }
         } catch (err: any) {
             console.error("Error parsing text:", err);
@@ -181,11 +282,10 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
 
     setIsSaving(true);
     try {
-        // Generamos el ID legible para display_id
         const displayId = `PED-${Date.now()}`;
         
         const newOrder: DetailedOrder = {
-            id: '', // Se ignora, la DB genera el UUID
+            id: '', 
             displayId: displayId,
             clientName: clientName,
             zone: selectedZone,
@@ -303,14 +403,57 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
       </section>
 
       <section className="bg-surface rounded-2xl p-6 border border-surfaceHighlight shadow-sm">
-         <h3 className="text-text text-lg font-bold flex items-center gap-3">Cargar Productos desde Texto</h3>
-         <p className="text-muted text-sm mb-4">Pegue las líneas del PDF o use la integración automática de arriba.</p>
-         <div className="relative mb-4">
-             <textarea value={rawText} onChange={(e) => { setRawText(e.target.value); setSelectedBudgetId(null); }} placeholder="Ej: 1 (x12) 49 FERNET BRANCA - $ 8.800,00 $ 105.600,00" className="w-full bg-surface border border-surfaceHighlight rounded-xl p-4 text-sm text-text focus:border-primary outline-none transition-colors min-h-[120px] resize-y font-mono leading-relaxed shadow-sm uppercase" />
-         </div>
-         <div className="flex gap-3">
-             <button onClick={handleProcessText} disabled={isProcessing || !rawText} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-surfaceHighlight hover:bg-surfaceHighlight/80 text-text text-sm font-bold transition-colors disabled:opacity-50">{isProcessing ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />} {isProcessing ? 'Procesando...' : 'Procesar Texto'}</button>
-             <button onClick={handleClear} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-surfaceHighlight hover:bg-background text-muted hover:text-text text-sm font-bold transition-colors"><Eraser size={16} /> Limpiar</button>
+         <h3 className="text-text text-lg font-bold flex items-center gap-3">Agregar Productos</h3>
+         <p className="text-muted text-sm mb-4">Puede buscar manualmente en el catálogo o pegar texto desde un PDF.</p>
+         
+         <div className="flex flex-col gap-4">
+             {/* BÚSQUEDA MANUAL */}
+             <div className="relative z-20" ref={productDropdownRef}>
+                 <div className="relative">
+                    <Package className="absolute left-4 top-1/2 -translate-y-1/2 text-primary" size={18} />
+                    <input 
+                        type="text" 
+                        value={productSearchTerm} 
+                        onChange={(e) => handleSearchProduct(e.target.value)}
+                        placeholder="Buscar producto por nombre para agregar..." 
+                        className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3.5 pl-12 pr-4 text-sm text-text focus:border-primary outline-none transition-colors shadow-sm font-bold uppercase" 
+                    />
+                    {isSearchingProduct && <div className="absolute right-4 top-1/2 -translate-y-1/2"><Loader2 className="animate-spin text-primary" size={16} /></div>}
+                 </div>
+                 {showProductDropdown && productSearchResults.length > 0 && (
+                     <div className="absolute top-full left-0 w-full mt-2 bg-surface border border-primary/30 rounded-2xl shadow-2xl max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2">
+                         {productSearchResults.map(p => (
+                             <button 
+                                key={p.codart} 
+                                onClick={() => addManualProduct(p)}
+                                className="w-full p-3 text-left border-b border-surfaceHighlight last:border-none hover:bg-primary/5 flex justify-between items-center group"
+                             >
+                                 <div>
+                                     <p className="text-xs font-black text-text uppercase group-hover:text-primary">{p.desart}</p>
+                                     <p className="text-[10px] font-mono text-muted">#{p.codart} | $ {p.pventa_1}</p>
+                                 </div>
+                                 <Plus size={16} className="text-primary opacity-0 group-hover:opacity-100" />
+                             </button>
+                         ))}
+                     </div>
+                 )}
+             </div>
+
+             <div className="flex items-center gap-4 py-2">
+                 <div className="h-px bg-surfaceHighlight flex-1"></div>
+                 <span className="text-[10px] font-black text-muted uppercase tracking-widest">O Pegar Texto</span>
+                 <div className="h-px bg-surfaceHighlight flex-1"></div>
+             </div>
+
+             {/* PEGADO DE TEXTO */}
+             <div className="relative">
+                 <textarea value={rawText} onChange={(e) => { setRawText(e.target.value); setSelectedBudgetId(null); }} placeholder="Ej: 1 (x12) 49 FERNET BRANCA - $ 8.800,00 $ 105.600,00" className="w-full bg-surface border border-surfaceHighlight rounded-xl p-4 text-sm text-text focus:border-primary outline-none transition-colors min-h-[100px] resize-y font-mono leading-relaxed shadow-sm uppercase" />
+             </div>
+             
+             <div className="flex gap-3">
+                 <button onClick={handleProcessText} disabled={isProcessing || !rawText} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-surfaceHighlight hover:bg-surfaceHighlight/80 text-text text-sm font-bold transition-colors disabled:opacity-50">{isProcessing ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />} {isProcessing ? 'Procesando...' : 'Procesar Texto'}</button>
+                 <button onClick={handleClear} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-surfaceHighlight hover:bg-background text-muted hover:text-text text-sm font-bold transition-colors"><Eraser size={16} /> Limpiar</button>
+             </div>
          </div>
       </section>
 
@@ -347,10 +490,28 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
                         <tr key={`${product.code}-${index}`} className="hover:bg-background/20 transition-colors">
                             <td className="py-4 px-6"><div className="px-3 py-1.5 rounded bg-surface border border-surfaceHighlight text-text text-sm font-mono text-center">{product.code}</div></td>
                             <td className="py-4 px-6"><span className="text-sm text-text font-bold uppercase">{product.name}</span></td>
-                            <td className="py-4 px-6"><span className="block text-sm text-text text-center font-black">{product.quantity}</span></td>
+                            <td className="py-4 px-6 text-center">
+                                <input 
+                                    type="number" 
+                                    min="1"
+                                    value={product.quantity} 
+                                    onChange={(e) => updateRowQuantity(index, parseInt(e.target.value) || 1)}
+                                    className="w-20 bg-surface border border-surfaceHighlight rounded-lg p-2 text-center text-sm font-black outline-none focus:border-primary shadow-inner"
+                                />
+                            </td>
                             {currentUser.role === 'vale' && (
                                 <>
-                                    <td className="py-4 px-6 text-right"><span className="text-green-600 font-bold">$ {product.unitPrice.toLocaleString('es-AR')}</span></td>
+                                    <td className="py-4 px-6 text-right">
+                                        <div className="relative">
+                                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-muted text-xs">$</span>
+                                            <input 
+                                                type="number" 
+                                                value={product.unitPrice} 
+                                                onChange={(e) => updateRowPrice(index, parseFloat(e.target.value) || 0)}
+                                                className="w-28 bg-surface border border-surfaceHighlight rounded-lg p-2 pl-5 text-right text-sm font-bold outline-none focus:border-primary shadow-inner"
+                                            />
+                                        </div>
+                                    </td>
                                     <td className="py-4 px-6 text-right"><span className="text-green-600 font-black">$ {product.subtotal.toLocaleString('es-AR')}</span></td>
                                 </>
                             )}

@@ -38,7 +38,8 @@ import {
     Camera,
     Sun,
     Moon,
-    Monitor
+    Monitor,
+    Warehouse
 } from 'lucide-react';
 import { User, MasterProduct, AppPermission, View } from '../types';
 import { supabase } from '../supabase';
@@ -47,7 +48,7 @@ import * as XLSX from 'xlsx';
 
 interface SettingsProps {
     currentUser: User;
-    onUpdateProfile: (newName: string, avatarUrl?: string) => Promise<void>;
+    onUpdateProfile: (newName: string, avatarUrl?: string, preferredBranch?: string) => Promise<void>;
     isDarkMode: boolean;
     onToggleTheme: () => void;
 }
@@ -57,6 +58,7 @@ type Tab = 'profile' | 'catalog_prices' | 'catalog_stock' | 'permissions';
 export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile, isDarkMode, onToggleTheme }) => {
     const [name, setName] = useState(currentUser.name);
     const [avatarUrl, setAvatarUrl] = useState(currentUser.avatar_url || '');
+    const [preferredBranch, setPreferredBranch] = useState(currentUser.preferred_branch || 'LLERENA');
     const [activeTab, setActiveTab] = useState<Tab>('profile');
     const [isSaving, setIsSaving] = useState(false);
     const [showSuccess, setShowSuccess] = useState(false);
@@ -176,7 +178,7 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
         if (!name.trim()) return;
         setIsSaving(true);
         try {
-            await onUpdateProfile(name, avatarUrl);
+            await onUpdateProfile(name, avatarUrl, preferredBranch);
             setShowSuccess(true);
             setTimeout(() => setShowSuccess(false), 3000);
         } catch (err: any) {
@@ -420,6 +422,29 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                                                 <label className="text-[10px] font-black uppercase text-muted tracking-widest ml-1">Nombre Visual</label>
                                                 <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-background border border-surfaceHighlight rounded-2xl py-4 px-5 text-sm font-bold text-text outline-none focus:border-primary shadow-inner" />
                                             </div>
+                                            
+                                            {/* SELECCIÓN DE SUCURSAL */}
+                                            <div className="space-y-2">
+                                                <label className="text-[10px] font-black uppercase text-muted tracking-widest ml-1 flex items-center gap-1">
+                                                    <Warehouse size={12} className="text-primary"/> Sucursal Preferida
+                                                </label>
+                                                <div className="flex gap-3">
+                                                    <button 
+                                                        onClick={() => setPreferredBranch('LLERENA')}
+                                                        className={`flex-1 py-3 rounded-xl border font-bold text-xs uppercase transition-all ${preferredBranch === 'LLERENA' ? 'bg-primary/10 border-primary text-primary shadow-sm' : 'bg-background border-surfaceHighlight text-muted hover:bg-surfaceHighlight'}`}
+                                                    >
+                                                        Llerena
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => setPreferredBranch('BETBEDER')}
+                                                        className={`flex-1 py-3 rounded-xl border font-bold text-xs uppercase transition-all ${preferredBranch === 'BETBEDER' ? 'bg-primary/10 border-primary text-primary shadow-sm' : 'bg-background border-surfaceHighlight text-muted hover:bg-surfaceHighlight'}`}
+                                                    >
+                                                        Betbeder
+                                                    </button>
+                                                </div>
+                                                <p className="text-[9px] text-muted font-bold italic ml-1">Se usará por defecto en las operaciones de stock.</p>
+                                            </div>
+
                                             <div className="p-4 bg-background/50 rounded-2xl border border-surfaceHighlight">
                                                 <p className="text-[9px] font-black text-muted uppercase">Rol de Usuario</p>
                                                 <p className="text-xs font-bold text-text mt-1 uppercase tracking-widest">{currentUser.role}</p>

@@ -12,6 +12,7 @@ export enum View {
     PAYMENTS_HISTORY = 'PAYMENTS_HISTORY',
     CATALOG = 'CATALOG',
     CLIENTS_MASTER = 'CLIENTS_MASTER', 
+    CLIENT_COLLECTIONS = 'CLIENT_COLLECTIONS',
     CLIENT_STATEMENTS = 'CLIENT_STATEMENTS',
     SUPPLIERS_MASTER = 'SUPPLIERS_MASTER',
     PROVIDERS = 'PROVIDERS',
@@ -49,6 +50,8 @@ export interface WorkerAttendanceConfig {
     work_days: string[]; 
     entry_time: string; 
     exit_time: string;
+    entry_time_pm?: string; // Nuevo: Turno Tarde
+    exit_time_pm?: string;  // Nuevo: Turno Tarde
     location: string;
 }
 
@@ -61,14 +64,18 @@ export interface GlobalAttendanceSettings {
 // --- REST OF DOMAIN MODELS ---
 export interface AccountMovement {
     id: string;
+    client_code: string;
     date: string;
     concept: string;
-    debit: number;
-    credit: number;
-    balance: number;
-    observations: string;
+    debit: number;  // Debe (Genera Deuda)
+    credit: number; // Haber (Paga Deuda)
+    balance: number; // Saldo calculado en frontend
+    order_id?: string;
+    collection_id?: string;
+    created_at?: string;
+    is_annulled?: boolean; // Nuevo: Estado de anulación
 }
-// ... resto de interfaces se mantienen iguales
+
 export interface SavedBudget {
     id: string;
     client_code: string;
@@ -148,6 +155,15 @@ export interface ClientMaster {
     celular?: string;
     email?: string;
     created_at?: string;
+}
+
+export interface ClientCollection {
+    id: string;
+    client_code: string;
+    amount: number;
+    date: string;
+    notes?: string;
+    created_at: string;
 }
 
 export type WarehouseCode = 'LLERENA' | 'BETBEDER';
@@ -291,6 +307,8 @@ export interface User {
     role: UserRole;
     permissions: string[];
     avatar_url?: string;
+    preferred_branch?: string; 
+    theme_preference?: 'dark' | 'light'; // Agregado
 }
 export enum OrderStatus {
     EN_ARMADO = 'en_armado',

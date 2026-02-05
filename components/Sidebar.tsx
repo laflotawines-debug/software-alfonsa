@@ -47,6 +47,7 @@ const ICON_MAP: Record<string, React.ReactNode> = {
     [View.PAYMENTS_OVERVIEW]: <CreditCard size={20} />,
     [View.INV_INBOUNDS]: <Warehouse size={20} />,
     [View.CLIENTS_MASTER]: <Contact2 size={20} />,
+    [View.CLIENT_COLLECTIONS]: <Wallet size={20} />,
     [View.CATALOG]: <Library size={20} />,
     [View.PRESUPUESTADOR]: <Wrench size={20} />,
     [View.HISTORY]: <History size={20} />,
@@ -178,6 +179,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, curre
                               if (sub.id === View.INV_HISTORY) subIcon = <ClipboardList size={14} />;
                               if (sub.id === View.CATALOG) subIcon = <Boxes size={14} />;
                               if (sub.id === View.CLIENTS_MASTER) subIcon = <Contact2 size={14} />;
+                              if (sub.id === View.CLIENT_COLLECTIONS) subIcon = <Wallet size={14} />;
                               if (sub.id === View.SUPPLIERS_MASTER) subIcon = <Truck size={14} />;
                               if (sub.id === View.STOCK_CONTROL) subIcon = <ClipboardCheck size={14} />;
                               if (sub.id === View.PRESUPUESTADOR) subIcon = <Calculator size={14} />;

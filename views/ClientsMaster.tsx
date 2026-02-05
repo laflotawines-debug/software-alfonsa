@@ -5,7 +5,6 @@ import {
     RefreshCw, 
     Loader2, 
     Contact2, 
-    ChevronRight, 
     AlertCircle,
     Phone,
     Mail,
@@ -18,7 +17,6 @@ import {
     X,
     Save,
     CheckCircle2,
-    Plus,
     Edit2,
     Trash2,
     AlertTriangle
@@ -312,14 +310,14 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
                                         <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-all">
                                             <button 
                                                 onClick={() => { setEditingClient(c); setIsModalOpen(true); }}
-                                                className="p-2 rounded-lg bg-blue-500/10 text-blue-500 hover:bg-blue-500 hover:text-white transition-all"
+                                                className="p-2 rounded-lg bg-blue-500/10 text-blue-500 hover:bg-blue-500 hover:text-white transition-all shadow-sm"
                                                 title="Editar Ficha"
                                             >
                                                 <Edit2 size={16} />
                                             </button>
                                             <button 
                                                 onClick={() => setClientToDelete(c)}
-                                                className="p-2 rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-all"
+                                                className="p-2 rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-all shadow-sm"
                                                 title="Eliminar Cliente"
                                             >
                                                 <Trash2 size={16} />
