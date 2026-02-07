@@ -28,7 +28,9 @@ import {
   ClipboardList,
   Contact2,
   Library,
-  ClipboardCheck
+  ClipboardCheck,
+  Building2,
+  BookOpen
 } from 'lucide-react';
 import { NavItem, View, User } from '../types';
 import { SYSTEM_NAV_STRUCTURE } from '../logic';
@@ -45,6 +47,7 @@ const ICON_MAP: Record<string, React.ReactNode> = {
     [View.DASHBOARD]: <LayoutDashboard size={20} />,
     [View.ORDERS]: <ShoppingBag size={20} />,
     [View.PAYMENTS_OVERVIEW]: <CreditCard size={20} />,
+    [View.PROVIDERS]: <Building2 size={20} />,
     [View.INV_INBOUNDS]: <Warehouse size={20} />,
     [View.CLIENTS_MASTER]: <Contact2 size={20} />,
     [View.CLIENT_COLLECTIONS]: <Wallet size={20} />,
@@ -173,6 +176,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, curre
                               if (sub.id === View.ORDER_SHEET) subIcon = <Table size={14} />;
                               if (sub.id === View.PAYMENTS_PROVIDERS) subIcon = <Users size={14} />;
                               if (sub.id === View.PAYMENTS_HISTORY) subIcon = <FileText size={14} />;
+                              if (sub.id === View.PROVIDER_STATEMENTS) subIcon = <BookOpen size={14} />;
                               if (sub.id === View.INV_INBOUNDS) subIcon = <Truck size={14} />;
                               if (sub.id === View.INV_ADJUSTMENTS) subIcon = <Calculator size={14} />;
                               if (sub.id === View.INV_TRANSFERS) subIcon = <ArrowRightLeft size={14} />;

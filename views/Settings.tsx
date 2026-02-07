@@ -4,7 +4,7 @@ import {
     User as UserIcon, 
     Save, 
     Loader2, 
-    CheckCircle2,
+    CheckCircle2, 
     FileSpreadsheet,
     UploadCloud,
     AlertCircle,
@@ -51,7 +51,7 @@ import * as XLSX from 'xlsx';
 
 interface SettingsProps {
     currentUser: User;
-    onUpdateProfile: (newName: string, avatarUrl?: string, preferredBranch?: string) => Promise<void>;
+    onUpdateProfile: (newName: string, avatarUrl?: string, preferredBranch?: string, themePreference?: string) => Promise<void>;
     isDarkMode: boolean;
     onToggleTheme: () => void;
 }
@@ -231,7 +231,8 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
         if (!name.trim()) return;
         setIsSaving(true);
         try {
-            await onUpdateProfile(name, avatarUrl, preferredBranch);
+            // Include current theme state in update to persist it
+            await onUpdateProfile(name, avatarUrl, preferredBranch, isDarkMode ? 'dark' : 'light');
             setShowSuccess(true);
             setTimeout(() => setShowSuccess(false), 3000);
         } catch (err: any) {

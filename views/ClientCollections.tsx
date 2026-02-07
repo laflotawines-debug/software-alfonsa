@@ -11,10 +11,13 @@ import {
     Trash2,
     History,
     CheckCircle2,
-    AlertCircle
+    AlertCircle,
+    Building2,
+    ArrowRight,
+    Check
 } from 'lucide-react';
 import { supabase } from '../supabase';
-import { ClientMaster, User, ClientCollection } from '../types';
+import { ClientMaster, User, ClientCollection, SupplierMaster } from '../types';
 
 interface ClientCollectionsProps {
     currentUser: User;
@@ -27,12 +30,18 @@ export const ClientCollections: React.FC<ClientCollectionsProps> = ({ currentUse
     const [isSearching, setIsSearching] = useState(false);
     const [isLoadingData, setIsLoadingData] = useState(false);
     const [history, setHistory] = useState<ClientCollection[]>([]);
+    const [currentBalance, setCurrentBalance] = useState(0);
     
     // Estados para nuevo pago
     const [amount, setAmount] = useState('');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [notes, setNotes] = useState('');
     const [isSaving, setIsSaving] = useState(false);
+
+    // Estados para Pago a Proveedor (Triangulación)
+    const [isDirectPayment, setIsDirectPayment] = useState(false);
+    const [suppliers, setSuppliers] = useState<SupplierMaster[]>([]);
+    const [targetSupplierCode, setTargetSupplierCode] = useState('');
 
     const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -45,6 +54,15 @@ export const ClientCollections: React.FC<ClientCollectionsProps> = ({ currentUse
         };
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    // Cargar proveedores al iniciar
+    useEffect(() => {
+        const loadSuppliers = async () => {
+            const { data } = await supabase.from('providers_master').select('*').eq('activo', true).order('razon_social');
+            if (data) setSuppliers(data);
+        };
+        loadSuppliers();
     }, []);
 
     const handleSearch = async (val: string) => {
@@ -76,6 +94,27 @@ export const ClientCollections: React.FC<ClientCollectionsProps> = ({ currentUse
         }
     };
 
+    const fetchBalance = async (clientCode: string) => {
+        try {
+            const { data, error } = await supabase
+                .from('client_account_movements')
+                .select('debit, credit, is_annulled')
+                .eq('client_code', clientCode);
+            
+            if (error) throw error;
+
+            if (data) {
+                const bal = data.reduce((acc, m) => {
+                    if (m.is_annulled) return acc;
+                    return acc + (Number(m.debit) || 0) - (Number(m.credit) || 0);
+                }, 0);
+                setCurrentBalance(bal);
+            }
+        } catch (e) {
+            console.error("Error fetching balance:", e);
+        }
+    };
+
     const selectClient = async (client: ClientMaster) => {
         setSelectedClient(client);
         setSearchTerm(client.nombre); // Poner nombre en buscador
@@ -84,9 +123,12 @@ export const ClientCollections: React.FC<ClientCollectionsProps> = ({ currentUse
         // Reset form
         setAmount('');
         setNotes('');
+        setIsDirectPayment(false);
+        setTargetSupplierCode('');
         setDate(new Date().toISOString().split('T')[0]);
 
         await fetchHistory(client.codigo);
+        await fetchBalance(client.codigo);
     };
 
     const fetchHistory = async (clientCode: string) => {
@@ -112,33 +154,60 @@ export const ClientCollections: React.FC<ClientCollectionsProps> = ({ currentUse
         const val = parseFloat(amount);
         if (!val || val <= 0) return alert("Ingrese un monto válido");
         
+        // Validación extra si es pago a proveedor
+        if (isDirectPayment && !targetSupplierCode) {
+            return alert("Seleccione el proveedor al cual se destina el pago.");
+        }
+        
         setIsSaving(true);
         try {
-            // 1. Guardar Cobranza (Log)
+            // Determinar notas finales
+            const supplierName = suppliers.find(s => s.codigo === targetSupplierCode)?.razon_social;
+            const finalNotes = isDirectPayment 
+                ? `PAGO DIRECTO A PROVEEDOR: ${supplierName}. ${notes}` 
+                : notes;
+
+            // 1. Guardar Cobranza (Log) en Cliente
             const { data: collection, error } = await supabase.from('client_collections').insert({
                 client_code: selectedClient.codigo,
                 amount: val,
                 date: date,
-                notes: notes,
+                notes: finalNotes,
                 created_by: currentUser.id
             }).select().single();
             if (error) throw error;
             
-            // 2. Insertar movimiento de CRÉDITO (Haber) en Cuenta Corriente
+            // 2. Insertar movimiento de CRÉDITO (Haber) en Cuenta Corriente Cliente
             await supabase.from('client_account_movements').insert({
                 client_code: selectedClient.codigo,
                 date: date,
-                concept: `Cobranza / Entrega`,
+                concept: isDirectPayment ? `Pago Directo a Prov. ${supplierName}` : `Cobranza / Entrega`,
                 debit: 0,
                 credit: val,
                 collection_id: collection.id,
                 created_by: currentUser.id
             });
 
+            // 3. (OPCIONAL) Si es pago directo, impactar en la cuenta del proveedor también
+            if (isDirectPayment && targetSupplierCode) {
+                await supabase.from('provider_account_movements').insert({
+                    provider_code: targetSupplierCode,
+                    date: date,
+                    concept: `PAGO DIRECTO DE CLIENTE: ${selectedClient.nombre}`,
+                    debit: 0, 
+                    credit: val, // Credit en proveedor = Pago que hacemos (baja deuda)
+                    created_by: currentUser.id
+                });
+            }
+
             setAmount('');
             setNotes('');
-            // Refrescar historial
+            setIsDirectPayment(false);
+            setTargetSupplierCode('');
+            
+            // Refrescar historial y saldo
             await fetchHistory(selectedClient.codigo);
+            await fetchBalance(selectedClient.codigo);
         } catch (e: any) {
             alert("Error al guardar: " + e.message);
         } finally {
@@ -147,14 +216,17 @@ export const ClientCollections: React.FC<ClientCollectionsProps> = ({ currentUse
     };
 
     const handleDelete = async (id: string) => {
-        if (!confirm("¿Anular este registro de cobranza?")) return;
+        if (!confirm("¿Anular este registro de cobranza? Nota: Si fue un pago a proveedor, deberá anular manualmente el movimiento en la cuenta del proveedor para mantener la consistencia.")) return;
         try {
             // Eliminar movimiento de cuenta asociado
             await supabase.from('client_account_movements').delete().eq('collection_id', id);
             // Eliminar cobranza
             const { error } = await supabase.from('client_collections').delete().eq('id', id);
             if (error) throw error;
-            if (selectedClient) await fetchHistory(selectedClient.codigo);
+            if (selectedClient) {
+                await fetchHistory(selectedClient.codigo);
+                await fetchBalance(selectedClient.codigo);
+            }
         } catch (e: any) {
             alert("Error al anular: " + e.message);
         }
@@ -218,12 +290,20 @@ export const ClientCollections: React.FC<ClientCollectionsProps> = ({ currentUse
                     {/* COLUMNA IZQ: FORMULARIO */}
                     <div className="lg:col-span-5 space-y-6">
                         <div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 shadow-sm">
-                            <div className="mb-6 pb-4 border-b border-surfaceHighlight">
-                                <h3 className="text-lg font-black text-text uppercase italic leading-tight">{selectedClient.nombre}</h3>
-                                <p className="text-xs font-bold text-muted uppercase mt-1 flex items-center gap-2">
-                                    <span className="bg-primary/10 text-primary px-2 py-0.5 rounded">#{selectedClient.codigo}</span>
-                                    {selectedClient.localidad}
-                                </p>
+                            <div className="mb-6 pb-4 border-b border-surfaceHighlight flex flex-row justify-between items-start">
+                                <div>
+                                    <h3 className="text-lg font-black text-text uppercase italic leading-tight">{selectedClient.nombre}</h3>
+                                    <p className="text-xs font-bold text-muted uppercase mt-1 flex items-center gap-2">
+                                        <span className="bg-primary/10 text-primary px-2 py-0.5 rounded">#{selectedClient.codigo}</span>
+                                        {selectedClient.localidad}
+                                    </p>
+                                </div>
+                                <div className="text-right bg-background/50 p-2 rounded-xl border border-surfaceHighlight">
+                                    <p className="text-[9px] font-black text-muted uppercase tracking-widest">Saldo Actual</p>
+                                    <p className={`text-xl font-black tracking-tighter ${currentBalance > 0 ? 'text-red-500' : 'text-green-500'}`}>
+                                        $ {currentBalance.toLocaleString('es-AR')}
+                                    </p>
+                                </div>
                             </div>
 
                             <div className="space-y-4">
@@ -252,6 +332,36 @@ export const ClientCollections: React.FC<ClientCollectionsProps> = ({ currentUse
                                     />
                                 </div>
 
+                                {/* TOGGLE PAGO A PROVEEDOR */}
+                                <div 
+                                    onClick={() => setIsDirectPayment(!isDirectPayment)}
+                                    className={`p-3 rounded-xl border-2 cursor-pointer transition-all flex items-center gap-3 ${isDirectPayment ? 'bg-indigo-500/5 border-indigo-500' : 'bg-background border-surfaceHighlight hover:border-indigo-500/50'}`}
+                                >
+                                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${isDirectPayment ? 'bg-indigo-500 border-indigo-500' : 'border-muted'}`}>
+                                        {isDirectPayment && <Check size={12} className="text-white"/>}
+                                    </div>
+                                    <div className="flex-1">
+                                        <p className={`text-xs font-black uppercase ${isDirectPayment ? 'text-indigo-600' : 'text-muted'}`}>Paga a Proveedor</p>
+                                        <p className="text-[9px] font-bold text-muted uppercase leading-tight">Triangular: Cobro a cliente y pago a proveedor simultáneo.</p>
+                                    </div>
+                                </div>
+
+                                {isDirectPayment && (
+                                    <div className="space-y-1 animate-in slide-in-from-top-2">
+                                        <label className="text-[9px] font-black text-indigo-600 uppercase ml-1 flex items-center gap-1"><Building2 size={10}/> Seleccionar Proveedor Destino</label>
+                                        <select 
+                                            value={targetSupplierCode} 
+                                            onChange={(e) => setTargetSupplierCode(e.target.value)} 
+                                            className="w-full bg-indigo-500/5 border border-indigo-500/30 rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-indigo-500 uppercase cursor-pointer"
+                                        >
+                                            <option value="">-- SELECCIONAR --</option>
+                                            {suppliers.map(s => (
+                                                <option key={s.codigo} value={s.codigo}>{s.razon_social}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+
                                 <div className="space-y-1">
                                     <label className="text-[9px] font-black text-muted uppercase ml-1">Observaciones</label>
                                     <textarea 
@@ -265,10 +375,10 @@ export const ClientCollections: React.FC<ClientCollectionsProps> = ({ currentUse
                                 <button 
                                     onClick={handleSave} 
                                     disabled={isSaving || !amount} 
-                                    className="w-full py-4 bg-primary hover:bg-primaryHover text-white font-black rounded-2xl uppercase text-xs shadow-xl shadow-primary/20 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className={`w-full py-4 font-black rounded-2xl uppercase text-xs shadow-xl transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${isDirectPayment ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-500/20' : 'bg-primary hover:bg-primaryHover text-white shadow-primary/20'}`}
                                 >
-                                    {isSaving ? <Loader2 size={18} className="animate-spin"/> : <Save size={18}/>} 
-                                    Registrar Cobro
+                                    {isSaving ? <Loader2 size={18} className="animate-spin"/> : isDirectPayment ? <ArrowRight size={18}/> : <Save size={18}/>} 
+                                    {isDirectPayment ? 'Confirmar Pago Directo' : 'Registrar Cobro'}
                                 </button>
                             </div>
                         </div>

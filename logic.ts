@@ -44,9 +44,18 @@ export const SYSTEM_NAV_STRUCTURE = [
     label: 'Gestión de pagos', 
     module: 'Pagos',
     subItems: [
-        { id: View.PAYMENTS_OVERVIEW, label: 'Vista general', permission: 'payments.view' },
+        { id: View.PAYMENTS_OVERVIEW, label: 'Tablero de Pagos', permission: 'payments.view' },
         { id: View.PAYMENTS_PROVIDERS, label: 'Proveedores Pagos', permission: 'payments.providers' },
         { id: View.PAYMENTS_HISTORY, label: 'Historial', permission: 'payments.history' },
+    ]
+  },
+  {
+    id: View.PROVIDERS,
+    label: 'Proveedores',
+    module: 'Proveedores',
+    subItems: [
+        { id: View.SUPPLIERS_MASTER, label: 'Gestión de Proveedores', permission: 'catalog.suppliers' },
+        { id: View.PROVIDER_STATEMENTS, label: 'Estados de Cuenta', permission: 'payments.statements' }
     ]
   },
   {
@@ -77,7 +86,6 @@ export const SYSTEM_NAV_STRUCTURE = [
     module: 'Maestros',
     subItems: [
         { id: View.CATALOG, label: 'Artículos', permission: 'catalog.products' },
-        { id: View.SUPPLIERS_MASTER, label: 'Proveedores', permission: 'catalog.suppliers' },
     ]
   },
   { 
@@ -241,7 +249,7 @@ export const parseOrderText = (text: string): Product[] => {
     
     /**
      * Regex mejorada:
-     * 1. ^(\d+) -> Cantidad/Bultos iniciales.
+     * 1. ^(\d+) -> Cantidad/Bultos inicial.
      * 2. (?:\s*\(x?(\d+)\))? -> Multiplicador opcional como (x12) o (6).
      * 3. \s+(\S+) -> Espacio y luego el código del artículo (primer bloque sin espacios).
      * 4. \s+(.*?)\s* -> El nombre del producto (captura todo de forma no codiciosa).

@@ -5,70 +5,78 @@ import { User } from '../types';
 
 export const SqlEditor: React.FC<{ currentUser: User }> = ({ currentUser }) => {
     const [query, setQuery] = useState(`-- ========================================================
--- SCRIPT DE MANTENIMIENTO: ESTRUCTURA BASE DE DATOS
+-- SCRIPT DE SISTEMA DE NOTIFICACIONES CON NOMBRE DE CLIENTE
 -- ========================================================
 
--- 1. Agregar columna de Sucursal Preferida a Perfiles
-ALTER TABLE public.profiles 
-ADD COLUMN IF NOT EXISTS preferred_branch text DEFAULT 'LLERENA';
-
--- 2. Tabla de Historial de Cobranzas
-CREATE TABLE IF NOT EXISTS public.client_collections (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
-  client_code text NOT NULL,
-  amount numeric DEFAULT 0,
-  date date NOT NULL DEFAULT CURRENT_DATE,
-  notes text,
-  created_at timestamp with time zone DEFAULT now(),
-  created_by uuid,
-  CONSTRAINT client_collections_pkey PRIMARY KEY (id),
-  CONSTRAINT client_collections_client_fkey FOREIGN KEY (client_code) REFERENCES public.clients_master(codigo)
+-- 1. TABLA DE NOTIFICACIONES
+CREATE TABLE IF NOT EXISTS public.notifications (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid REFERENCES auth.users(id) NOT NULL,
+  message text NOT NULL,
+  type text DEFAULT 'info', -- 'info', 'success', 'warning'
+  link_id uuid, -- ID del pedido
+  is_read boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT now()
 );
 
--- 3. Tabla de Cuenta Corriente (Movimientos)
-CREATE TABLE IF NOT EXISTS public.client_account_movements (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
-  client_code text NOT NULL,
-  date date NOT NULL DEFAULT CURRENT_DATE,
-  concept text,
-  debit numeric DEFAULT 0,
-  credit numeric DEFAULT 0,
-  order_id uuid,
-  collection_id uuid,
-  created_at timestamp with time zone DEFAULT now(),
-  created_by uuid,
-  is_annulled boolean DEFAULT false,
-  CONSTRAINT client_account_movements_pkey PRIMARY KEY (id),
-  CONSTRAINT client_account_movements_client_fkey FOREIGN KEY (client_code) REFERENCES public.clients_master(codigo)
-);
+-- Políticas RLS
+ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can see own notifications" ON public.notifications;
+CREATE POLICY "Users can see own notifications" ON public.notifications FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own notifications" ON public.notifications;
+CREATE POLICY "Users can update own notifications" ON public.notifications FOR UPDATE USING (auth.uid() = user_id);
 
--- 4. Actualizar políticas de seguridad
-ALTER TABLE public.client_collections ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Enable all access collections" ON public.client_collections;
-CREATE POLICY "Enable all access collections" ON public.client_collections FOR ALL USING (true) WITH CHECK (true);
+-- 2. MODIFICACIÓN TABLA PEDIDOS (Auditoría)
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS created_by uuid REFERENCES auth.users(id);
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS updated_by uuid REFERENCES auth.users(id);
 
-ALTER TABLE public.client_account_movements ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Enable all access movements" ON public.client_account_movements;
-CREATE POLICY "Enable all access movements" ON public.client_account_movements FOR ALL USING (true) WITH CHECK (true);
+-- 3. FUNCIÓN TRIGGER (LÓGICA DE MENSAJES)
+CREATE OR REPLACE FUNCTION public.handle_order_notifications()
+RETURNS trigger AS $$
+DECLARE
+  target_user record;
+  actor_id uuid;
+  client_text text;
+BEGIN
+  -- Determinar actor
+  IF (TG_OP = 'INSERT') THEN actor_id := NEW.created_by; ELSE actor_id := NEW.updated_by; END IF;
+  IF actor_id IS NULL THEN actor_id := auth.uid(); END IF;
+  
+  -- Asegurar que el nombre del cliente no sea nulo
+  client_text := COALESCE(NEW.client_name, 'Cliente');
 
--- 5. Tabla de Zonas de Entrega (FIX ERROR PGRST205)
-CREATE TABLE IF NOT EXISTS public.delivery_zones (
-    id uuid NOT NULL DEFAULT gen_random_uuid(),
-    name text NOT NULL,
-    active boolean DEFAULT true,
-    created_at timestamp with time zone DEFAULT now(),
-    CONSTRAINT delivery_zones_pkey PRIMARY KEY (id),
-    CONSTRAINT delivery_zones_name_key UNIQUE (name)
-);
+  -- CASO 1: Nuevo Pedido -> Notificar a 'armador' con nombre de cliente
+  IF (TG_OP = 'INSERT') THEN
+    FOR target_user IN SELECT id FROM public.profiles WHERE role = 'armador' LOOP
+      IF target_user.id != actor_id THEN
+        INSERT INTO public.notifications (user_id, message, type, link_id)
+        VALUES (target_user.id, 'Nuevo pedido: ' || client_text, 'info', NEW.id);
+      END IF;
+    END LOOP;
+  END IF;
 
-ALTER TABLE public.delivery_zones ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Enable all access zones" ON public.delivery_zones;
-CREATE POLICY "Enable all access zones" ON public.delivery_zones FOR ALL USING (true) WITH CHECK (true);
+  -- CASO 2: Armado Controlado -> Notificar a 'vale' (Admin)
+  -- Mensaje: "Fernando Satti listo para facturar"
+  IF (TG_OP = 'UPDATE') THEN
+    IF (OLD.status != 'armado_controlado' AND NEW.status = 'armado_controlado') THEN
+      FOR target_user IN SELECT id FROM public.profiles WHERE role = 'vale' LOOP
+        IF target_user.id != actor_id THEN
+          INSERT INTO public.notifications (user_id, message, type, link_id)
+          VALUES (target_user.id, client_text || ' listo para facturar', 'success', NEW.id);
+        END IF;
+      END LOOP;
+    END IF;
+  END IF;
 
--- Insertar zonas por defecto si no existen
-INSERT INTO public.delivery_zones (name) 
-VALUES ('V. Mercedes'), ('San Luis'), ('Norte') 
-ON CONFLICT (name) DO NOTHING;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 4. APLICAR TRIGGER
+DROP TRIGGER IF EXISTS on_order_change_notify ON public.orders;
+CREATE TRIGGER on_order_change_notify
+  AFTER INSERT OR UPDATE ON public.orders
+  FOR EACH ROW EXECUTE PROCEDURE public.handle_order_notifications();
 `);
 
     const copyToClipboard = () => {

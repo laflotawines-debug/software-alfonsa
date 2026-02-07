@@ -10,6 +10,7 @@ export enum View {
     PAYMENTS_OVERVIEW = 'PAYMENTS_OVERVIEW',
     PAYMENTS_PROVIDERS = 'PAYMENTS_PROVIDERS',
     PAYMENTS_HISTORY = 'PAYMENTS_HISTORY',
+    PROVIDER_STATEMENTS = 'PROVIDER_STATEMENTS', 
     CATALOG = 'CATALOG',
     CLIENTS_MASTER = 'CLIENTS_MASTER', 
     CLIENT_COLLECTIONS = 'CLIENT_COLLECTIONS',
@@ -27,7 +28,6 @@ export enum View {
     SQL_EDITOR = 'SQL_EDITOR',
     STOCK_CONTROL = 'STOCK_CONTROL',
     ATTENDANCE = 'ATTENDANCE',
-    // --- INVENTORY VIEWS ---
     INV_INBOUNDS = 'INV_INBOUNDS',
     INV_ADJUSTMENTS = 'INV_ADJUSTMENTS',
     INV_TRANSFERS = 'INV_TRANSFERS',
@@ -43,6 +43,16 @@ export interface NavItem {
     permission?: string;
 }
 
+export interface AppNotification {
+    id: string;
+    user_id: string;
+    message: string;
+    type: 'info' | 'success' | 'warning';
+    link_id?: string;
+    is_read: boolean;
+    created_at: string;
+}
+
 // --- ATTENDANCE DOMAIN ---
 export interface WorkerAttendanceConfig {
     user_id: string;
@@ -50,8 +60,8 @@ export interface WorkerAttendanceConfig {
     work_days: string[]; 
     entry_time: string; 
     exit_time: string;
-    entry_time_pm?: string; // Nuevo: Turno Tarde
-    exit_time_pm?: string;  // Nuevo: Turno Tarde
+    entry_time_pm?: string; 
+    exit_time_pm?: string;
     location: string;
 }
 
@@ -73,13 +83,26 @@ export interface AccountMovement {
     client_code: string;
     date: string;
     concept: string;
-    debit: number;  // Debe (Genera Deuda)
-    credit: number; // Haber (Paga Deuda)
-    balance: number; // Saldo calculado en frontend
+    debit: number; 
+    credit: number;
+    balance: number; 
     order_id?: string;
     collection_id?: string;
     created_at?: string;
-    is_annulled?: boolean; // Nuevo: Estado de anulación
+    is_annulled?: boolean; 
+}
+
+export interface ProviderAccountMovement {
+    id: string;
+    provider_code: string;
+    date: string;
+    concept: string;
+    debit: number;  
+    credit: number; 
+    balance: number; 
+    created_at?: string;
+    created_by?: string;
+    is_annulled?: boolean;
 }
 
 export interface SavedBudget {
@@ -260,6 +283,12 @@ export interface MasterProduct {
 export interface SupplierMaster {
     codigo: string;
     razon_social: string;
+    nombre_comercial?: string;
+    domicilio?: string;
+    localidad?: string;
+    provincia?: string;
+    celular?: string;
+    email?: string;
     activo: boolean;
     created_at?: string;
 }
@@ -314,7 +343,7 @@ export interface User {
     permissions: string[];
     avatar_url?: string;
     preferred_branch?: string; 
-    theme_preference?: 'dark' | 'light'; // Agregado
+    theme_preference?: 'dark' | 'light'; 
 }
 export enum OrderStatus {
     EN_ARMADO = 'en_armado',
@@ -346,7 +375,7 @@ export interface HistoryEntry {
     newState?: OrderStatus;
 }
 export type PaymentMethod = 'Efectivo' | 'Transferencia' | 'Cheque' | 'Cta Cte' | 'Pendiente';
-export type OrderZone = string; // Changed from union type to string to support dynamic zones
+export type OrderZone = string; 
 export interface Order {
     id: string;
     displayId: string;
@@ -354,6 +383,7 @@ export interface Order {
     zone?: OrderZone; 
     status: OrderStatus;
     createdDate: string;
+    lastUpdated?: string;
     paymentMethod?: PaymentMethod;
     assemblerId?: string; 
     assemblerName?: string;

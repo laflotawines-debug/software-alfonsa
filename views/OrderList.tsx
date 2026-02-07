@@ -13,6 +13,7 @@ import {
   AlertTriangle, 
   Play, 
   Lock, 
+  Unlock,
   Eye, 
   XCircle, 
   Loader2, 
@@ -25,7 +26,13 @@ import {
   ArrowDownLeft, 
   CalendarDays, 
   X,
-  Filter // Added Filter icon
+  Filter,
+  Clock,
+  ChevronLeft,
+  ChevronRight,
+  MessageSquare,
+  Send,
+  Users
 } from 'lucide-react';
 import { DetailedOrder, View, OrderStatus, User, DeliveryZone } from '../types';
 import { 
@@ -34,7 +41,8 @@ import {
     getZoneStyles, 
     getMissingProducts, 
     hasPermission, 
-    getOrderRefundTotal 
+    getOrderRefundTotal,
+    advanceOrderStatus
 } from '../logic';
 import { supabase } from '../supabase';
 
@@ -43,37 +51,59 @@ interface OrderListProps {
   orders: DetailedOrder[];
   currentUser: User;
   onOpenAssembly: (order: DetailedOrder) => void;
+  onClaimOrder: (order: DetailedOrder) => void;
   onDeleteOrder: (orderId: string) => void; 
   onDeleteOrders: (orderIds: string[]) => void;
-  onAdvanceOrder: (order: DetailedOrder) => void;
+  onAdvanceOrder: (order: DetailedOrder, notes?: string) => void;
+  onToggleLock: (order: DetailedOrder) => void;
   onRefresh: () => Promise<void>;
+  
+  // NEW PROPS FOR OPTIMIZED HISTORY FETCHING
+  onFetchHistory?: (month: number, year: number, search?: string) => Promise<void>;
+  historyFilter?: { month: number, year: number, search: string };
 }
 
 type TabType = 'active' | 'delivered';
 
-// Interfaz para el agrupamiento de pedidos
 interface GroupedOrderData {
     label: string;
     orders: DetailedOrder[];
 }
 
+const MONTHS = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+];
+
+const YEARS = [2023, 2024, 2025, 2026];
+
 export const OrderList: React.FC<OrderListProps> = ({ 
     onNavigate, 
     orders, 
     currentUser, 
-    onOpenAssembly, 
+    onOpenAssembly,
+    onClaimOrder,
     onDeleteOrder, 
     onDeleteOrders,
     onAdvanceOrder,
-    onRefresh 
+    onToggleLock,
+    onRefresh,
+    onFetchHistory,
+    historyFilter
 }) => {
   const [currentTab, setCurrentTab] = useState<TabType>('active');
-  const [searchTerm, setSearchTerm] = useState('');
+  const [localSearchTerm, setLocalSearchTerm] = useState(''); // Only filters what's loaded
   const [zoneFilter, setZoneFilter] = useState<string>('');
-  const [statusFilter, setStatusFilter] = useState<string>(''); // Nuevo estado para filtro de status
+  const [statusFilter, setStatusFilter] = useState<string>(''); 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [confirmingBatchDelete, setConfirmingBatchDelete] = useState<string | null>(null);
   const [zones, setZones] = useState<DeliveryZone[]>([]);
+
+  // Transition Modal State
+  const [transitionOrder, setTransitionOrder] = useState<DetailedOrder | null>(null);
+
+  // Server-side search state
+  const [serverSearchTerm, setServerSearchTerm] = useState(historyFilter?.search || '');
 
   useEffect(() => {
       const fetchZones = async () => {
@@ -83,7 +113,6 @@ export const OrderList: React.FC<OrderListProps> = ({
       fetchZones();
   }, []);
 
-  // Resetear el filtro de estado cuando se cambia de pestaña (Activos <-> Entregados)
   useEffect(() => {
       setStatusFilter('');
   }, [currentTab]);
@@ -94,15 +123,15 @@ export const OrderList: React.FC<OrderListProps> = ({
   let currentList = currentTab === 'active' ? activeOrders : deliveredOrders;
 
   const filteredOrders = currentList.filter(order => {
-      const keywords = searchTerm.toLowerCase().split(/\s+/).filter(k => k.length > 0);
+      // Local filtering
+      const keywords = localSearchTerm.toLowerCase().split(/\s+/).filter(k => k.length > 0);
       const textToSearch = `${order.clientName} ${order.displayId}`.toLowerCase();
       const keywordsMatch = keywords.every(k => textToSearch.includes(k));
       const matchesZone = zoneFilter ? order.zone === zoneFilter : true;
-      const matchesStatus = statusFilter ? order.status === statusFilter : true; // Lógica nueva
+      const matchesStatus = statusFilter ? order.status === statusFilter : true; 
       return keywordsMatch && matchesZone && matchesStatus;
   });
 
-  // Agrupación por Mes para pedidos entregados con tipado explícito
   const groupedDeliveredOrders = useMemo<Record<string, GroupedOrderData>>(() => {
       if (currentTab !== 'delivered') return {} as Record<string, GroupedOrderData>;
       
@@ -128,7 +157,6 @@ export const OrderList: React.FC<OrderListProps> = ({
           }
       });
       
-      // Ordenar claves descendentemente (más reciente primero)
       const sortedKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
       
       const sortedGroups: Record<string, GroupedOrderData> = {};
@@ -150,7 +178,22 @@ export const OrderList: React.FC<OrderListProps> = ({
       setConfirmingBatchDelete(null);
   };
 
-  // Obtener las opciones de estado disponibles según la pestaña actual
+  // --- HISTORY FILTER HANDLERS ---
+  const changeHistoryMonth = (delta: number) => {
+      if (!onFetchHistory || !historyFilter) return;
+      let newMonth = historyFilter.month + delta;
+      let newYear = historyFilter.year;
+      if (newMonth > 11) { newMonth = 0; newYear++; }
+      if (newMonth < 0) { newMonth = 11; newYear--; }
+      onFetchHistory(newMonth, newYear, ''); // Clear search when changing month
+      setServerSearchTerm('');
+  };
+
+  const executeServerSearch = () => {
+      if (!onFetchHistory || !historyFilter) return;
+      onFetchHistory(historyFilter.month, historyFilter.year, serverSearchTerm);
+  };
+
   const availableStatusOptions = useMemo(() => {
       const allStatuses = Object.keys(ORDER_WORKFLOW) as OrderStatus[];
       if (currentTab === 'active') {
@@ -160,8 +203,20 @@ export const OrderList: React.FC<OrderListProps> = ({
       }
   }, [currentTab]);
 
+  const requestAdvanceOrder = (order: DetailedOrder) => {
+      setTransitionOrder(order);
+  };
+
+  const confirmTransition = (notes: string) => {
+      if (transitionOrder) {
+          onAdvanceOrder(transitionOrder, notes);
+          setTransitionOrder(null);
+      }
+  };
+
   return (
     <div className="flex flex-col gap-6 pb-10">
+      {/* ... Header y controles igual que antes ... */}
       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6">
         <div>
           <h2 className="text-text text-3xl md:text-4xl font-black tracking-tight">Gestión de Pedidos</h2>
@@ -198,7 +253,7 @@ export const OrderList: React.FC<OrderListProps> = ({
         <div className="p-1 rounded-xl bg-surface w-full sm:w-fit flex gap-1 border border-surfaceHighlight shadow-sm">
           {[
             { id: 'active', label: 'Activos' },
-            { id: 'delivered', label: 'Entregados' }
+            { id: 'delivered', label: 'Historial' }
           ].map((tab) => (
             <button 
                 key={tab.id} 
@@ -210,39 +265,77 @@ export const OrderList: React.FC<OrderListProps> = ({
           ))}
         </div>
 
-        <div className="flex flex-col lg:flex-row gap-4">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={20} />
-            <input type="text" placeholder="Buscar por cliente o ID de pedido" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-surface border border-surfaceHighlight focus:border-primary focus:ring-1 focus:ring-primary text-text placeholder-muted text-sm outline-none transition-all shadow-sm" />
-          </div>
-          
-          {/* FILTRO DE ZONA */}
-          <div className="relative min-w-[200px]">
-             <Compass className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
-             <select value={zoneFilter} onChange={(e) => setZoneFilter(e.target.value)} className="w-full appearance-none pl-11 pr-10 py-3.5 rounded-xl bg-surface border border-surfaceHighlight focus:border-primary text-text text-sm cursor-pointer outline-none shadow-sm font-bold uppercase">
-                <option value="">Todas las Zonas</option>
-                {zones.map(z => (
-                    <option key={z.id} value={z.name}>{z.name}</option>
-                ))}
-                {zones.length === 0 && <option value="V. Mercedes">V. Mercedes (Default)</option>}
-            </select>
-            <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-muted pointer-events-none" size={18} />
-          </div>
+        {/* CONTROLES DE FILTRO */}
+        {currentTab === 'active' ? (
+            <div className="flex flex-col lg:flex-row gap-4">
+                <div className="relative flex-1 max-w-md">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={20} />
+                    <input type="text" placeholder="Buscar por cliente o ID de pedido" value={localSearchTerm} onChange={(e) => setLocalSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-surface border border-surfaceHighlight focus:border-primary focus:ring-1 focus:ring-primary text-text placeholder-muted text-sm outline-none transition-all shadow-sm" />
+                </div>
+                
+                <div className="relative min-w-[200px]">
+                    <Compass className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                    <select value={zoneFilter} onChange={(e) => setZoneFilter(e.target.value)} className="w-full appearance-none pl-11 pr-10 py-3.5 rounded-xl bg-surface border border-surfaceHighlight focus:border-primary text-text text-sm cursor-pointer outline-none shadow-sm font-bold uppercase">
+                        <option value="">Todas las Zonas</option>
+                        {zones.map(z => (
+                            <option key={z.id} value={z.name}>{z.name}</option>
+                        ))}
+                        {zones.length === 0 && <option value="V. Mercedes">V. Mercedes (Default)</option>}
+                    </select>
+                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-muted pointer-events-none" size={18} />
+                </div>
 
-          {/* NUEVO FILTRO DE ESTADO */}
-          <div className="relative min-w-[220px]">
-             <Filter className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
-             <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-full appearance-none pl-11 pr-10 py-3.5 rounded-xl bg-surface border border-surfaceHighlight focus:border-primary text-text text-sm cursor-pointer outline-none shadow-sm font-bold uppercase">
-                <option value="">Todos los Estados</option>
-                {availableStatusOptions.map(status => (
-                    <option key={status} value={status}>
-                        {ORDER_WORKFLOW[status]?.label || status}
-                    </option>
-                ))}
-            </select>
-            <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-muted pointer-events-none" size={18} />
-          </div>
-        </div>
+                <div className="relative min-w-[220px]">
+                    <Filter className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                    <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-full appearance-none pl-11 pr-10 py-3.5 rounded-xl bg-surface border border-surfaceHighlight focus:border-primary text-text text-sm cursor-pointer outline-none shadow-sm font-bold uppercase">
+                        <option value="">Todos los Estados</option>
+                        {availableStatusOptions.map(status => (
+                            <option key={status} value={status}>
+                                {ORDER_WORKFLOW[status]?.label || status}
+                            </option>
+                        ))}
+                    </select>
+                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-muted pointer-events-none" size={18} />
+                </div>
+            </div>
+        ) : (
+            // CONTROLES DE HISTORIAL
+            <div className="bg-surface border border-surfaceHighlight p-4 rounded-2xl shadow-sm flex flex-col lg:flex-row gap-4 items-center justify-between">
+                <div className="flex items-center gap-2">
+                    <button onClick={() => changeHistoryMonth(-1)} className="p-2 rounded-full hover:bg-surfaceHighlight text-muted hover:text-primary transition-colors">
+                        <ChevronLeft size={20} />
+                    </button>
+                    <div className="flex items-center gap-2 px-4 py-2 bg-background border border-surfaceHighlight rounded-xl min-w-[180px] justify-center">
+                        <CalendarDays size={16} className="text-primary"/>
+                        <span className="text-sm font-black uppercase text-text">
+                            {historyFilter ? `${MONTHS[historyFilter.month]} ${historyFilter.year}` : 'Cargando...'}
+                        </span>
+                    </div>
+                    <button onClick={() => changeHistoryMonth(1)} className="p-2 rounded-full hover:bg-surfaceHighlight text-muted hover:text-primary transition-colors">
+                        <ChevronRight size={20} />
+                    </button>
+                </div>
+
+                <div className="w-full lg:w-px h-px lg:h-10 bg-surfaceHighlight mx-2"></div>
+
+                <div className="flex-1 w-full flex items-center gap-2">
+                    <div className="relative flex-1">
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                        <input 
+                            type="text" 
+                            placeholder="Buscar en historial completo (Servidor)..." 
+                            value={serverSearchTerm} 
+                            onChange={(e) => setServerSearchTerm(e.target.value)} 
+                            onKeyDown={(e) => e.key === 'Enter' && executeServerSearch()}
+                            className="w-full pl-11 pr-4 py-3 rounded-xl bg-background border border-surfaceHighlight focus:border-primary text-text text-sm outline-none transition-all shadow-inner uppercase" 
+                        />
+                    </div>
+                    <button onClick={executeServerSearch} className="px-6 py-3 rounded-xl bg-primary text-white font-black text-xs uppercase shadow-lg active:scale-95 transition-all">
+                        Buscar
+                    </button>
+                </div>
+            </div>
+        )}
       </div>
 
       {currentTab === 'active' ? (
@@ -253,8 +346,10 @@ export const OrderList: React.FC<OrderListProps> = ({
                       order={order} 
                       currentUser={currentUser} 
                       onOpenAssembly={onOpenAssembly} 
+                      onClaimOrder={onClaimOrder}
                       onDeleteOrder={onDeleteOrder} 
-                      onAdvanceOrder={onAdvanceOrder} 
+                      onAdvanceOrder={requestAdvanceOrder} 
+                      onToggleLock={onToggleLock}
                   />
               ))}
               {filteredOrders.length === 0 && (
@@ -266,13 +361,13 @@ export const OrderList: React.FC<OrderListProps> = ({
           </div>
       ) : (
           <div className="space-y-12 animate-in fade-in duration-500">
-              {Object.keys(groupedDeliveredOrders).length === 0 && (
+              {filteredOrders.length === 0 && (
                   <div className="py-24 text-center text-muted border-2 border-dashed border-surfaceHighlight rounded-3xl bg-surface/30 shadow-inner">
                       <Package size={56} className="mx-auto mb-4 opacity-20" />
-                      <p className="font-bold text-xl">Sin historial de entregas con este filtro</p>
+                      <p className="font-bold text-xl">Sin historial en {historyFilter ? `${MONTHS[historyFilter.month]} ${historyFilter.year}` : 'este período'}</p>
+                      <p className="text-sm mt-2 font-medium">Intenta cambiar el mes o usar el buscador global.</p>
                   </div>
               )}
-              
               {Object.entries(groupedDeliveredOrders).map(([key, group]: [string, GroupedOrderData]) => (
                   <div key={key} className="space-y-6">
                       <div className="flex items-center justify-between border-b border-surfaceHighlight pb-2">
@@ -281,35 +376,17 @@ export const OrderList: React.FC<OrderListProps> = ({
                               <h3 className="text-xl font-black text-text uppercase italic tracking-tight">{group.label}</h3>
                               <span className="bg-surfaceHighlight text-muted px-2 py-0.5 rounded text-xs font-bold">{group.orders.length}</span>
                           </div>
-                          
-                          {/* DELETE BATCH BUTTON */}
                           {currentUser.role === 'vale' && (
                               confirmingBatchDelete === key ? (
                                   <div className="flex items-center gap-2 animate-in zoom-in-95">
-                                      <button 
-                                          onClick={() => handleBatchDelete(key, group.orders.map(o => o.id))}
-                                          className="px-4 py-2 bg-red-600 text-white rounded-xl font-black text-xs uppercase shadow-lg shadow-red-500/20 active:scale-95 transition-all"
-                                      >
-                                          ¿Confirmar Eliminar Lote?
-                                      </button>
-                                      <button 
-                                          onClick={() => setConfirmingBatchDelete(null)}
-                                          className="p-2 bg-surfaceHighlight text-text rounded-xl hover:bg-surfaceHighlight/80"
-                                      >
-                                          <X size={16} />
-                                      </button>
+                                      <button onClick={() => handleBatchDelete(key, group.orders.map(o => o.id))} className="px-4 py-2 bg-red-600 text-white rounded-xl font-black text-xs uppercase shadow-lg shadow-red-500/20 active:scale-95 transition-all">¿Confirmar Eliminar Lote?</button>
+                                      <button onClick={() => setConfirmingBatchDelete(null)} className="p-2 bg-surfaceHighlight text-text rounded-xl hover:bg-surfaceHighlight/80"><X size={16} /></button>
                                   </div>
                               ) : (
-                                  <button 
-                                      onClick={() => setConfirmingBatchDelete(key)}
-                                      className="flex items-center gap-2 px-4 py-2 text-muted hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all text-xs font-black uppercase"
-                                  >
-                                      <Trash2 size={16} /> Eliminar Mes
-                                  </button>
+                                  <button onClick={() => setConfirmingBatchDelete(key)} className="flex items-center gap-2 px-4 py-2 text-muted hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all text-xs font-black uppercase"><Trash2 size={16} /> Eliminar Mes</button>
                               )
                           )}
                       </div>
-                      
                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                           {group.orders.map((order) => (
                               <DetailedOrderCard 
@@ -317,8 +394,10 @@ export const OrderList: React.FC<OrderListProps> = ({
                                   order={order} 
                                   currentUser={currentUser} 
                                   onOpenAssembly={onOpenAssembly} 
+                                  onClaimOrder={onClaimOrder}
                                   onDeleteOrder={onDeleteOrder} 
-                                  onAdvanceOrder={onAdvanceOrder} 
+                                  onAdvanceOrder={requestAdvanceOrder} 
+                                  onToggleLock={onToggleLock}
                               />
                           ))}
                       </div>
@@ -326,11 +405,69 @@ export const OrderList: React.FC<OrderListProps> = ({
               ))}
           </div>
       )}
+
+      {/* TRANSITION CONFIRMATION MODAL */}
+      {transitionOrder && <TransitionModal order={transitionOrder} onClose={() => setTransitionOrder(null)} onConfirm={confirmTransition} />}
     </div>
   );
 };
 
-const DetailedOrderCard: React.FC<{ order: DetailedOrder; currentUser: User; onOpenAssembly: any; onDeleteOrder: any; onAdvanceOrder: any }> = ({ order, currentUser, onOpenAssembly, onDeleteOrder, onAdvanceOrder }) => {
+const TransitionModal: React.FC<{ order: DetailedOrder, onClose: () => void, onConfirm: (notes: string) => void }> = ({ order, onClose, onConfirm }) => {
+    const [notes, setNotes] = useState('');
+    const nextState = advanceOrderStatus(order).status;
+    const nextLabel = ORDER_WORKFLOW[nextState]?.label || nextState;
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-surface w-full max-w-md rounded-3xl border border-surfaceHighlight shadow-2xl p-6 flex flex-col gap-6">
+                <div className="text-center">
+                    <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4 text-primary animate-bounce">
+                        <CheckCircle size={32} />
+                    </div>
+                    <h3 className="text-xl font-black text-text uppercase italic tracking-tight">Confirmar Avance</h3>
+                    <p className="text-sm text-muted mt-2 font-medium">El pedido pasará al estado: <span className="text-primary font-bold">{nextLabel}</span></p>
+                </div>
+                
+                <div className="space-y-2">
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1 flex items-center gap-2">
+                        <MessageSquare size={12}/> Comentario / Observación (Opcional)
+                    </label>
+                    <textarea 
+                        value={notes} 
+                        onChange={(e) => setNotes(e.target.value)} 
+                        className="w-full bg-background border border-surfaceHighlight rounded-2xl p-4 text-sm font-medium text-text outline-none focus:border-primary shadow-inner h-24 resize-none" 
+                        placeholder="Ej: Faltantes notificados al cliente..."
+                        autoFocus
+                    />
+                </div>
+
+                <div className="flex gap-3">
+                    <button onClick={onClose} className="flex-1 py-4 text-text font-black text-xs hover:bg-surfaceHighlight rounded-2xl border border-surfaceHighlight uppercase transition-all">Cancelar</button>
+                    <button onClick={() => onConfirm(notes)} className="flex-1 py-4 bg-primary text-white font-black rounded-2xl shadow-xl shadow-primary/20 hover:bg-primaryHover uppercase text-xs flex items-center justify-center gap-2 transition-all active:scale-95">
+                        <Send size={16} /> Confirmar
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const getTimeAgo = (dateStr?: string) => {
+    if (!dateStr) return '';
+    const diff = (new Date().getTime() - new Date(dateStr).getTime()) / 60000;
+    if (diff < 1) return 'Ahora';
+    return `${Math.floor(diff)} min`;
+};
+
+const DetailedOrderCard: React.FC<{ 
+    order: DetailedOrder; 
+    currentUser: User; 
+    onOpenAssembly: any; 
+    onClaimOrder: any; 
+    onDeleteOrder: any; 
+    onAdvanceOrder: any;
+    onToggleLock: any; 
+}> = ({ order, currentUser, onOpenAssembly, onClaimOrder, onDeleteOrder, onAdvanceOrder, onToggleLock }) => {
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const badgeStyle = getStatusColor(order.status);
   const zoneStyles = getZoneStyles(order.zone);
@@ -338,12 +475,27 @@ const DetailedOrderCard: React.FC<{ order: DetailedOrder; currentUser: User; onO
   const isFinished = order.status === OrderStatus.ENTREGADO || order.status === OrderStatus.PAGADO;
   const isVale = currentUser.role === 'vale';
 
-  const occupiedByOther = (
-    (order.status === OrderStatus.EN_ARMADO && order.assemblerId && order.assemblerId !== currentUser.id) ||
-    (order.status === OrderStatus.ARMADO && order.controllerId && order.controllerId !== currentUser.id)
-  );
+  // LOGIC FOR LOCKING VISUALS
+  let lockedByMe = false;
+  let lockedByOther = false;
+  let occupantName = '';
+
+  if (order.status === OrderStatus.EN_ARMADO) {
+      if (order.assemblerId === currentUser.id) lockedByMe = true;
+      else if (order.assemblerId) { lockedByOther = true; occupantName = order.assemblerName || ''; }
+  } else if (order.status === OrderStatus.ARMADO) {
+      if (order.controllerId === currentUser.id) lockedByMe = true;
+      else if (order.controllerId) { lockedByOther = true; occupantName = order.controllerName || ''; }
+  }
+
+  // Si yo terminé el armado pero aún no tiene controlador, no debería mostrarse bloqueado para mí (Armador original).
+  // La lógica de "Bloqueado" anterior era confusa. 
+  // Ahora "Bloqueado por otro" es explícito si hay un ID activo en el paso actual.
   
-  const occupantName = order.status === OrderStatus.EN_ARMADO ? order.assemblerName : order.controllerName;
+  // Mensaje amigable para el dueño anterior si el pedido está en espera
+  const waitingForNextStep = (order.status === OrderStatus.ARMADO && !order.controllerId && order.assemblerId === currentUser.id);
+
+  const timeAgo = (lockedByOther || lockedByMe) ? getTimeAgo(order.lastUpdated) : '';
 
   const getValeActions = () => {
     const secondaryBtn = (
@@ -397,7 +549,7 @@ const DetailedOrderCard: React.FC<{ order: DetailedOrder; currentUser: User; onO
     } else {
         primaryAction = (
             <button disabled className="flex-1 py-2.5 rounded-xl bg-surfaceHighlight text-muted font-black uppercase text-[11px] flex items-center justify-center gap-2 opacity-50">
-                <Loader2 size={14} className="animate-spin" /> {occupiedByOther ? 'Ocupado' : 'Espera'}
+                <Loader2 size={14} className="animate-spin" /> Espera
             </button>
         );
     }
@@ -422,7 +574,6 @@ const DetailedOrderCard: React.FC<{ order: DetailedOrder; currentUser: User; onO
         );
     }
 
-    // MODIFICACIÓN: Permitir al armador entrar a gestionar la entrega/devoluciones
     if (order.status === OrderStatus.EN_TRANSITO) {
         return (
             <button onClick={() => onOpenAssembly(order)} className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black uppercase text-[11px] shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2 active:scale-95 transition-all">
@@ -431,45 +582,47 @@ const DetailedOrderCard: React.FC<{ order: DetailedOrder; currentUser: User; onO
         );
     }
 
+    // Default Action: VIEW
     let label = "Ver Detalle";
     let icon = <Eye size={14} />;
     let className = "bg-surfaceHighlight text-text hover:bg-surfaceHighlight/80";
+    let action = () => onOpenAssembly(order);
 
-    if (order.status === OrderStatus.EN_ARMADO) {
-        if (occupiedByOther) {
-            label = `Uso: ${occupantName}`;
-            icon = <Lock size={14} />;
-            className = "bg-red-500/10 text-red-500 cursor-not-allowed";
-        } else {
-            label = "Armar Pedido";
-            icon = <Play size={14} />;
-            className = "bg-primary text-white hover:bg-primaryHover";
-        }
-    } else if (order.status === OrderStatus.ARMADO) {
-        if (occupiedByOther) {
-            label = `Controlando: ${occupantName}`;
-            icon = <Lock size={14} />;
-            className = "bg-red-500/10 text-red-500 cursor-not-allowed";
-        } else if (order.assemblerId === currentUser.id) {
-            label = "Bloqueado (Tuyo)";
-            icon = <Lock size={14} />;
-            className = "bg-red-500/10 text-red-500 cursor-not-allowed";
-        } else {
+    if (lockedByMe) {
+        // If locked by me -> "Continuar"
+        label = "Continuar";
+        icon = <Play size={14} />;
+        className = "bg-primary text-white hover:bg-primaryHover shadow-lg shadow-primary/20";
+        action = () => onOpenAssembly(order);
+    } else if (lockedByOther) {
+        // If locked by other -> "Ver / Colaborar" (As per previous request)
+        label = "Ver / Colaborar";
+        icon = <Users size={14} />;
+        className = "bg-surfaceHighlight text-muted hover:text-text border border-surfaceHighlight";
+        action = () => onOpenAssembly(order);
+    } else {
+        // If free (Padlock Open) -> Can enter but user usually clicks padlock first to lock. 
+        // We provide "Armar" as a quick entry that also locks if we wanted, 
+        // but to keep it Explicit, we let them click the Padlock OR enter freely.
+        // Let's make the main button "Ver Detalle" and they lock inside or via the card icon.
+        if (order.status === OrderStatus.EN_ARMADO) {
+            label = "Abrir Pedido";
+            icon = <Box size={14} />;
+        } else if (order.status === OrderStatus.ARMADO) {
             label = "Controlar";
             icon = <ShieldCheck size={14} />;
-            className = "bg-orange-500 text-white hover:bg-orange-600";
+            className = "bg-orange-500 text-white hover:bg-orange-600 shadow-lg shadow-orange-500/20";
+        } else if (order.status === OrderStatus.FACTURADO) {
+            label = "Controlar Factura";
+            icon = <ClipboardCheck size={14} />;
+            className = "bg-indigo-500 text-white hover:bg-indigo-600 shadow-lg shadow-indigo-500/20";
         }
-    } else if (order.status === OrderStatus.FACTURADO) {
-        label = "Control Factura";
-        icon = <ClipboardCheck size={14} />;
-        className = "bg-indigo-600 text-white hover:bg-indigo-700";
     }
 
     return (
         <button 
-            disabled={occupiedByOther || (order.status === OrderStatus.ARMADO && order.assemblerId === currentUser.id)}
-            onClick={() => onOpenAssembly(order)}
-            className={`w-full py-3 rounded-xl font-black uppercase text-[11px] transition-all flex items-center justify-center gap-2 shadow-md active:scale-95 ${className}`}
+            onClick={action}
+            className={`w-full py-3 rounded-xl font-black uppercase text-[11px] transition-all flex items-center justify-center gap-2 active:scale-95 ${className}`}
         >
             {icon} {label}
         </button>
@@ -485,15 +638,38 @@ const DetailedOrderCard: React.FC<{ order: DetailedOrder; currentUser: User; onO
             <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${zoneStyles.badgeBg} ${zoneStyles.badgeText} ${zoneStyles.borderColor}`}>
                 {order.zone || 'SIN ZONA'}
             </span>
-            <div className="flex flex-col items-end gap-1">
-                {occupiedByOther && (
-                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[8px] font-black uppercase bg-red-500 text-white animate-pulse">
-                        <Activity size={8} /> {occupantName}
-                    </span>
+            <div className="flex items-center gap-2">
+                {/* PADLOCK TOGGLE */}
+                {!isFinished && (
+                    <button 
+                        onClick={(e) => { e.stopPropagation(); onToggleLock(order); }}
+                        className={`p-1.5 rounded-lg transition-all active:scale-90 ${
+                            lockedByMe ? 'bg-green-500 text-white shadow-md' : 
+                            lockedByOther ? 'bg-red-500/10 text-red-500 cursor-not-allowed opacity-50' : 
+                            'bg-surfaceHighlight text-muted hover:text-text'
+                        }`}
+                        title={lockedByMe ? "Liberar pedido" : lockedByOther ? `Bloqueado por ${occupantName}` : "Tomar pedido"}
+                        disabled={lockedByOther}
+                    >
+                        {lockedByMe ? <Lock size={14} /> : lockedByOther ? <Lock size={14} /> : <Unlock size={14} />}
+                    </button>
                 )}
-                <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[8px] font-black uppercase border ${badgeStyle}`}>
-                    <Box size={8} /> {ORDER_WORKFLOW[order.status]?.label || order.status}
-                </span>
+
+                <div className="flex flex-col items-end gap-1">
+                    {lockedByOther && (
+                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[8px] font-black uppercase bg-red-500/10 text-red-600 border border-red-500/20 shadow-sm animate-pulse">
+                            <Activity size={8} /> {occupantName}
+                        </span>
+                    )}
+                    {waitingForNextStep && (
+                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[8px] font-black uppercase bg-orange-500/10 text-orange-600 border border-orange-500/20 shadow-sm">
+                            <Clock size={8} /> Esperando Control
+                        </span>
+                    )}
+                    <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[8px] font-black uppercase border ${badgeStyle}`}>
+                        <Box size={8} /> {ORDER_WORKFLOW[order.status]?.label || order.status}
+                    </span>
+                </div>
             </div>
         </div>
 
