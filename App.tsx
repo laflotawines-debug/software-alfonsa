@@ -21,7 +21,6 @@ import { Presupuestador } from './views/Presupuestador';
 import { Etiquetador } from './views/Etiquetador';
 import { PriceManagement } from './views/PriceManagement';
 import { Settings } from './views/Settings';
-import { SqlEditor } from './views/SqlEditor';
 import { StockControl } from './views/StockControl';
 import { Attendance } from './views/Attendance';
 import { InventoryInbounds } from './views/InventoryInbounds';
@@ -808,7 +807,6 @@ export default function App() {
                         isDarkMode={isDarkMode} 
                         onToggleTheme={() => toggleTheme()} 
                     />}
-                    {currentView === View.SQL_EDITOR && <SqlEditor currentUser={currentUser} />}
                     {currentView === View.STOCK_CONTROL && <StockControl currentUser={currentUser} />}
                     {currentView === View.ATTENDANCE && <Attendance currentUser={currentUser} />}
                     {currentView === View.INV_INBOUNDS && <InventoryInbounds currentUser={currentUser} />}

@@ -100,10 +100,8 @@ export const SYSTEM_NAV_STRUCTURE = [
         { id: View.ETIQUETADOR, label: 'Etiquetador', permission: 'tools.etiquetador' },
         { id: View.EXPIRATIONS, label: 'Vencimientos', permission: 'tools.expirations' },
         { id: View.LISTA_CHINA, label: 'Lista china', permission: 'tools.lista_china' },
-        { id: View.SQL_EDITOR, label: 'Editor SQL', permission: 'tools.sql_editor' },
     ]
-  },
-  { id: View.HISTORY, label: 'Historial', permission: 'history.view', module: 'General' },
+  }
 ];
 
 export const EXTRA_PERMISSIONS = [
