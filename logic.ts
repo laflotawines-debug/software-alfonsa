@@ -15,6 +15,10 @@ import {
 // ==========================================
 export const hasPermission = (user: User, permissionKey: string): boolean => {
     if (user.role === 'vale') return true;
+    
+    // Restricción explícita: El dashboard es solo para administradores
+    if (user.role === 'armador' && permissionKey === 'dashboard.view') return false;
+
     return (user.permissions || []).includes(permissionKey);
 };
 
@@ -239,41 +243,69 @@ export const removeProductFromOrder = (order: Order, code: string): Order => {
 
 /**
  * Parsea el texto pegado del PDF/Sistema.
- * Optimizada para detectar bultos, multiplicadores, códigos y nombres largos con notas.
+ * Optimizada para detectar bultos, multiplicadores, UNIDADES SUELTAS, códigos y nombres.
  */
 export const parseOrderText = (text: string): Product[] => {
     const lines = text.split('\n');
     const products: Product[] = [];
     
     /**
-     * Regex mejorada:
-     * 1. ^(\d+) -> Cantidad/Bultos inicial.
-     * 2. (?:\s*\(x?(\d+)\))? -> Multiplicador opcional como (x12) o (6).
-     * 3. \s+(\S+) -> Espacio y luego el código del artículo (primer bloque sin espacios).
-     * 4. \s+(.*?)\s* -> El nombre del producto (captura todo de forma no codiciosa).
-     * 5. (?:\s*[-–—]\s*)? -> Un guion opcional que a veces separa el nombre del precio.
-     * 6. \$ -> El ancla real: el símbolo de pesos indica que terminó el nombre.
-     * 7. \s*([\d,.]+) -> Precio unitario.
-     * 8. \s*\$\s*([\d,.]+) -> Segundo símbolo de pesos y el subtotal.
+     * REGEX ACTUALIZADA PARA SOPORTAR UNIDADES SUELTAS
+     * 1. ^(\d+) -> Cantidad de Bultos/Cajas.
+     * 2. (?:\s*\(x?(\d+)\))? -> Multiplicador opcional (x6).
+     * 3. \s+(\S+) -> Token A (Puede ser sueltas o código).
+     * 4. (?:\s+(\S+))? -> Token B (Opcional, puede ser código o parte del nombre).
+     * 5. \s+(.*?) -> El resto del nombre.
+     * 6. ... precios ...
      */
-    const regex = /^(\d+)(?:\s*\(x?(\d+)\))?\s+(\S+)\s+(.*?)(?:\s*[-–—]\s*)?\$[\s\t]*([\d,.]+)\s*\$[\s\t]*([\d,.]+)/i;
+    const regex = /^(\d+)(?:\s*\(x?(\d+)\))?\s+(\S+)(?:\s+(\S+))?\s+(.*?)(?:\s*[-–—]\s*)?\$[\s\t]*([\d,.]+)\s*\$[\s\t]*([\d,.]+)/i;
 
     lines.forEach(line => {
         const match = line.trim().match(regex);
         if (match) {
             const bultos = parseInt(match[1]);
             const multiplier = match[2] ? parseInt(match[2]) : 1;
-            const code = match[3].trim();
-            // Limpiamos el nombre de posibles guiones sobrantes al final
-            const name = match[4].trim().replace(/\s*[-–—]$/, '').trim();
-            const unitPrice = parseFloat(match[5].replace(/\./g, '').replace(',', '.'));
             
-            const finalQty = bultos * multiplier;
+            const tokenA = match[3].trim(); // Podría ser '4' o '8287'
+            const tokenB = match[4] ? match[4].trim() : null; // Podría ser '4464' o 'PATAGONIA'
+            let nameRest = match[5].trim();
+            
+            let looseUnits = 0;
+            let code = tokenA;
+            let finalName = nameRest;
+
+            // Lógica de desambiguación para detectar si TokenA es unidad suelta
+            const isTokenANumeric = /^\d+$/.test(tokenA);
+            const isTokenBNumeric = tokenB ? /^\d+$/.test(tokenB) : false;
+
+            if (tokenB) {
+                if (isTokenANumeric && isTokenBNumeric) {
+                    // CASO: 1 (x6) 4 4464 ... -> A=4 (Sueltas), B=4464 (Código)
+                    looseUnits = parseInt(tokenA);
+                    code = tokenB;
+                    finalName = nameRest; 
+                } else {
+                    // CASO: 1 (x6) 8287 PATAGONIA ... -> A=8287 (Código), B=PATAGONIA (Nombre)
+                    code = tokenA;
+                    finalName = `${tokenB} ${nameRest}`;
+                }
+            } else {
+                // Solo Token A capturado antes del nombre
+                code = tokenA;
+            }
+
+            // Limpieza final del nombre
+            finalName = finalName.replace(/\s*[-–—]$/, '').trim();
+            
+            const unitPrice = parseFloat(match[6].replace(/\./g, '').replace(',', '.'));
+            
+            // CÁLCULO FINAL DE CANTIDAD
+            const finalQty = (bultos * multiplier) + looseUnits;
             const finalSubtotal = finalQty * unitPrice;
 
             products.push({
                 code,
-                name,
+                name: finalName,
                 originalQuantity: finalQty,
                 quantity: finalQty,
                 unitPrice,

@@ -17,7 +17,9 @@ import {
   Zap, 
   RotateCcw, 
   CheckCircle2, 
-  Package 
+  Package,
+  Phone,
+  MessageCircle
 } from 'lucide-react';
 import { View, Product, OrderStatus, DetailedOrder, User, OrderZone, ClientMaster, SavedBudget, MasterProduct, DeliveryZone } from '../types';
 import { parseOrderText } from '../logic';
@@ -31,6 +33,9 @@ interface CreateBudgetProps {
 
 export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreateOrder, currentUser }) => {
   const [clientName, setClientName] = useState('');
+  const [address, setAddress] = useState('');
+  const [phone, setPhone] = useState('');
+  
   const [selectedZone, setSelectedZone] = useState<string>('');
   const [availableZones, setAvailableZones] = useState<DeliveryZone[]>([]);
   const [rawText, setRawText] = useState('');
@@ -138,6 +143,11 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
   const selectClient = (client: ClientMaster) => {
     setClientName(client.nombre);
     setSelectedClient(client);
+    
+    // Auto-completar datos extra si existen
+    if (client.domicilio) setAddress(client.domicilio);
+    if (client.celular) setPhone(client.celular);
+
     setShowClientDropdown(false);
     fetchSavedBudgets(client.codigo);
     
@@ -307,6 +317,13 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
     try {
         const displayId = `PED-${Date.now()}`;
         
+        // Construir observaciones con los datos extra
+        let obsParts = [];
+        if (address.trim()) obsParts.push(`DIRECCIÓN: ${address.trim()}`);
+        if (phone.trim()) obsParts.push(`TEL: ${phone.trim()}`);
+        
+        const finalObservations = obsParts.length > 0 ? obsParts.join('\n') : undefined;
+
         const newOrder: DetailedOrder = {
             id: '', 
             displayId: displayId,
@@ -317,6 +334,7 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
             total: totalAmount,
             createdDate: new Date().toLocaleDateString('es-AR'),
             products: products,
+            observations: finalObservations,
             history: [{
                 timestamp: new Date().toISOString(),
                 userId: currentUser.id, 
@@ -365,6 +383,8 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
       <section className="bg-surface rounded-2xl p-6 border border-surfaceHighlight shadow-sm">
         <h3 className="text-text text-lg font-bold mb-6 flex items-center gap-2">Datos del Cliente</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            {/* NOMBRE DEL CLIENTE */}
             <div className="flex flex-col gap-2 relative" ref={dropdownRef}>
                 <label className="text-xs font-bold text-muted uppercase tracking-wider">Nombre del Cliente *</label>
                 <div className="relative">
@@ -389,6 +409,7 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
                 )}
             </div>
             
+            {/* ZONA DE ENTREGA */}
             <div className="flex flex-col gap-2">
                 <label className="text-xs font-bold text-muted uppercase tracking-wider">Zona de Entrega</label>
                 <div className="relative">
@@ -399,6 +420,38 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
                         ))}
                         {availableZones.length === 0 && <option value="V. Mercedes">V. Mercedes (Default)</option>}
                     </select>
+                </div>
+            </div>
+
+            {/* DIRECCIÓN */}
+            <div className="flex flex-col gap-2">
+                <label className="text-xs font-bold text-muted uppercase tracking-wider">Dirección de Entrega (Opcional)</label>
+                <div className="relative">
+                    <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                    <input 
+                        type="text" 
+                        value={address} 
+                        onChange={(e) => setAddress(e.target.value)} 
+                        placeholder="Calle y Número..." 
+                        className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3.5 pl-10 pr-4 text-sm text-text focus:border-primary outline-none transition-colors shadow-sm font-bold uppercase" 
+                        autoComplete="off" 
+                    />
+                </div>
+            </div>
+
+            {/* CELULAR / WHATSAPP */}
+            <div className="flex flex-col gap-2">
+                <label className="text-xs font-bold text-muted uppercase tracking-wider">Celular / WhatsApp (Opcional)</label>
+                <div className="relative">
+                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                    <input 
+                        type="text" 
+                        value={phone} 
+                        onChange={(e) => setPhone(e.target.value)} 
+                        placeholder="2657..." 
+                        className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3.5 pl-10 pr-4 text-sm text-text focus:border-primary outline-none transition-colors shadow-sm font-bold" 
+                        autoComplete="off" 
+                    />
                 </div>
             </div>
         </div>

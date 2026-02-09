@@ -53,7 +53,6 @@ const ICON_MAP: Record<string, React.ReactNode> = {
     [View.CLIENT_COLLECTIONS]: <Wallet size={20} />,
     [View.CATALOG]: <Library size={20} />,
     [View.PRESUPUESTADOR]: <Wrench size={20} />,
-    [View.HISTORY]: <History size={20} />,
     'list': <List size={16} />,
     'table': <Table size={16} />,
     'credit-card': <CreditCard size={16} />,
@@ -175,7 +174,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, curre
                               let subIcon = <List size={14} />;
                               if (sub.id === View.ORDER_SHEET) subIcon = <Table size={14} />;
                               if (sub.id === View.PAYMENTS_PROVIDERS) subIcon = <Users size={14} />;
-                              if (sub.id === View.PAYMENTS_HISTORY) subIcon = <FileText size={14} />;
                               if (sub.id === View.PROVIDER_STATEMENTS) subIcon = <BookOpen size={14} />;
                               if (sub.id === View.INV_INBOUNDS) subIcon = <Truck size={14} />;
                               if (sub.id === View.INV_ADJUSTMENTS) subIcon = <Calculator size={14} />;
@@ -190,7 +188,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, curre
                               if (sub.id === View.ETIQUETADOR) subIcon = <Tag size={14} />;
                               if (sub.id === View.EXPIRATIONS) subIcon = <AlertTriangle size={14} />;
                               if (sub.id === View.LISTA_CHINA) subIcon = <MessageSquareQuote size={14} />;
-                              if (sub.id === View.SQL_EDITOR) subIcon = <Database size={14} />;
 
                               return (
                                 <button key={sub.id} onClick={() => onNavigate(sub.id)} className={`text-left text-[11px] font-black uppercase py-2 px-3 rounded-lg transition-colors flex items-center gap-2 ${currentView === sub.id ? 'text-primary bg-primary/5' : 'text-muted hover:text-text hover:bg-surfaceHighlight/50'}`}>

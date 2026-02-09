@@ -42,7 +42,9 @@ import {
     Warehouse,
     MapPin,
     Plus,
-    Trash2
+    Trash2,
+    LogOut,
+    Key
 } from 'lucide-react';
 import { User, MasterProduct, AppPermission, View, DeliveryZone } from '../types';
 import { supabase } from '../supabase';
@@ -54,11 +56,12 @@ interface SettingsProps {
     onUpdateProfile: (newName: string, avatarUrl?: string, preferredBranch?: string, themePreference?: string) => Promise<void>;
     isDarkMode: boolean;
     onToggleTheme: () => void;
+    onLogout: () => void;
 }
 
 type Tab = 'profile' | 'catalog_prices' | 'catalog_stock' | 'permissions' | 'zones';
 
-export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile, isDarkMode, onToggleTheme }) => {
+export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile, isDarkMode, onToggleTheme, onLogout }) => {
     const [name, setName] = useState(currentUser.name);
     const [avatarUrl, setAvatarUrl] = useState(currentUser.avatar_url || '');
     const [preferredBranch, setPreferredBranch] = useState(currentUser.preferred_branch || 'LLERENA');
@@ -551,6 +554,33 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                                             <p className="text-[10px] text-muted font-bold uppercase mt-1">Interfaz optimizada para noche</p>
                                         </div>
                                         {isDarkMode && <div className="h-1.5 w-1.5 bg-primary rounded-full animate-ping"></div>}
+                                    </button>
+                                </div>
+                            </section>
+
+                            {/* SECCIÓN DE SESIÓN (ÚTIL PARA MOBILE) */}
+                            <section className="bg-surface border border-surfaceHighlight rounded-3xl p-8 shadow-sm animate-in fade-in">
+                                <div className="flex items-center justify-between mb-6">
+                                    <h3 className="text-xl font-black text-text flex items-center gap-3 uppercase tracking-tight italic">
+                                        <Key size={24} className="text-red-500" /> Gestión de Sesión
+                                    </h3>
+                                </div>
+                                <div className="p-6 bg-red-500/5 border border-red-500/20 rounded-[2rem] flex flex-col sm:flex-row items-center justify-between gap-6">
+                                    <div className="flex items-start gap-4">
+                                        <div className="p-3 bg-red-500/10 rounded-2xl text-red-600">
+                                            <LogOut size={24} />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-sm font-black text-text uppercase">Cerrar Sesión Activa</h4>
+                                            <p className="text-[10px] text-muted font-bold uppercase mt-1">Se borrarán las credenciales locales de este dispositivo.</p>
+                                        </div>
+                                    </div>
+                                    <button 
+                                        onClick={onLogout}
+                                        className="w-full sm:w-auto px-10 py-4 bg-red-600 hover:bg-red-700 text-white font-black rounded-2xl text-xs uppercase tracking-widest shadow-xl shadow-red-900/20 transition-all active:scale-95 flex items-center justify-center gap-2"
+                                    >
+                                        <LogOut size={18} />
+                                        Cerrar Sesión
                                     </button>
                                 </div>
                             </section>

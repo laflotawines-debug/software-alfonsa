@@ -49,6 +49,9 @@ export default function App() {
     const [currentView, setCurrentView] = useState<View>(View.DASHBOARD);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     
+    // Estado para controlar que la redirección solo ocurra una vez al iniciar sesión
+    const [hasInitialRedirect, setHasInitialRedirect] = useState(false);
+    
     const [isDarkMode, setIsDarkMode] = useState(() => {
         if (typeof window !== 'undefined') {
             return document.documentElement.classList.contains('dark');
@@ -86,12 +89,28 @@ export default function App() {
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
             setSession(session);
-            if (session?.user) fetchProfile(session.user.id);
-            else setCurrentUser(null);
+            if (session?.user) {
+                fetchProfile(session.user.id);
+            } else {
+                setCurrentUser(null);
+                setHasInitialRedirect(false); // Resetear bandera al cerrar sesión
+            }
         });
 
         return () => subscription.unsubscribe();
     }, []);
+
+    // Efecto dedicado para la redirección inicial post-login
+    useEffect(() => {
+        if (currentUser && !hasInitialRedirect) {
+            if (currentUser.role === 'armador') {
+                setCurrentView(View.ORDERS);
+            } else {
+                setCurrentView(View.DASHBOARD);
+            }
+            setHasInitialRedirect(true);
+        }
+    }, [currentUser, hasInitialRedirect]);
 
     const fetchProfile = async (userId: string) => {
         const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
@@ -407,6 +426,7 @@ export default function App() {
         await supabase.auth.signOut();
         setSession(null);
         setCurrentUser(null);
+        setHasInitialRedirect(false); // Resetear bandera al cerrar sesión manualmente
     };
 
     const handleDeleteOrder = async (orderId: string) => {
@@ -429,13 +449,21 @@ export default function App() {
     const handleAdvanceOrder = async (order: DetailedOrder, notes?: string) => {
         const nextOrder = advanceOrderStatus(order);
         
-        // Optimistic UI update
+        // Optimistic UI update - RESET CHECKS FOR NEXT STEP
         if (isActiveStatus(nextOrder.status)) {
-             setActiveOrders(prev => prev.map(o => o.id === order.id ? {...o, status: nextOrder.status} : o));
+             setActiveOrders(prev => prev.map(o => o.id === order.id ? {
+                 ...o, 
+                 status: nextOrder.status,
+                 products: o.products.map(p => ({ ...p, isChecked: false })) // Reset local checks
+             } : o));
         } else {
              setActiveOrders(prev => prev.filter(o => o.id !== order.id));
              if (isInCurrentHistoryView(new Date().toISOString())) {
-                 setHistoryOrders(prev => [{...order, status: nextOrder.status}, ...prev]);
+                 setHistoryOrders(prev => [{
+                     ...order, 
+                     status: nextOrder.status,
+                     products: order.products.map(p => ({ ...p, isChecked: false })) 
+                 }, ...prev]);
              }
         }
 
@@ -461,23 +489,14 @@ export default function App() {
         } else if (order.status === OrderStatus.ARMADO && !order.controllerId) {
             updates.controller_id = currentUser?.id;
             updates.controller_name = currentUser?.name;
-        } else if (order.status === OrderStatus.FACTURADO && !order.invoicerName && currentUser?.role === 'vale') {
-            // Optional: Track who invoiced if we had a column for it
-        }
-
-        // If advancing to EN_TRANSITO, we should also lock in shipped quantities if not already set (fallback)
-        // Note: Ideally handleSaveAssembly handles this, but direct status advances via list also trigger this.
-        if (nextOrder.status === OrderStatus.EN_TRANSITO) {
-             // We can't easily update all items here without iterating.
-             // Usually advance happens via modal save, but for list actions:
-             // It is assumed the order is ready.
-             // If we wanted to be strict, we would execute an RPC or multiple updates here.
-             // For now, assume quantity matches if advancing directly without edit.
         }
 
         const { error } = await supabase.from('orders').update(updates).eq('id', order.id);
         
-        if (error) {
+        if (!error) {
+            // IMPORTANT: Reset check state in DB for all items in this order
+            await supabase.from('order_items').update({ is_checked: false }).eq('order_id', order.id);
+        } else {
             // Revert on error
             fetchActiveOrders();
             alert("Error al avanzar estado: " + error.message);
@@ -558,10 +577,65 @@ export default function App() {
     };
 
     const handleReleaseOrder = async (order: DetailedOrder) => {
-        // En lugar de liberar automáticamente al cerrar el modal,
-        // ahora solo limpiamos el estado 'activeOrder' local.
-        // El bloqueo persiste hasta que el usuario toque el candado explícitamente o finalice la etapa.
         setActiveOrder(null);
+    };
+
+    // --- MANEJO AVANZADO DE CANTIDADES CON HISTORIAL ---
+    const handleUpdateProductQuantity = (code: string, newQty: number) => {
+        if (!activeOrder || !currentUser) return;
+
+        const product = activeOrder.products.find(p => p.code === code);
+        if (!product) return;
+
+        const oldQty = product.quantity;
+        if (oldQty === newQty) return;
+
+        const diff = newQty - oldQty;
+        const isReduction = diff < 0;
+        const absDiff = Math.abs(diff);
+        
+        // Logica para determinar contexto (según prompt)
+        // Entre Reparto y Entregado -> Devolución/NC
+        const isPostShipping = [OrderStatus.EN_TRANSITO, OrderStatus.ENTREGADO].includes(activeOrder.status);
+
+        let actionDescription = '';
+        let actionType = 'UPDATE_QTY';
+
+        if (!isReduction) {
+            // Agregado
+            actionDescription = `Agregó ${absDiff} un. de ${product.name}. (Total: ${newQty})`;
+            actionType = 'ITEM_ADDED';
+        } else {
+            // Quita / Faltante
+            if (isPostShipping) {
+                actionDescription = `Devolución/NC: ${absDiff} un. de ${product.name}. (Aceptado: ${newQty})`;
+                actionType = 'ITEM_RETURNED';
+            } else {
+                actionDescription = `Faltante/Quita: ${absDiff} un. de ${product.name}. (Quedan: ${newQty})`;
+                actionType = 'ITEM_REMOVED';
+            }
+        }
+
+        const historyEntry = {
+            timestamp: new Date().toISOString(),
+            userId: currentUser.id,
+            userName: currentUser.name,
+            action: actionType,
+            details: actionDescription,
+            previousState: activeOrder.status,
+            newState: activeOrder.status
+        };
+
+        // Aplicar cambio de cantidad (lógica existente)
+        let updatedOrder = applyQuantityChange(activeOrder, code, newQty);
+        
+        // Agregar entrada de historial
+        updatedOrder = {
+            ...updatedOrder,
+            history: [...(updatedOrder.history || []), historyEntry]
+        };
+
+        setActiveOrder(updatedOrder);
     };
 
     const handleSaveAssembly = async (updatedOrder: any, shouldAdvance: boolean, notes?: string) => {
@@ -573,22 +647,14 @@ export default function App() {
             
             const existingCodes = new Set(existingDbItems?.map((i: any) => i.code));
 
-            // CRITICAL LOGIC FOR SHIPPING QUANTITY FREEZING
             const isPostShippingStatus = [OrderStatus.EN_TRANSITO, OrderStatus.ENTREGADO, OrderStatus.PAGADO].includes(updatedOrder.status);
 
             for (const p of updatedOrder.products) {
-                 // If the order has already been shipped (Status is Transit or later),
-                 // we DO NOT update the shipped_quantity (it is frozen).
-                 // If it hasn't been shipped (Assembly, Control, Billing), we sync shipped_quantity with current quantity
-                 // so that if we transition to shipping now, the snapshot is correct.
                  let finalShippedQuantity = p.shippedQuantity;
                  
                  if (!isPostShippingStatus) {
-                     // Still in warehouse: What we verify now IS what we are preparing to ship.
                      finalShippedQuantity = p.quantity;
                  } else {
-                     // Already shipped: Keep the recorded shipped quantity.
-                     // Fallback to p.quantity only if data is missing, but verify logic.
                      finalShippedQuantity = p.shippedQuantity ?? p.quantity; 
                  }
 
@@ -601,7 +667,8 @@ export default function App() {
                      shipped_quantity: finalShippedQuantity,
                      unit_price: p.unitPrice,
                      subtotal: p.subtotal,
-                     is_checked: p.isChecked
+                     // Si avanzamos de estado, reseteamos el check para que el siguiente paso verifique
+                     is_checked: shouldAdvance ? false : p.isChecked
                  };
 
                  if (existingCodes.has(p.code)) {
@@ -637,13 +704,6 @@ export default function App() {
                 updated_by: currentUser?.id 
             };
 
-            // Logic to assign if completing the step (Assign current user as the "completer" if not already)
-            // But if advancing, we effectively "release" the lock for the NEXT stage (unless we auto-claim next stage, which we don't usually)
-            // The record of who did THIS stage is kept in assembler_id/controller_id if we don't clear it.
-            // Requirement: "al finalizar el armado se desbloquea solo".
-            // If we move EN_ARMADO -> ARMADO, the 'assembler_id' remains set (record of who assembled).
-            // But the lock logic for 'ARMADO' checks 'controller_id'. So it IS implicitly unlocked for the controller.
-            
             if (shouldAdvance) {
                 if (updatedOrder.status === OrderStatus.EN_ARMADO && !updatedOrder.assemblerId) {
                     orderUpdates.assembler_id = currentUser?.id;
@@ -696,9 +756,11 @@ export default function App() {
     const handleConfirmTransfer = (id: string, status: 'Pendiente' | 'Realizado') => {
         setTransfers(transfers.map(t => t.id === id ? { ...t, status } : t));
     };
-    const handleClearHistory = () => setTransfers(transfers.filter(t => t.status !== 'Archivado'));
     const handleUpdateTransferStatus = (id: string, status: any) => {
         setTransfers(transfers.map(t => t.id === id ? { ...t, status } : t));
+    };
+    const handleClearHistory = () => {
+        setTransfers([]);
     };
 
     if (!session || !currentUser) {
@@ -764,6 +826,7 @@ export default function App() {
                                         total: order.total,
                                         status: order.status,
                                         zone: order.zone,
+                                        observations: order.observations, // ADDED THIS
                                         history: order.history,
                                         created_by: currentUser.id 
                                     }).select().single();
@@ -806,6 +869,7 @@ export default function App() {
                         }} 
                         isDarkMode={isDarkMode} 
                         onToggleTheme={() => toggleTheme()} 
+                        onLogout={handleLogout}
                     />}
                     {currentView === View.STOCK_CONTROL && <StockControl currentUser={currentUser} />}
                     {currentView === View.ATTENDANCE && <Attendance currentUser={currentUser} />}
@@ -824,10 +888,24 @@ export default function App() {
                         currentUser={currentUser} 
                         onClose={() => handleReleaseOrder(activeOrder)}
                         onSave={handleSaveAssembly}
-                        onUpdateProduct={(code, qty) => setActiveOrder(applyQuantityChange(activeOrder, code, qty))}
+                        onUpdateProduct={handleUpdateProductQuantity} // USAR EL NUEVO HANDLER CON HISTORIAL
                         onToggleCheck={(code) => setActiveOrder(toggleProductCheck(activeOrder, code))}
                         onUpdateObservations={(text) => setActiveOrder(updateObservations(activeOrder, text))}
-                        onAddProduct={(prod) => setActiveOrder(addProductToOrder(activeOrder, prod))}
+                        onAddProduct={(prod) => {
+                            // Wrapper para agregar historial al añadir producto nuevo
+                            const updatedOrder = addProductToOrder(activeOrder, prod);
+                            // Agregar entrada manual al historial local
+                            updatedOrder.history = [...(updatedOrder.history || []), {
+                                timestamp: new Date().toISOString(),
+                                userId: currentUser.id,
+                                userName: currentUser.name,
+                                action: 'ITEM_ADDED_NEW',
+                                details: `Agregó nuevo ítem: ${prod.name} (${prod.quantity} un.)`,
+                                previousState: activeOrder.status,
+                                newState: activeOrder.status
+                            }];
+                            setActiveOrder(updatedOrder);
+                        }}
                         onUpdatePrice={(code, price) => setActiveOrder(updateProductPrice(activeOrder, code, price))}
                         onRemoveProduct={(code) => setActiveOrder(removeProductFromOrder(activeOrder, code))}
                         onDeleteOrder={handleDeleteOrder}
