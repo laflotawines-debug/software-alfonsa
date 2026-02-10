@@ -102,6 +102,11 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     const isTransitStep = order.status === OrderStatus.EN_TRANSITO; 
     const isFinishedStep = order.status === OrderStatus.ENTREGADO || order.status === OrderStatus.PAGADO;
 
+    // --- LÓGICA DE UX: PASOS DE REPARTO Y ENTREGA AUTOMÁTICOS ---
+    // Si estamos en "Factura Controlada" (listo para salir a reparto) o "En Tránsito" (listo para entregar),
+    // o el pedido ya finalizó, los checks se consideran completos visual y lógicamente.
+    const isAutoCheckStep = isReadyForTransit || isTransitStep || isFinishedStep;
+
     const canPrint = isBillingStep || isInvoiceControlStep || isReadyForTransit || isTransitStep || isFinishedStep;
 
     useEffect(() => {
@@ -230,6 +235,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     };
 
     const buildInvoicePDF = () => {
+        // ... (Logic for PDF remains same)
         const doc = new jsPDF();
         const primaryColor = [228, 124, 0]; 
         const textColor = [17, 24, 39]; 
@@ -255,7 +261,6 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
 
         let currentY = 60;
         
-        // --- 1. PRODUCTOS ENTREGADOS ---
         const delivered = order.products.filter(p => p.quantity > 0);
         if (delivered.length > 0) {
             doc.setFontSize(11);
@@ -289,7 +294,6 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
 
         const isPostShipping = [OrderStatus.EN_TRANSITO, OrderStatus.ENTREGADO, OrderStatus.PAGADO].includes(order.status);
 
-        // --- 2. FALTANTES DE STOCK ---
         const shortages = order.products.map(p => {
              const sentOrCurrent = isPostShipping ? (p.shippedQuantity ?? p.quantity) : p.quantity;
              const missing = Math.max(0, p.originalQuantity - sentOrCurrent);
@@ -333,7 +337,6 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
              });
         }
 
-        // --- 3. NOTA DE CRÉDITO (DEVOLUCIONES EN REPARTO) ---
         const returns = order.products.map(p => {
              if (!isPostShipping) return { ...p, returned: 0 };
              const shipped = p.shippedQuantity ?? p.quantity;
@@ -469,7 +472,9 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     const handleConfirmTransition = (notes: string) => { onSave(order, true, notes); setShowTransitionModal(false); };
 
     const uncheckedCount = order.products.filter(p => !p.isChecked).length;
-    const isReady = uncheckedCount === 0;
+    
+    // --- CAMBIO LÓGICO: Si es un paso automático (Reparto/Entregado), se considera listo siempre ---
+    const isReady = isAutoCheckStep ? true : uncheckedCount === 0;
 
     let titleText = "Armado de Pedido";
     let buttonLabel = "Finalizar Armado";
@@ -813,15 +818,21 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                             const isReturned = returnedAmount > 0;
                                             // -----------------------------------------------------
 
+                                            // Visualmente marcamos como checkeado si estamos en etapas donde la verificación es automática
+                                            const displayChecked = isAutoCheckStep ? true : product.isChecked;
+
                                             return (
-                                                <div key={product.code} className={`flex items-start md:items-center gap-3 p-4 rounded-xl border transition-all ${product.isChecked && !isFinishedStep ? 'bg-green-500/5 border-green-500/20' : 'bg-surface border-surfaceHighlight shadow-sm'}`}>
+                                                <div key={product.code} className={`flex items-start md:items-center gap-3 p-4 rounded-xl border transition-all ${displayChecked && !isFinishedStep ? 'bg-green-500/5 border-green-500/20' : 'bg-surface border-surfaceHighlight shadow-sm'}`}>
                                                     {!isFinishedStep && (
                                                         <input 
                                                             type="checkbox"
-                                                            checked={product.isChecked}
-                                                            onChange={() => canEditProducts && onToggleCheck(product.code)}
-                                                            disabled={!canEditProducts}
-                                                            className="w-5 h-5 rounded border-surfaceHighlight text-primary focus:ring-primary cursor-pointer accent-primary"
+                                                            checked={displayChecked}
+                                                            onChange={() => {
+                                                                // Permite checkear solo si se pueden editar productos Y NO estamos en una etapa de auto-check
+                                                                if (canEditProducts && !isAutoCheckStep) onToggleCheck(product.code);
+                                                            }}
+                                                            disabled={!canEditProducts || isAutoCheckStep}
+                                                            className={`w-5 h-5 rounded border-surfaceHighlight text-primary focus:ring-primary cursor-pointer accent-primary ${isAutoCheckStep ? 'opacity-50' : ''}`}
                                                         />
                                                     )}
                                                     

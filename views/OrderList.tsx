@@ -60,6 +60,8 @@ interface OrderListProps {
   
   // NEW PROPS FOR OPTIMIZED HISTORY FETCHING
   onFetchHistory?: (month: number, year: number, search?: string) => Promise<void>;
+  onLoadMoreHistory?: () => Promise<void>;
+  hasMoreHistory?: boolean;
   historyFilter?: { month: number, year: number, search: string };
 }
 
@@ -89,6 +91,8 @@ export const OrderList: React.FC<OrderListProps> = ({
     onToggleLock,
     onRefresh,
     onFetchHistory,
+    onLoadMoreHistory,
+    hasMoreHistory,
     historyFilter
 }) => {
   const [currentTab, setCurrentTab] = useState<TabType>('active');
@@ -98,6 +102,7 @@ export const OrderList: React.FC<OrderListProps> = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [confirmingBatchDelete, setConfirmingBatchDelete] = useState<string | null>(null);
   const [zones, setZones] = useState<DeliveryZone[]>([]);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   // Transition Modal State
   const [transitionOrder, setTransitionOrder] = useState<DetailedOrder | null>(null);
@@ -173,6 +178,13 @@ export const OrderList: React.FC<OrderListProps> = ({
       setIsRefreshing(false);
   };
 
+  const handleLoadMore = async () => {
+      if (!onLoadMoreHistory) return;
+      setIsLoadingMore(true);
+      await onLoadMoreHistory();
+      setIsLoadingMore(false);
+  };
+
   const handleBatchDelete = (key: string, orderIds: string[]) => {
       onDeleteOrders(orderIds);
       setConfirmingBatchDelete(null);
@@ -216,7 +228,7 @@ export const OrderList: React.FC<OrderListProps> = ({
 
   return (
     <div className="flex flex-col gap-6 pb-10">
-      {/* ... Header y controles igual que antes ... */}
+      {/* Header and Controls */}
       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6">
         <div>
           <h2 className="text-text text-3xl md:text-4xl font-black tracking-tight">Gestión de Pedidos</h2>
@@ -403,6 +415,20 @@ export const OrderList: React.FC<OrderListProps> = ({
                       </div>
                   </div>
               ))}
+              
+              {/* Botón de Cargar Más */}
+              {hasMoreHistory && (
+                  <div className="flex justify-center pt-6 pb-2">
+                      <button 
+                          onClick={handleLoadMore}
+                          disabled={isLoadingMore}
+                          className="flex items-center gap-2 px-8 py-4 rounded-2xl bg-surface border border-surfaceHighlight hover:border-primary text-text hover:text-primary transition-all font-black text-xs uppercase shadow-sm active:scale-95 disabled:opacity-50"
+                      >
+                          {isLoadingMore ? <Loader2 size={16} className="animate-spin" /> : <Clock size={16} />}
+                          {isLoadingMore ? 'Cargando...' : 'Cargar más pedidos anteriores'}
+                      </button>
+                  </div>
+              )}
           </div>
       )}
 
@@ -488,11 +514,6 @@ const DetailedOrderCard: React.FC<{
       else if (order.controllerId) { lockedByOther = true; occupantName = order.controllerName || ''; }
   }
 
-  // Si yo terminé el armado pero aún no tiene controlador, no debería mostrarse bloqueado para mí (Armador original).
-  // La lógica de "Bloqueado" anterior era confusa. 
-  // Ahora "Bloqueado por otro" es explícito si hay un ID activo en el paso actual.
-  
-  // Mensaje amigable para el dueño anterior si el pedido está en espera
   const waitingForNextStep = (order.status === OrderStatus.ARMADO && !order.controllerId && order.assemblerId === currentUser.id);
 
   const timeAgo = (lockedByOther || lockedByMe) ? getTimeAgo(order.lastUpdated) : '';
@@ -601,10 +622,6 @@ const DetailedOrderCard: React.FC<{
         className = "bg-surfaceHighlight text-muted hover:text-text border border-surfaceHighlight";
         action = () => onOpenAssembly(order);
     } else {
-        // If free (Padlock Open) -> Can enter but user usually clicks padlock first to lock. 
-        // We provide "Armar" as a quick entry that also locks if we wanted, 
-        // but to keep it Explicit, we let them click the Padlock OR enter freely.
-        // Let's make the main button "Ver Detalle" and they lock inside or via the card icon.
         if (order.status === OrderStatus.EN_ARMADO) {
             label = "Abrir Pedido";
             icon = <Box size={14} />;
@@ -639,7 +656,6 @@ const DetailedOrderCard: React.FC<{
                 {order.zone || 'SIN ZONA'}
             </span>
             <div className="flex items-center gap-2">
-                {/* PADLOCK TOGGLE */}
                 {!isFinished && (
                     <button 
                         onClick={(e) => { e.stopPropagation(); onToggleLock(order); }}

@@ -9,7 +9,8 @@ import {
     Boxes,
     Clock,
     RefreshCw,
-    Warehouse
+    Warehouse,
+    User
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { StockInbound, MasterProduct, User as UserType, WarehouseCode } from '../types';
@@ -17,7 +18,7 @@ import { StockInbound, MasterProduct, User as UserType, WarehouseCode } from '..
 export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ currentUser }) => {
     const [view, setView] = useState<'list' | 'create'>('list');
     const [tab, setTab] = useState<'pendientes' | 'finalizados'>('pendientes');
-    const [inbounds, setInbounds] = useState<StockInbound[]>([]);
+    const [inbounds, setInbounds] = useState<(StockInbound & { user_name?: string })[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     
@@ -60,16 +61,17 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
         try {
             const [inbRes, whRes, provRes] = await Promise.all([
                 supabase.from('stock_inbounds')
-                    .select('*, providers_master(razon_social), warehouses(name)')
+                    .select('*, providers_master(razon_social), warehouses(name), profiles:created_by(name)')
                     .order('created_at', { ascending: false }),
                 supabase.from('warehouses').select('*'),
                 supabase.from('providers_master').select('codigo, razon_social').eq('activo', true)
             ]);
 
-            if (inbRes.data) setInbounds(inbRes.data.map(i => ({
+            if (inbRes.data) setInbounds(inbRes.data.map((i: any) => ({
                 ...i,
                 supplier_name: i.providers_master?.razon_social || i.supplier_code,
-                warehouse_name: i.warehouses?.name
+                warehouse_name: i.warehouses?.name,
+                user_name: i.profiles?.name || 'Sistema'
             })));
             if (whRes.data) setWarehouses(whRes.data);
             if (provRes.data) setProviders(provRes.data);
@@ -101,7 +103,7 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
     }, [inbounds, searchTerm, dateFilter, tab]);
 
     const groupedInbounds = useMemo(() => {
-        const groups: Record<string, { name: string, items: StockInbound[] }> = {};
+        const groups: Record<string, { name: string, items: (StockInbound & { user_name?: string })[] }> = {};
         filteredInbounds.forEach(inb => {
             const key = inb.supplier_code;
             if (!groups[key]) groups[key] = { name: inb.supplier_name || key, items: [] };
@@ -412,7 +414,12 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
                                         return (
                                             <div key={inb.id} className="bg-surface border border-surfaceHighlight rounded-2xl p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 hover:border-primary/30 transition-all shadow-sm">
                                                 <div className="flex-1 space-y-2"><div className="flex items-center gap-3"><span className="text-[10px] font-black text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20">#{inb.display_number}</span><div className="flex items-center gap-2 text-text font-black uppercase text-sm italic"><FileText size={14} className="text-primary" />Ref: {inb.observations || 'S/REF'}</div></div>
-                                                    <div className="flex flex-wrap gap-x-4 gap-y-1"><span className="text-[10px] font-bold text-muted uppercase flex items-center gap-1"><Calendar size={12} /> {new Date(inb.created_at).toLocaleDateString()}</span><span className="text-[10px] font-bold text-muted uppercase flex items-center gap-1"><Warehouse size={12} /> {inb.warehouse_name}</span><StatusBadge status={inb.status} /></div>
+                                                    <div className="flex flex-wrap gap-x-4 gap-y-1">
+                                                        <span className="text-[10px] font-bold text-muted uppercase flex items-center gap-1"><Calendar size={12} /> {new Date(inb.created_at).toLocaleDateString()}</span>
+                                                        <span className="text-[10px] font-bold text-muted uppercase flex items-center gap-1"><Warehouse size={12} /> {inb.warehouse_name}</span>
+                                                        <span className="text-[10px] font-bold text-muted uppercase flex items-center gap-1"><User size={12} /> {inb.user_name}</span>
+                                                        <StatusBadge status={inb.status} />
+                                                    </div>
                                                 </div>
                                                 <div className="flex gap-2 w-full md:w-auto">
                                                     <button onClick={() => setDetailsInbound(inb)} className="flex-1 md:flex-none px-4 py-2.5 rounded-xl border border-surfaceHighlight text-text hover:bg-surfaceHighlight font-black text-[10px] uppercase transition-all flex items-center justify-center gap-2 shadow-sm"><Eye size={16}/> Detalle</button>

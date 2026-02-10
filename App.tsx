@@ -49,7 +49,6 @@ export default function App() {
     const [currentView, setCurrentView] = useState<View>(View.DASHBOARD);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     
-    // Estado para controlar que la redirección solo ocurra una vez al iniciar sesión
     const [hasInitialRedirect, setHasInitialRedirect] = useState(false);
     
     const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -63,6 +62,12 @@ export default function App() {
     const [activeOrders, setActiveOrders] = useState<DetailedOrder[]>([]);
     const [historyOrders, setHistoryOrders] = useState<DetailedOrder[]>([]);
     const orders = [...activeOrders, ...historyOrders];
+
+    // Paginación del historial
+    const HISTORY_PAGE_SIZE = 20;
+    const [historyPage, setHistoryPage] = useState(0);
+    const [hasMoreHistory, setHasMoreHistory] = useState(true);
+    const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
     const [historyFilter, setHistoryFilter] = useState({
         month: new Date().getMonth(),
@@ -93,14 +98,13 @@ export default function App() {
                 fetchProfile(session.user.id);
             } else {
                 setCurrentUser(null);
-                setHasInitialRedirect(false); // Resetear bandera al cerrar sesión
+                setHasInitialRedirect(false); 
             }
         });
 
         return () => subscription.unsubscribe();
     }, []);
 
-    // Efecto dedicado para la redirección inicial post-login
     useEffect(() => {
         if (currentUser && !hasInitialRedirect) {
             if (currentUser.role === 'armador') {
@@ -131,8 +135,9 @@ export default function App() {
             // Carga inicial optimizada
             await Promise.all([
                 fetchActiveOrders(),
-                fetchHistoryOrders(new Date().getMonth(), new Date().getFullYear()),
-                fetchNotifications(userId)
+                fetchHistoryOrders(new Date().getMonth(), new Date().getFullYear(), '', 0), 
+                fetchNotifications(userId),
+                fetchTrips()
             ]);
             
             fetchExpirations();
@@ -140,7 +145,6 @@ export default function App() {
         }
     };
 
-    // --- NOTIFICACIONES: Fetch desde DB ---
     const fetchNotifications = async (userId: string) => {
         const { data } = await supabase
             .from('notifications')
@@ -154,7 +158,6 @@ export default function App() {
         }
     };
 
-    // --- NOTIFICACIONES: Acciones ---
     const markNotificationRead = async (notification: AppNotification) => {
         setNotifications(prev => prev.map(n => n.id === notification.id ? { ...n, is_read: true } : n));
         await supabase
@@ -186,7 +189,12 @@ export default function App() {
         if (n.link_id) {
             const order = activeOrders.find(o => o.id === n.link_id) || historyOrders.find(o => o.id === n.link_id);
             if (order) {
-                setActiveOrder(order);
+                if (!order.products || order.products.length === 0) {
+                     const fetched = await fetchSingleOrder(n.link_id);
+                     if (fetched) setActiveOrder(fetched);
+                } else {
+                     setActiveOrder(order);
+                }
                 setCurrentView(View.ORDERS);
             } else {
                 const fetched = await fetchSingleOrder(n.link_id);
@@ -196,6 +204,138 @@ export default function App() {
                 }
             }
         }
+    };
+
+    // --- LOGICA DE VIAJES (CORREGIDA PARA ESQUEMA REAL) ---
+    const fetchTrips = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('trips')
+                .select(`
+                    *,
+                    trip_clients(*),
+                    trip_expenses(*)
+                `)
+                .order('created_at', { ascending: false });
+
+            if (error) throw error;
+
+            if (data) {
+                const mappedTrips: Trip[] = data.map((t: any) => ({
+                    id: t.id,
+                    displayId: t.display_id,
+                    name: t.name,
+                    status: t.status,
+                    driverName: t.driver_name,
+                    date: t.date_text, // Mapeo correcto según schema
+                    route: t.route,
+                    clients: (t.trip_clients || []).map((c: any) => ({
+                        id: c.id,
+                        name: c.name,
+                        address: c.address,
+                        previousBalance: c.previous_balance,
+                        currentInvoiceAmount: c.current_invoice_amount,
+                        paymentCash: c.payment_cash,
+                        paymentTransfer: c.payment_transfer,
+                        isTransferExpected: c.is_transfer_expected,
+                        status: c.status
+                    })),
+                    expenses: (t.trip_expenses || []).map((e: any) => ({
+                        id: e.id,
+                        type: e.type,
+                        amount: e.amount,
+                        note: e.note,
+                        timestamp: e.timestamp
+                    }))
+                }));
+                setTrips(mappedTrips);
+            }
+        } catch (error) {
+            console.error("Error fetching trips:", error);
+        }
+    };
+
+    const handleSaveTrip = async (trip: Trip) => {
+        try {
+            // 1. Guardar Cabecera en 'trips'
+            const tripPayload = {
+                display_id: trip.displayId,
+                name: trip.name,
+                status: trip.status,
+                driver_name: trip.driverName,
+                date_text: trip.date, // Mapeo a columna correcta
+                route: trip.route
+            };
+
+            let tripId = trip.id;
+            const isNew = !trip.id || trip.id.startsWith('trip-');
+
+            if (isNew) {
+                const { data, error } = await supabase.from('trips').insert([tripPayload]).select().single();
+                if (error) throw error;
+                tripId = data.id;
+            } else {
+                const { error } = await supabase.from('trips').update(tripPayload).eq('id', tripId);
+                if (error) throw error;
+            }
+
+            // 2. Guardar Clientes en 'trip_clients' (Reemplazo total para simplicidad)
+            await supabase.from('trip_clients').delete().eq('trip_id', tripId);
+            
+            if (trip.clients.length > 0) {
+                const clientsPayload = trip.clients.map(c => ({
+                    trip_id: tripId,
+                    name: c.name,
+                    address: c.address,
+                    previous_balance: c.previousBalance,
+                    current_invoice_amount: c.currentInvoiceAmount,
+                    payment_cash: c.paymentCash,
+                    payment_transfer: c.paymentTransfer,
+                    is_transfer_expected: c.isTransferExpected,
+                    status: c.status
+                }));
+                const { error: cErr } = await supabase.from('trip_clients').insert(clientsPayload);
+                if (cErr) throw cErr;
+            }
+
+            // 3. Guardar Gastos en 'trip_expenses'
+            await supabase.from('trip_expenses').delete().eq('trip_id', tripId);
+
+            if (trip.expenses.length > 0) {
+                const expensesPayload = trip.expenses.map(e => ({
+                    trip_id: tripId,
+                    type: e.type,
+                    amount: e.amount,
+                    note: e.note,
+                    timestamp: new Date().toISOString()
+                }));
+                const { error: eErr } = await supabase.from('trip_expenses').insert(expensesPayload);
+                if (eErr) throw eErr;
+            }
+
+            await fetchTrips();
+
+        } catch (e: any) {
+            console.error("Error guardando viaje:", e);
+            alert("Error al guardar viaje: " + e.message);
+        }
+    };
+
+    const handleDeleteTrip = async (id: string) => {
+        if (id && !id.startsWith('trip-')) {
+            try {
+                // Borrar hijos primero por integridad referencial
+                await supabase.from('trip_expenses').delete().eq('trip_id', id);
+                await supabase.from('trip_clients').delete().eq('trip_id', id);
+                
+                const { error } = await supabase.from('trips').delete().eq('id', id);
+                if (error) throw error;
+            } catch (e: any) {
+                alert("Error al eliminar viaje: " + e.message);
+                return;
+            }
+        }
+        setTrips(prev => prev.filter(t => t.id !== id));
     };
 
     // 1. CARGAR ACTIVOS
@@ -211,8 +351,12 @@ export default function App() {
         }
     };
 
-    // 2. CARGAR HISTORIAL
-    const fetchHistoryOrders = async (month: number, year: number, search?: string) => {
+    // 2. CARGAR HISTORIAL (Paginado)
+    const fetchHistoryOrders = async (month: number, year: number, search: string = '', page: number = 0) => {
+        setIsLoadingHistory(true);
+        const from = page * HISTORY_PAGE_SIZE;
+        const to = from + HISTORY_PAGE_SIZE - 1;
+
         let query = supabase
             .from('orders')
             .select('*, order_items(*)')
@@ -221,18 +365,38 @@ export default function App() {
 
         if (search && search.trim().length > 0) {
             query = query.or(`client_name.ilike.%${search}%,display_id.ilike.%${search}%`);
-            query = query.limit(50); 
         } else {
             const startDate = new Date(year, month, 1).toISOString();
             const endDate = new Date(year, month + 1, 0, 23, 59, 59).toISOString();
             query = query.gte('created_at', startDate).lte('created_at', endDate);
         }
 
+        query = query.range(from, to);
+
         const { data } = await query;
+        
         if (data) {
-            setHistoryOrders(mapOrders(data));
-            setHistoryFilter(prev => ({ ...prev, month, year, search: search || '' }));
+            const mappedData = mapOrders(data);
+            if (page === 0) {
+                setHistoryOrders(mappedData);
+            } else {
+                setHistoryOrders(prev => [...prev, ...mappedData]);
+            }
+            setHasMoreHistory(data.length === HISTORY_PAGE_SIZE);
+            setHistoryFilter(prev => ({ ...prev, month, year, search }));
+            setHistoryPage(page);
         }
+        setIsLoadingHistory(false);
+    };
+
+    const loadMoreHistory = async () => {
+        if (!hasMoreHistory || isLoadingHistory) return;
+        await fetchHistoryOrders(
+            historyFilter.month, 
+            historyFilter.year, 
+            historyFilter.search, 
+            historyPage + 1
+        );
     };
 
     const mapOrders = (rawOrders: any[]): DetailedOrder[] => {
@@ -278,38 +442,47 @@ export default function App() {
 
                 if (eventType === 'INSERT') {
                     const fullOrderData = await fetchSingleOrder(newOrder.id);
-                    if (fullOrderData) {
-                        if (isActiveStatus(newOrder.status)) {
-                            setActiveOrders(prev => [fullOrderData, ...prev]);
-                        } else if (isInCurrentHistoryView(newOrder.created_at)) {
-                            setHistoryOrders(prev => [fullOrderData, ...prev]);
-                        }
+                    if (fullOrderData && isActiveStatus(newOrder.status)) {
+                        setActiveOrders(prev => [fullOrderData, ...prev]);
                     }
                 } else if (eventType === 'UPDATE') {
-                    const fullOrderData = await fetchSingleOrder(newOrder.id);
-                    if (!fullOrderData) return;
+                    const isActiveInMemory = activeOrders.some(o => o.id === newOrder.id);
+                    const isHistoryInMemory = historyOrders.some(o => o.id === newOrder.id);
 
-                    if (isActiveStatus(newOrder.status)) {
-                        setActiveOrders(prev => {
-                            const exists = prev.find(o => o.id === newOrder.id);
-                            if (exists) return prev.map(o => o.id === newOrder.id ? fullOrderData : o);
-                            return [fullOrderData, ...prev].sort((a,b) => b.displayId.localeCompare(a.displayId));
-                        });
-                        setHistoryOrders(prev => prev.filter(o => o.id !== newOrder.id));
-                    } else {
-                        setActiveOrders(prev => prev.filter(o => o.id !== newOrder.id));
-                        if (isInCurrentHistoryView(newOrder.created_at)) {
-                            setHistoryOrders(prev => {
+                    if (isActiveInMemory || isHistoryInMemory) {
+                        const fullOrderData = await fetchSingleOrder(newOrder.id);
+                        if (!fullOrderData) return;
+
+                        if (isActiveStatus(newOrder.status)) {
+                            setActiveOrders(prev => {
                                 const exists = prev.find(o => o.id === newOrder.id);
                                 if (exists) return prev.map(o => o.id === newOrder.id ? fullOrderData : o);
                                 return [fullOrderData, ...prev].sort((a,b) => b.displayId.localeCompare(a.displayId));
                             });
+                            setHistoryOrders(prev => prev.filter(o => o.id !== newOrder.id));
+                        } else {
+                            setActiveOrders(prev => prev.filter(o => o.id !== newOrder.id));
+                            if (isInCurrentHistoryView(newOrder.created_at)) {
+                                setHistoryOrders(prev => {
+                                    const exists = prev.find(o => o.id === newOrder.id);
+                                    if (exists) return prev.map(o => o.id === newOrder.id ? fullOrderData : o);
+                                    return [fullOrderData, ...prev].sort((a,b) => b.displayId.localeCompare(a.displayId));
+                                });
+                            }
                         }
                     }
                 } else if (eventType === 'DELETE') {
                     setActiveOrders(prev => prev.filter(o => o.id !== oldOrder.id));
                     setHistoryOrders(prev => prev.filter(o => o.id !== oldOrder.id));
                 }
+            })
+            .subscribe();
+
+        // Suscripción Realtime para Viajes
+        const tripsChannel = supabase
+            .channel('trips_realtime')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'trips' }, () => {
+                fetchTrips();
             })
             .subscribe();
 
@@ -323,6 +496,7 @@ export default function App() {
 
         return () => {
             supabase.removeChannel(ordersChannel);
+            supabase.removeChannel(tripsChannel);
             supabase.removeChannel(notifChannel);
         };
     };
@@ -339,8 +513,7 @@ export default function App() {
 
     const isInCurrentHistoryView = (dateStr: string) => {
         const d = new Date(dateStr);
-        const now = new Date();
-        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+        return d.getMonth() === historyFilter.month && d.getFullYear() === historyFilter.year;
     };
 
     const fetchExpirations = async () => {
@@ -426,7 +599,7 @@ export default function App() {
         await supabase.auth.signOut();
         setSession(null);
         setCurrentUser(null);
-        setHasInitialRedirect(false); // Resetear bandera al cerrar sesión manualmente
+        setHasInitialRedirect(false);
     };
 
     const handleDeleteOrder = async (orderId: string) => {
@@ -445,16 +618,14 @@ export default function App() {
         } else alert("Error al eliminar lote: " + error.message);
     };
 
-    // --- ADVANCE ORDER LOGIC WITH NOTES ---
     const handleAdvanceOrder = async (order: DetailedOrder, notes?: string) => {
         const nextOrder = advanceOrderStatus(order);
         
-        // Optimistic UI update - RESET CHECKS FOR NEXT STEP
         if (isActiveStatus(nextOrder.status)) {
              setActiveOrders(prev => prev.map(o => o.id === order.id ? {
                  ...o, 
                  status: nextOrder.status,
-                 products: o.products.map(p => ({ ...p, isChecked: false })) // Reset local checks
+                 products: o.products.map(p => ({ ...p, isChecked: false })) 
              } : o));
         } else {
              setActiveOrders(prev => prev.filter(o => o.id !== order.id));
@@ -467,7 +638,6 @@ export default function App() {
              }
         }
 
-        // Prepare DB Update
         const updates: any = { 
             status: nextOrder.status,
             history: [...(order.history || []), {
@@ -482,7 +652,6 @@ export default function App() {
             updated_by: currentUser?.id
         };
 
-        // Logic to assign assembler/controller if null when advancing
         if (order.status === OrderStatus.EN_ARMADO && !order.assemblerId) {
             updates.assembler_id = currentUser?.id;
             updates.assembler_name = currentUser?.name;
@@ -494,10 +663,8 @@ export default function App() {
         const { error } = await supabase.from('orders').update(updates).eq('id', order.id);
         
         if (!error) {
-            // IMPORTANT: Reset check state in DB for all items in this order
             await supabase.from('order_items').update({ is_checked: false }).eq('order_id', order.id);
         } else {
-            // Revert on error
             fetchActiveOrders();
             alert("Error al avanzar estado: " + error.message);
         }
@@ -506,7 +673,7 @@ export default function App() {
     const handleClaimOrder = async (order: DetailedOrder) => {
         if (!currentUser) return;
 
-        const updates: any = { updated_by: currentUser.id }; // ACTOR TRACKING
+        const updates: any = { updated_by: currentUser.id }; 
         
         if (order.status === OrderStatus.EN_ARMADO) {
             updates.assembler_id = currentUser.id;
@@ -546,7 +713,6 @@ export default function App() {
                              (order.status === OrderStatus.ARMADO && order.controllerId === currentUser.id);
         
         if (isLockedByMe) {
-            // Desbloquear (Solo si yo tengo el lock)
             if (order.status === OrderStatus.EN_ARMADO) {
                 updates.assembler_id = null;
                 updates.assembler_name = null;
@@ -555,7 +721,6 @@ export default function App() {
                 updates.controller_name = null;
             }
         } else {
-            // Bloquear (Tomar)
             if (order.status === OrderStatus.EN_ARMADO) {
                 updates.assembler_id = currentUser.id;
                 updates.assembler_name = currentUser.name;
@@ -565,14 +730,13 @@ export default function App() {
             }
         }
 
-        // Si hay cambios, ejecutar update
         if (Object.keys(updates).length > 0) {
             const { error } = await supabase.from('orders').update(updates).eq('id', order.id);
             if (error) {
                 alert("Error al actualizar candado: " + error.message);
                 return;
             }
-            await fetchActiveOrders(); // Refrescar lista para reflejar cambio de ícono
+            await fetchActiveOrders();
         }
     };
 
@@ -580,7 +744,6 @@ export default function App() {
         setActiveOrder(null);
     };
 
-    // --- MANEJO AVANZADO DE CANTIDADES CON HISTORIAL ---
     const handleUpdateProductQuantity = (code: string, newQty: number) => {
         if (!activeOrder || !currentUser) return;
 
@@ -594,19 +757,15 @@ export default function App() {
         const isReduction = diff < 0;
         const absDiff = Math.abs(diff);
         
-        // Logica para determinar contexto (según prompt)
-        // Entre Reparto y Entregado -> Devolución/NC
         const isPostShipping = [OrderStatus.EN_TRANSITO, OrderStatus.ENTREGADO].includes(activeOrder.status);
 
         let actionDescription = '';
         let actionType = 'UPDATE_QTY';
 
         if (!isReduction) {
-            // Agregado
             actionDescription = `Agregó ${absDiff} un. de ${product.name}. (Total: ${newQty})`;
             actionType = 'ITEM_ADDED';
         } else {
-            // Quita / Faltante
             if (isPostShipping) {
                 actionDescription = `Devolución/NC: ${absDiff} un. de ${product.name}. (Aceptado: ${newQty})`;
                 actionType = 'ITEM_RETURNED';
@@ -626,10 +785,8 @@ export default function App() {
             newState: activeOrder.status
         };
 
-        // Aplicar cambio de cantidad (lógica existente)
         let updatedOrder = applyQuantityChange(activeOrder, code, newQty);
         
-        // Agregar entrada de historial
         updatedOrder = {
             ...updatedOrder,
             history: [...(updatedOrder.history || []), historyEntry]
@@ -667,7 +824,6 @@ export default function App() {
                      shipped_quantity: finalShippedQuantity,
                      unit_price: p.unitPrice,
                      subtotal: p.subtotal,
-                     // Si avanzamos de estado, reseteamos el check para que el siguiente paso verifique
                      is_checked: shouldAdvance ? false : p.isChecked
                  };
 
@@ -719,7 +875,7 @@ export default function App() {
             setActiveOrder(null); 
             fetchActiveOrders(); 
             if (!isActiveStatus(nextStatus)) {
-                fetchHistoryOrders(historyFilter.month, historyFilter.year, historyFilter.search);
+                fetchHistoryOrders(historyFilter.month, historyFilter.year, historyFilter.search, 0);
             }
         } catch (err: any) {
             console.error("Error guardando pedido:", err);
@@ -727,16 +883,6 @@ export default function App() {
         }
     };
 
-    const handleSaveTrip = (trip: Trip) => {
-        if (trip.id && trips.find(t => t.id === trip.id)) {
-            setTrips(trips.map(t => t.id === trip.id ? trip : t));
-        } else {
-            setTrips([...trips, { ...trip, id: trip.id || `trip-${Date.now()}` }]);
-        }
-    };
-    const handleDeleteTrip = (id: string) => {
-        setTrips(trips.filter(t => t.id !== id));
-    };
     const handleUpdateProvider = (p: Provider) => {
         if (providers.find(pr => pr.id === p.id)) {
             setProviders(providers.map(pr => pr.id === p.id ? p : pr));
@@ -798,7 +944,9 @@ export default function App() {
                         <OrderList 
                             onNavigate={setCurrentView} 
                             orders={orders} 
-                            onFetchHistory={fetchHistoryOrders}
+                            onFetchHistory={(m, y, s) => fetchHistoryOrders(m, y, s, 0)}
+                            onLoadMoreHistory={loadMoreHistory}
+                            hasMoreHistory={hasMoreHistory}
                             historyFilter={historyFilter}
                             currentUser={currentUser}
                             onOpenAssembly={setActiveOrder}
@@ -809,11 +957,10 @@ export default function App() {
                             onToggleLock={handleToggleLock}
                             onRefresh={async () => {
                                 await fetchActiveOrders();
-                                await fetchHistoryOrders(historyFilter.month, historyFilter.year, historyFilter.search);
+                                await fetchHistoryOrders(historyFilter.month, historyFilter.year, historyFilter.search, 0);
                             }}
                         />
                     )}
-                    {/* ... Resto de vistas ... */}
                     {currentView === View.CREATE_BUDGET && (
                         <CreateBudget 
                             onNavigate={setCurrentView} 
@@ -826,7 +973,7 @@ export default function App() {
                                         total: order.total,
                                         status: order.status,
                                         zone: order.zone,
-                                        observations: order.observations, // ADDED THIS
+                                        observations: order.observations,
                                         history: order.history,
                                         created_by: currentUser.id 
                                     }).select().single();
@@ -888,13 +1035,11 @@ export default function App() {
                         currentUser={currentUser} 
                         onClose={() => handleReleaseOrder(activeOrder)}
                         onSave={handleSaveAssembly}
-                        onUpdateProduct={handleUpdateProductQuantity} // USAR EL NUEVO HANDLER CON HISTORIAL
+                        onUpdateProduct={handleUpdateProductQuantity}
                         onToggleCheck={(code) => setActiveOrder(toggleProductCheck(activeOrder, code))}
                         onUpdateObservations={(text) => setActiveOrder(updateObservations(activeOrder, text))}
                         onAddProduct={(prod) => {
-                            // Wrapper para agregar historial al añadir producto nuevo
                             const updatedOrder = addProductToOrder(activeOrder, prod);
-                            // Agregar entrada manual al historial local
                             updatedOrder.history = [...(updatedOrder.history || []), {
                                 timestamp: new Date().toISOString(),
                                 userId: currentUser.id,
