@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
     Users, 
@@ -54,7 +55,7 @@ const DAY_MAP: Record<string, string> = {
 };
 
 interface ParsedDay {
-    date: string;
+    date: string; // YYYY-MM-DD
     dayName: string;
     entry: string;
     exit: string;
@@ -67,6 +68,7 @@ interface ParsedDay {
     isEarly: boolean;
     isLate: boolean;
     minutesLate: number;
+    originalRawDate?: string;
 }
 
 interface PerformanceRecord {
@@ -99,7 +101,6 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
     const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
     const [perfSaveStatus, setPerfSaveStatus] = useState<'idle' | 'saving' | 'success'>('idle');
     
-    // Estados financieros locales (transitorios para el cálculo)
     const [debtAmount, setDebtAmount] = useState<number>(0);
     const [extraHoursInput, setExtraHoursInput] = useState<number>(0);
     const [manualExtraAmount, setManualExtraAmount] = useState<number>(0);
@@ -123,7 +124,6 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                 const configMap: Record<string, WorkerAttendanceConfig> = {};
                 configRes.data.forEach((c: any) => { configMap[c.user_id] = c; });
                 setWorkerConfigs(configMap);
-                // NOTA: En móvil no pre-seleccionamos para mostrar la lista primero
                 if (profRes.data && profRes.data.length > 0 && !selectedWorkerId && window.innerWidth >= 768) {
                     setSelectedWorkerId(profRes.data[0].id);
                 }
@@ -145,7 +145,6 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
 
     useEffect(() => { loadData(); }, []);
 
-    // Resetear valores temporales al cambiar de trabajador
     useEffect(() => {
         setDebtAmount(0);
         setExtraHoursInput(0);
@@ -213,41 +212,92 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
         const lines = rawReport.split('\n');
         const results: ParsedDay[] = [];
         
+        const today = new Date();
+        let monthOffset = 0;
+
+        for (const line of lines) {
+            const match = line.trim().match(/^(\d{2})\s+([A-Za-z]+)/);
+            if (match) {
+                const dayNum = parseInt(match[1]);
+                if (dayNum > today.getDate() + 5) {
+                    monthOffset = -1;
+                }
+                break;
+            }
+        }
+
+        let currentYear = today.getFullYear();
+        let currentMonth = today.getMonth() + monthOffset;
+        if (currentMonth < 0) {
+            currentMonth = 11;
+            currentYear -= 1;
+        }
+
+        let previousDayNum = -1;
+
         lines.forEach(line => {
             const trimmed = line.trim();
-            if (!trimmed || trimmed.toLowerCase().includes('tabla') || trimmed.includes('==')) return;
-            const parts = trimmed.split(/\s+/);
+            if (!trimmed || /tabla|asistencia|dd\/ss|ent|sal|am|pm|extra/i.test(trimmed) || trimmed.includes('==')) return;
 
-            if (currentConfig.location === 'BETBEDER') {
-                if (parts.length >= 4 && parts[0].includes('/')) {
-                    const date = parts[0];
-                    const dayRaw = parts[parts.length - 1];
-                    const dayFull = DAY_MAP[dayRaw] || dayRaw;
-                    let entry = ""; let exit = "";
-                    if (!trimmed.toLowerCase().includes('sin registro')) {
-                        entry = parts[1];
-                        exit = parts[2];
+            const llerenaRegex = /^(\d{2})\s+([A-Za-z]+)(.*)/;
+            const match = trimmed.match(llerenaRegex);
+
+            if (match) {
+                const dayNumStr = match[1];
+                const dayNum = parseInt(dayNumStr);
+                const dayShort = match[2]; 
+                const restOfLine = match[3];
+
+                if (previousDayNum !== -1 && dayNum < previousDayNum) {
+                    currentMonth++;
+                    if (currentMonth > 11) {
+                        currentMonth = 0;
+                        currentYear++;
                     }
-                    results.push({ date, dayName: dayFull, entry, exit, observation: "", isFeriado: false, isJustified: false, hours: 0, penaltyHours: 0, status: '', isEarly: false, isLate: false, minutesLate: 0 });
                 }
-            } else {
-                const llerenaRegex = /^(\d{2})\s+([A-Z][a-z])(.*)/;
-                const match = trimmed.match(llerenaRegex);
-                if (match) {
-                    const date = match[1]; 
-                    const dayShort = match[2]; 
-                    const timesMatch = match[3].match(/(\d{1,2}:\d{2})/g) || [];
-                    const entry = timesMatch.length > 0 ? timesMatch[0] : ""; 
-                    const exit = timesMatch.length > 1 ? timesMatch[1] : "";
-                    
-                    results.push({ date, dayName: DAY_MAP[dayShort] || dayShort, entry, exit, observation: "", isFeriado: false, isJustified: false, hours: 0, penaltyHours: 0, status: '', isEarly: false, isLate: false, minutesLate: 0 });
+                previousDayNum = dayNum;
+
+                const fullDate = new Date(currentYear, currentMonth, dayNum);
+                const isoDate = fullDate.toISOString().split('T')[0];
+
+                const timesMatch = restOfLine.match(/(\d{1,2}:\d{2})/g) || [];
+                
+                let entry = ""; 
+                let exit = "";
+                
+                if (timesMatch.length >= 2) {
+                    entry = timesMatch[0];
+                    exit = timesMatch[timesMatch.length - 1];
+                } else if (timesMatch.length === 1) {
+                    entry = timesMatch[0];
                 }
+
+                const dayName = DAY_MAP[dayShort.substring(0, 2)] || dayShort;
+
+                results.push({ 
+                    date: isoDate, 
+                    dayName: dayName, 
+                    entry, 
+                    exit, 
+                    observation: "", 
+                    isFeriado: false, 
+                    isJustified: false, 
+                    hours: 0, 
+                    penaltyHours: 0, 
+                    status: '', 
+                    isEarly: false, 
+                    isLate: false, 
+                    minutesLate: 0,
+                    originalRawDate: dayNumStr
+                });
             }
         });
 
         if (results.length > 0) {
             setParsedReport(results);
             setActiveTab('report');
+        } else {
+            alert("No se detectaron líneas válidas. Asegúrese de copiar desde 'dd/ss' hacia abajo.");
         }
     };
 
@@ -260,24 +310,45 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
         };
 
         const reportMap = new Map<string, ParsedDay>(parsedReport.map(r => [r.date, r] as [string, ParsedDay]));
-        const firstEntry = parsedReport[0];
-        const fullQuincena: ParsedDay[] = [];
-        let anchorDate = new Date();
-        if (currentConfig.location === 'BETBEDER' && firstEntry.date.includes('/')) {
-            const [d, m] = firstEntry.date.split('/').map(Number);
-            anchorDate.setDate(d); anchorDate.setMonth(m - 1);
-        } else {
-            anchorDate.setDate(parseInt(firstEntry.date));
-        }
+        
+        // --- CAMBIO CLAVE: RANGO DINÁMICO BASADO EN EL PEGADO ---
+        const sortedDates = [...parsedReport].map(r => r.date).sort();
+        const startIso = sortedDates[0];
+        const endIso = sortedDates[sortedDates.length - 1];
+        
+        const [sy, sm, sd] = startIso.split('-').map(Number);
+        const startDate = new Date(sy, sm - 1, sd);
+        
+        const [ey, em, ed] = endIso.split('-').map(Number);
+        const endDate = new Date(ey, em - 1, ed);
 
-        for (let i = 0; i < 14; i++) {
-            const current = new Date(anchorDate);
-            current.setDate(anchorDate.getDate() + i);
-            let dateStr = currentConfig.location === 'BETBEDER' ? `${String(current.getDate()).padStart(2, '0')}/${String(current.getMonth() + 1).padStart(2, '0')}` : String(current.getDate()).padStart(2, '0');
-            const dayName = DAYS_OF_WEEK[current.getDay() === 0 ? 6 : current.getDay() - 1].key;
-            const existing = reportMap.get(dateStr);
-            if (existing) { fullQuincena.push({ ...(existing as ParsedDay) }); } else {
-                fullQuincena.push({ date: dateStr, dayName: dayName, entry: "", exit: "", observation: "", isFeriado: false, isJustified: false, hours: 0, penaltyHours: 0, status: "", isEarly: false, isLate: false, minutesLate: 0 });
+        // Calcular la duración real del reporte pegado
+        const diffTime = Math.abs(endDate.getTime() - startDate.getTime());
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        const fullPeriod: ParsedDay[] = [];
+        
+        // Iterar exactamente desde el primer día al último día pegados
+        for (let i = 0; i <= diffDays; i++) {
+            const current = new Date(startDate);
+            current.setDate(startDate.getDate() + i);
+            const iso = current.toISOString().split('T')[0];
+            
+            const existing = reportMap.get(iso);
+            if (existing) {
+                fullPeriod.push({ ...existing });
+            } else {
+                const dayIdx = current.getDay();
+                const dayName = DAYS_OF_WEEK[dayIdx === 0 ? 6 : dayIdx - 1].key;
+                fullPeriod.push({ 
+                    date: iso, 
+                    dayName, 
+                    entry: "", exit: "", observation: "", 
+                    isFeriado: false, isJustified: false, 
+                    hours: 0, penaltyHours: 0, status: "", 
+                    isEarly: false, isLate: false, minutesLate: 0,
+                    originalRawDate: String(current.getDate()).padStart(2, '0')
+                });
             }
         }
 
@@ -285,25 +356,25 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
         let totalPenaltyHours = 0;
         let totalLateCount = 0;
 
-        const detailedDays = fullQuincena.map(day => {
-            let hours = 0; let penaltyHours = 0; let status = "TRABAJADO";
+        const detailedDays = fullPeriod.map(day => {
+            let hours = 0; let penaltyHours = 0; let status = "";
             const isWorkDay = currentConfig.work_days.includes(day.dayName);
             const entryMins = day.entry ? timeToMinutes(day.entry) : null;
             const exitMins = day.exit ? timeToMinutes(day.exit) : null;
 
             const amEntry = timeToMinutes(currentConfig.entry_time);
-            const amExit = timeToMinutes(currentConfig.exit_time);
             const pmEntry = currentConfig.entry_time_pm ? timeToMinutes(currentConfig.entry_time_pm) : null;
-            const pmExit = currentConfig.exit_time_pm ? timeToMinutes(currentConfig.exit_time_pm) : null;
-
-            let targetEntry = amEntry; let targetExit = amExit;
+            
+            let targetEntry = amEntry; 
             if (entryMins !== null && pmEntry !== null) {
                 const diffAm = Math.abs(entryMins - amEntry);
                 const diffPm = Math.abs(entryMins - pmEntry);
-                if (diffPm < diffAm) { targetEntry = pmEntry; targetExit = pmExit!; }
+                if (diffPm < diffAm) { 
+                    targetEntry = pmEntry; 
+                }
             }
 
-            const scheduledDailyHours = (targetExit - targetEntry) / 60;
+            const scheduledDailyHours = 8;
             let isEarly = false; let isLate = false;
             let diffMinutes = 0;
 
@@ -311,34 +382,32 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                 if (day.entry && day.exit) {
                     hours = ((exitMins! - entryMins!) / 60) * 2;
                     status = "FERIADO TRABAJADO";
-                } else { hours = scheduledDailyHours; status = "FERIADO"; }
+                } else { 
+                    hours = scheduledDailyHours;
+                    status = "FERIADO"; 
+                }
             } else if (day.entry && day.exit) {
                 hours = (exitMins! - entryMins!) / 60;
                 diffMinutes = entryMins! - targetEntry;
 
-                if (diffMinutes <= -10) {
-                    isEarly = true;
-                }
+                if (diffMinutes <= -10) isEarly = true;
 
                 if (diffMinutes > 0) {
                     isLate = true;
-                    // REGLA: Si llega > 10 min tarde, se penaliza hora Y se pierde bono.
-                    // Si llega 1-10 min tarde, NO se penaliza hora, pero afecta bono si no es excelencia.
                     if (diffMinutes <= 10) {
                         status = "TARDE (TOLERANCIA)"; 
                     } else {
-                        totalLateCount++; // Penalización grave
+                        totalLateCount++; 
                         if (diffMinutes >= 120) { 
-                            penaltyHours = 4;
-                            status = "TARDE (>2H) -4Hs";
+                            penaltyHours = 4; status = "TARDE (>2H) -4Hs";
                         } else if (diffMinutes >= 60) { 
-                            penaltyHours = 2;
-                            status = "TARDE (>1H) -2Hs";
+                            penaltyHours = 2; status = "TARDE (>1H) -2Hs";
                         } else {
-                            penaltyHours = 1;
-                            status = "TARDE (>10m) -1Hs";
+                            penaltyHours = 1; status = "TARDE (>10m) -1Hs";
                         }
                     }
+                } else {
+                    status = "TRABAJADO";
                 }
             } else if ((day.entry && !day.exit) || (!day.entry && day.exit)) {
                 status = "REGISTRO INCOMPLETO (-6Hs)";
@@ -347,7 +416,7 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
             } else {
                 if (isWorkDay) {
                     if (day.isJustified) { 
-                        hours = scheduledDailyHours / 2; 
+                        hours = scheduledDailyHours / 2;
                         status = "FALTA JUSTIFICADA"; 
                     } else { 
                         status = "FALTA"; 
@@ -357,16 +426,24 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                 }
             }
 
-            totalAccumulatedHours += (hours - penaltyHours);
+            totalAccumulatedHours += Math.max(0, hours - penaltyHours);
             totalPenaltyHours += penaltyHours;
-            return { ...(day as ParsedDay), hours, penaltyHours, status, isEarly, isLate, minutesLate: Math.max(0, diffMinutes) };
+            
+            return { 
+                ...day, 
+                hours, 
+                penaltyHours, 
+                status, 
+                isEarly, 
+                isLate, 
+                minutesLate: Math.max(0, diffMinutes) 
+            };
         });
 
         const settings = globalSettings[currentConfig.location] || { bonus_1: 30000, bonus_2: 20000 };
         const roundedHours = Math.round(totalAccumulatedHours);
         const subtotal = roundedHours * currentConfig.hourly_rate;
 
-        // LÓGICA DE BONOS
         const workedDays = detailedDays.filter(d => d.entry && d.exit);
         const isAlwaysEarly = workedDays.length > 0 && workedDays.every(d => d.isEarly);
         const hasFatalIssues = detailedDays.some(d => {
@@ -390,12 +467,10 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
             }
         }
 
-        // CÁLCULO DE EXTRAS Y FINAL
         const calculatedExtraFromHours = extraHoursInput * currentConfig.hourly_rate;
         const totalAdditions = calculatedExtraFromHours + manualExtraAmount;
         const totalToPay = subtotal + bonusAmount + totalAdditions - debtAmount;
 
-        // LÓGICA DE MÉTRICAS
         const markedCount = detailedDays.filter(d => {
             if (d.entry && d.exit) return true;
             if (d.status === 'FERIADO') return true;
@@ -553,7 +628,6 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                         <div className={`flex-1 overflow-y-auto p-4 md:p-8 md:p-12 bg-white dark:bg-background ${!selectedWorkerId ? 'hidden md:block' : 'block'}`}>
                             {currentConfig && selectedWorker ? (
                                 <div className="max-w-3xl space-y-8 md:space-y-12 animate-in fade-in slide-in-from-right-4 md:slide-in-from-bottom-4">
-                                    {/* Botón Volver (Solo Móvil) */}
                                     <button onClick={() => setSelectedWorkerId(null)} className="md:hidden flex items-center gap-2 text-muted hover:text-text transition-colors text-xs font-black uppercase tracking-widest mb-4">
                                         <ChevronLeft size={16} /> Volver al Listado
                                     </button>
@@ -625,7 +699,7 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                                                             <div className="absolute -top-2 left-3 px-1 bg-white dark:bg-background text-[8px] font-bold text-muted uppercase">Entrada</div>
                                                         </div>
                                                         <div className="relative">
-                                                            <input type="time" value={currentConfig.exit_time_pm || ''} onChange={e => handleWorkerChange({ exit_time: e.target.value })} className="w-full bg-white dark:bg-background border border-surfaceHighlight rounded-2xl py-4 px-4 text-xs font-black text-text outline-none focus:border-primary shadow-sm" />
+                                                            <input type="time" value={currentConfig.exit_time_pm || ''} onChange={e => handleWorkerChange({ exit_time_pm: e.target.value })} className="w-full bg-white dark:bg-background border border-surfaceHighlight rounded-2xl py-4 px-4 text-xs font-black text-text outline-none focus:border-primary shadow-sm" />
                                                             <div className="absolute -top-2 left-3 px-1 bg-white dark:bg-background text-[8px] font-bold text-muted uppercase">Salida</div>
                                                         </div>
                                                     </div>
@@ -636,7 +710,7 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                                         <div className="pt-4 border-t border-surfaceHighlight/50 space-y-6">
                                             <div className="space-y-3">
                                                 <label className="text-xs font-black text-primary uppercase tracking-widest flex items-center gap-2"><Zap size={16} /> Procesar Informe de Huella</label>
-                                                <textarea value={rawReport} onChange={e => setRawReport(e.target.value)} placeholder="Pegue aquí el texto del reporte de asistencia..." className="w-full h-32 bg-white dark:bg-background border border-surfaceHighlight rounded-2xl p-4 text-xs font-mono text-text outline-none focus:border-primary shadow-inner resize-none transition-all" />
+                                                <textarea value={rawReport} onChange={e => setRawReport(e.target.value)} placeholder="Pegue aquí el texto del reporte de asistencia (incluya fechas dd/ss)..." className="w-full h-32 bg-white dark:bg-background border border-surfaceHighlight rounded-2xl p-4 text-xs font-mono text-text outline-none focus:border-primary shadow-inner resize-none transition-all" />
                                             </div>
 
                                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -665,7 +739,7 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                                 <div>
                                     <p className="text-primary font-black text-[10px] uppercase tracking-[0.3em] mb-1">Cálculo de Quincena</p>
                                     <h1 className="text-3xl md:text-4xl font-black text-text tracking-tighter uppercase italic leading-none">Informe Detallado</h1>
-                                    <p className="text-muted text-sm font-medium mt-2 uppercase tracking-wide italic">Resumen de 14 días — {selectedWorker?.name}</p>
+                                    <p className="text-muted text-sm font-medium mt-2 uppercase tracking-wide italic">Resumen del Periodo — {selectedWorker?.name}</p>
                                 </div>
                                 <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
                                     {isVale && (
@@ -742,19 +816,26 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                                     </thead>
                                     <tbody className="divide-y divide-surfaceHighlight">
                                         {finalReportData.detailedDays.map((day, idx) => {
+                                            const isNonWorking = day.status === 'NO TRABAJA';
+                                            const rowClass = isNonWorking 
+                                                ? 'bg-surfaceHighlight/20 opacity-60 text-muted' 
+                                                : day.status === 'FALTA' ? 'bg-red-500/5' : 'hover:bg-primary/5';
+
                                             return (
-                                                <tr key={idx} className={`hover:bg-primary/5 transition-colors ${day.status === 'NO TRABAJA' ? 'opacity-40' : ''}`}>
-                                                    <td className={`p-4 pl-8 text-xs font-black ${day.status === 'FALTA' ? 'text-red-600' : 'text-text'}`}>{day.date}</td>
-                                                    <td className="p-4 text-xs font-bold text-blue-600">{day.dayName.substring(0, 2)}</td>
-                                                    <td className="p-4 text-xs font-medium text-text">{day.entry || '--:--'}</td>
-                                                    <td className="p-4 text-xs font-medium text-text">{day.exit || '--:--'}</td>
+                                                <tr key={idx} className={`transition-colors ${rowClass}`}>
+                                                    <td className={`p-4 pl-8 text-xs font-black ${day.status === 'FALTA' ? 'text-red-600' : ''}`}>
+                                                        {new Date(day.date + 'T12:00:00').toLocaleDateString('es-AR')}
+                                                    </td>
+                                                    <td className={`p-4 text-xs font-bold ${isNonWorking ? '' : 'text-blue-600'}`}>{day.dayName.substring(0, 2)}</td>
+                                                    <td className="p-4 text-xs font-medium">{day.entry || '--:--'}</td>
+                                                    <td className="p-4 text-xs font-medium">{day.exit || '--:--'}</td>
                                                     <td className="p-4 text-center text-xs font-black">{day.hours > 0 ? (day.hours - day.penaltyHours).toFixed(2) : '-'}</td>
                                                     <td className="p-4 text-center">
                                                         {day.penaltyHours > 0 && <span className="text-xs font-black text-red-500">-{day.penaltyHours} hs</span>}
                                                     </td>
                                                     <td className="p-4">
                                                         <div className="flex flex-col gap-0.5">
-                                                            <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${getStatusStyle(day.status)}`}>{day.status}</span>
+                                                            <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border w-fit ${getStatusStyle(day.status)}`}>{day.status}</span>
                                                             {day.isEarly && <span className="text-[7px] text-green-600 font-bold uppercase ml-1 italic tracking-tighter">Llegó temprano</span>}
                                                             {day.isLate && !day.isJustified && day.minutesLate <= 10 && <span className="text-[7px] text-orange-500 font-bold uppercase ml-1 italic tracking-tighter">Tarde (Tolerancia)</span>}
                                                             {day.isLate && !day.isJustified && day.minutesLate > 10 && <span className="text-[7px] text-red-500 font-bold uppercase ml-1 italic tracking-tighter">Tardanza sin justificar</span>}
@@ -879,7 +960,6 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                 )}
             </div>
 
-            {/* MODAL DE DETALLE DE RENDIMIENTO */}
             {selectedPerfDetail && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
                     <div className="bg-surface w-full max-w-lg rounded-[2.5rem] border border-surfaceHighlight shadow-2xl overflow-hidden flex flex-col">
