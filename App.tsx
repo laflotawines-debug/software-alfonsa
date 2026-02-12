@@ -319,7 +319,7 @@ export default function App() {
     };
 
     // --- GESTIÓN DE PROVEEDORES (DB) ---
-    const handleUpdateProvider = async (p: Provider) => {
+    const handleUpdateProvider = async (p: Provider): Promise<boolean> => {
         try {
             const isNew = p.id.startsWith('p-');
             let providerId = p.id;
@@ -359,8 +359,10 @@ export default function App() {
             }
 
             await fetchProviders();
+            return true;
         } catch (e: any) {
             alert("Error al guardar proveedor: " + e.message);
+            return false;
         }
     };
 

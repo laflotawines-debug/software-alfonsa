@@ -37,7 +37,7 @@ const parseCurrencyInput = (val: string) => {
 
 interface PaymentsProvidersProps {
     providers: Provider[];
-    onUpdateProviders: (p: Provider) => void;
+    onUpdateProviders: (p: Provider) => Promise<boolean>;
     onDeleteProvider: (id: string) => void;
     onResetProvider?: (id: string) => void;
 }
@@ -51,10 +51,13 @@ export const PaymentsProviders: React.FC<PaymentsProvidersProps> = ({ providers,
         setIsModalOpen(true);
     };
 
-    const handleSave = (providerData: Provider) => {
-        onUpdateProviders(providerData);
-        setIsModalOpen(false);
-        setEditingProvider(null);
+    const handleSave = async (providerData: Provider) => {
+        const success = await onUpdateProviders(providerData);
+        if (success) {
+            setIsModalOpen(false);
+            setEditingProvider(null);
+        }
+        return success;
     };
 
     const handleDelete = (e: React.MouseEvent, id: string) => {
@@ -146,13 +149,14 @@ export const PaymentsProviders: React.FC<PaymentsProvidersProps> = ({ providers,
 
 const NewProviderModal: React.FC<{ 
     onClose: () => void; 
-    onSave: (data: Provider) => void; 
+    onSave: (data: Provider) => Promise<boolean>; 
     initialData: Provider | null; 
     existingProviderNames: string[];
     onReset?: () => void 
 }> = ({ onClose, onSave, initialData, existingProviderNames, onReset }) => {
     const [masterSuppliers, setMasterSuppliers] = useState<SupplierMaster[]>([]);
     const [isMasterLoading, setIsMasterLoading] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
     
     const [name, setName] = useState(initialData?.name || '');
     const [goalAmountDisplay, setGoalAmountDisplay] = useState(initialData?.goalAmount ? formatCurrencyInput(initialData.goalAmount.toString()) : '0');
@@ -201,10 +205,22 @@ const NewProviderModal: React.FC<{
         setAccounts([...accounts, newAcc]);
     };
 
-    const submit = () => {
+    const submit = async () => {
         if (!name.trim()) return alert("El nombre del proveedor es obligatorio.");
+        
+        setIsSaving(true);
         const finalId = (initialData && initialData.id) ? initialData.id : `p-${Date.now()}`;
-        onSave({ id: finalId, name: name.trim().toUpperCase(), goalAmount: parseFloat(parseCurrencyInput(goalAmountDisplay)) || 0, priority: parseInt(priority) || 1, status, accounts });
+        
+        const success = await onSave({ 
+            id: finalId, 
+            name: name.trim().toUpperCase(), 
+            goalAmount: parseFloat(parseCurrencyInput(goalAmountDisplay)) || 0, 
+            priority: parseInt(priority) || 1, 
+            status, 
+            accounts 
+        });
+
+        if (!success) setIsSaving(false);
     };
 
     // Lógica de filtrado "Google-style" para proveedores NO vinculados aún
@@ -382,8 +398,9 @@ const NewProviderModal: React.FC<{
 
                 <div className="p-6 md:p-8 border-t border-surfaceHighlight bg-surface shrink-0 flex flex-col sm:flex-row gap-4">
                     <button type="button" onClick={onClose} className="flex-1 py-4 text-text font-black text-xs hover:bg-surfaceHighlight rounded-2xl transition-all uppercase tracking-widest cursor-pointer border border-surfaceHighlight">Cancelar</button>
-                    <button type="button" onClick={submit} className="flex-1 py-4 bg-primary hover:bg-primaryHover text-white font-black rounded-2xl shadow-xl shadow-primary/30 transition-all text-xs uppercase tracking-widest cursor-pointer flex items-center justify-center gap-2">
-                        <CheckCircle2 size={18} /> Guardar Cambios
+                    <button type="button" onClick={submit} disabled={isSaving} className="flex-1 py-4 bg-primary hover:bg-primaryHover text-white font-black rounded-2xl shadow-xl shadow-primary/30 transition-all text-xs uppercase tracking-widest cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50">
+                        {isSaving ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} />} 
+                        {isSaving ? 'Guardando...' : 'Guardar Cambios'}
                     </button>
                 </div>
             </div>
