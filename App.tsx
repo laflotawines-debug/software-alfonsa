@@ -137,7 +137,9 @@ export default function App() {
                 fetchActiveOrders(),
                 fetchHistoryOrders(new Date().getMonth(), new Date().getFullYear(), '', 0), 
                 fetchNotifications(userId),
-                fetchTrips()
+                fetchTrips(),
+                fetchProviders(),
+                fetchTransfers()
             ]);
             
             fetchExpirations();
@@ -206,16 +208,12 @@ export default function App() {
         }
     };
 
-    // --- LOGICA DE VIAJES (CORREGIDA PARA ESQUEMA REAL) ---
+    // --- LÓGICA DE VIAJES ---
     const fetchTrips = async () => {
         try {
             const { data, error } = await supabase
                 .from('trips')
-                .select(`
-                    *,
-                    trip_clients(*),
-                    trip_expenses(*)
-                `)
+                .select(`*, trip_clients(*), trip_expenses(*)`)
                 .order('created_at', { ascending: false });
 
             if (error) throw error;
@@ -227,7 +225,7 @@ export default function App() {
                     name: t.name,
                     status: t.status,
                     driverName: t.driver_name,
-                    date: t.date_text, // Mapeo correcto según schema
+                    date: t.date_text,
                     route: t.route,
                     clients: (t.trip_clients || []).map((c: any) => ({
                         id: c.id,
@@ -255,15 +253,220 @@ export default function App() {
         }
     };
 
+    // --- LOGICA DE PAGOS Y PROVEEDORES (PERSISTENCIA DB) ---
+    const fetchProviders = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('providers')
+                .select(`*, provider_accounts(*)`)
+                .order('priority', { ascending: true });
+            
+            if (error) throw error;
+
+            if (data) {
+                const mapped: Provider[] = data.map((p: any) => ({
+                    id: p.id,
+                    name: p.name,
+                    goalAmount: p.goal_amount,
+                    priority: p.priority,
+                    status: p.status,
+                    accounts: (p.provider_accounts || []).map((a: any) => ({
+                        id: a.id,
+                        providerId: a.provider_id,
+                        condition: a.condition,
+                        holder: a.holder,
+                        identifierAlias: a.identifier_alias,
+                        identifierCBU: a.identifier_cbu,
+                        metaAmount: a.meta_amount,
+                        currentAmount: a.current_amount,
+                        pendingAmount: a.pending_amount,
+                        status: a.status
+                    }))
+                }));
+                setProviders(mapped);
+            }
+        } catch (error) {
+            console.error("Error fetching providers:", error);
+        }
+    };
+
+    const fetchTransfers = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('transfers')
+                .select('*')
+                .order('created_at', { ascending: false });
+            
+            if (error) throw error;
+
+            if (data) {
+                const mapped: Transfer[] = data.map((t: any) => ({
+                    id: t.id,
+                    clientName: t.client_name,
+                    amount: t.amount,
+                    date: t.date_text,
+                    providerId: t.provider_id,
+                    accountId: t.account_id,
+                    notes: t.notes,
+                    status: t.status,
+                    isLoadedInSystem: t.is_loaded_in_system
+                }));
+                setTransfers(mapped);
+            }
+        } catch (error) {
+            console.error("Error fetching transfers:", error);
+        }
+    };
+
+    // --- GESTIÓN DE PROVEEDORES (DB) ---
+    const handleUpdateProvider = async (p: Provider) => {
+        try {
+            const isNew = p.id.startsWith('p-');
+            let providerId = p.id;
+
+            const providerPayload = {
+                name: p.name,
+                goal_amount: p.goalAmount,
+                priority: p.priority,
+                status: p.status
+            };
+
+            if (isNew) {
+                const { data, error } = await supabase.from('providers').insert([providerPayload]).select().single();
+                if (error) throw error;
+                providerId = data.id;
+            } else {
+                const { error } = await supabase.from('providers').update(providerPayload).eq('id', providerId);
+                if (error) throw error;
+            }
+
+            // Sync Accounts: Delete existing and re-insert (simple sync strategy)
+            await supabase.from('provider_accounts').delete().eq('provider_id', providerId);
+            
+            if (p.accounts.length > 0) {
+                const accountsPayload = p.accounts.map(a => ({
+                    provider_id: providerId,
+                    condition: a.condition,
+                    holder: a.holder,
+                    identifier_alias: a.identifierAlias,
+                    identifier_cbu: a.identifierCBU,
+                    meta_amount: a.metaAmount,
+                    current_amount: a.currentAmount,
+                    pending_amount: a.pendingAmount,
+                    status: a.status
+                }));
+                await supabase.from('provider_accounts').insert(accountsPayload);
+            }
+
+            await fetchProviders();
+        } catch (e: any) {
+            alert("Error al guardar proveedor: " + e.message);
+        }
+    };
+
+    const handleDeleteProvider = async (id: string) => {
+        try {
+            // Delete child accounts first due to FK constraints
+            await supabase.from('provider_accounts').delete().eq('provider_id', id);
+            // Then delete provider
+            const { error } = await supabase.from('providers').delete().eq('id', id);
+            if (error) throw error;
+            
+            // Cleanup transfers related to this provider to allow deletion or keep history? 
+            // Usually we might want to keep transfers or set provider_id to null, but here we cascade logical delete
+            // For now assuming clean delete of history too if provider is purged
+            await supabase.from('transfers').delete().eq('provider_id', id);
+
+            await fetchProviders();
+            await fetchTransfers();
+        } catch (e: any) {
+            alert("Error al eliminar proveedor: " + e.message);
+        }
+    };
+
+    const handleResetProvider = async (id: string) => {
+        try {
+            // Eliminar transferencias asociadas para reiniciar el contador
+            await supabase.from('transfers').delete().eq('provider_id', id);
+            await fetchTransfers();
+            alert("Ciclo reiniciado correctamente.");
+        } catch (e: any) {
+            alert("Error al reiniciar ciclo: " + e.message);
+        }
+    };
+
+    // --- GESTIÓN DE TRANSFERENCIAS (DB) ---
+    const handleUpdateTransfer = async (t: Transfer) => {
+        try {
+            const isNew = t.id.startsWith('t-');
+            const payload = {
+                client_name: t.clientName,
+                amount: t.amount,
+                date_text: t.date,
+                provider_id: t.providerId,
+                account_id: t.accountId,
+                notes: t.notes,
+                status: t.status,
+                is_loaded_in_system: t.isLoadedInSystem
+            };
+
+            if (isNew) {
+                await supabase.from('transfers').insert([payload]);
+            } else {
+                await supabase.from('transfers').update(payload).eq('id', t.id);
+            }
+            await fetchTransfers();
+        } catch (e: any) {
+            alert("Error al guardar transferencia: " + e.message);
+        }
+    };
+
+    const handleDeleteTransfer = async (id: string) => {
+        try {
+            const { error } = await supabase.from('transfers').delete().eq('id', id);
+            if (error) throw error;
+            await fetchTransfers();
+        } catch (e: any) {
+            alert("Error al eliminar transferencia: " + e.message);
+        }
+    };
+
+    const handleConfirmTransfer = async (id: string, status: 'Pendiente' | 'Realizado') => {
+        try {
+            await supabase.from('transfers').update({ status }).eq('id', id);
+            await fetchTransfers();
+        } catch (e: any) {
+            alert("Error al actualizar estado: " + e.message);
+        }
+    };
+
+    const handleUpdateTransferStatus = async (id: string, status: any) => {
+        try {
+            await supabase.from('transfers').update({ status }).eq('id', id);
+            await fetchTransfers();
+        } catch (e: any) {
+            alert("Error al actualizar estado: " + e.message);
+        }
+    };
+
+    const handleClearHistory = async () => {
+        try {
+            const { error } = await supabase.from('transfers').delete().neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all
+            if (error) throw error;
+            await fetchTransfers();
+        } catch (e: any) {
+            alert("Error al limpiar historial: " + e.message);
+        }
+    };
+
     const handleSaveTrip = async (trip: Trip) => {
         try {
-            // 1. Guardar Cabecera en 'trips'
             const tripPayload = {
                 display_id: trip.displayId,
                 name: trip.name,
                 status: trip.status,
                 driver_name: trip.driverName,
-                date_text: trip.date, // Mapeo a columna correcta
+                date_text: trip.date,
                 route: trip.route
             };
 
@@ -279,9 +482,7 @@ export default function App() {
                 if (error) throw error;
             }
 
-            // 2. Guardar Clientes en 'trip_clients' (Reemplazo total para simplicidad)
             await supabase.from('trip_clients').delete().eq('trip_id', tripId);
-            
             if (trip.clients.length > 0) {
                 const clientsPayload = trip.clients.map(c => ({
                     trip_id: tripId,
@@ -298,9 +499,7 @@ export default function App() {
                 if (cErr) throw cErr;
             }
 
-            // 3. Guardar Gastos en 'trip_expenses'
             await supabase.from('trip_expenses').delete().eq('trip_id', tripId);
-
             if (trip.expenses.length > 0) {
                 const expensesPayload = trip.expenses.map(e => ({
                     trip_id: tripId,
@@ -324,10 +523,8 @@ export default function App() {
     const handleDeleteTrip = async (id: string) => {
         if (id && !id.startsWith('trip-')) {
             try {
-                // Borrar hijos primero por integridad referencial
                 await supabase.from('trip_expenses').delete().eq('trip_id', id);
                 await supabase.from('trip_clients').delete().eq('trip_id', id);
-                
                 const { error } = await supabase.from('trips').delete().eq('id', id);
                 if (error) throw error;
             } catch (e: any) {
@@ -478,11 +675,21 @@ export default function App() {
             })
             .subscribe();
 
-        // Suscripción Realtime para Viajes
         const tripsChannel = supabase
             .channel('trips_realtime')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'trips' }, () => {
                 fetchTrips();
+            })
+            .subscribe();
+
+        // Realtime para Pagos y Proveedores
+        const paymentsChannel = supabase
+            .channel('payments_realtime')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'transfers' }, () => {
+                fetchTransfers();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'providers' }, () => {
+                fetchProviders();
             })
             .subscribe();
 
@@ -497,6 +704,7 @@ export default function App() {
         return () => {
             supabase.removeChannel(ordersChannel);
             supabase.removeChannel(tripsChannel);
+            supabase.removeChannel(paymentsChannel);
             supabase.removeChannel(notifChannel);
         };
     };
@@ -883,32 +1091,6 @@ export default function App() {
         }
     };
 
-    const handleUpdateProvider = (p: Provider) => {
-        if (providers.find(pr => pr.id === p.id)) {
-            setProviders(providers.map(pr => pr.id === p.id ? p : pr));
-        } else {
-            setProviders([...providers, p]);
-        }
-    };
-    const handleDeleteProvider = (id: string) => setProviders(providers.filter(p => p.id !== id));
-    const handleUpdateTransfer = (t: Transfer) => {
-        if (transfers.find(tr => tr.id === t.id)) {
-            setTransfers(transfers.map(tr => tr.id === t.id ? t : tr));
-        } else {
-            setTransfers([...transfers, t]);
-        }
-    };
-    const handleDeleteTransfer = (id: string) => setTransfers(transfers.filter(t => t.id !== id));
-    const handleConfirmTransfer = (id: string, status: 'Pendiente' | 'Realizado') => {
-        setTransfers(transfers.map(t => t.id === id ? { ...t, status } : t));
-    };
-    const handleUpdateTransferStatus = (id: string, status: any) => {
-        setTransfers(transfers.map(t => t.id === id ? { ...t, status } : t));
-    };
-    const handleClearHistory = () => {
-        setTransfers([]);
-    };
-
     if (!session || !currentUser) {
         return <Login isDarkMode={isDarkMode} onToggleTheme={() => toggleTheme()} />;
     }
@@ -992,7 +1174,7 @@ export default function App() {
                     )}
                     {currentView === View.ORDER_SHEET && <OrderSheet currentUser={currentUser} orders={orders} trips={trips} onSaveTrip={handleSaveTrip} onDeleteTrip={handleDeleteTrip} selectedTripId={selectedTripId} onSelectTrip={setSelectedTripId} />}
                     {currentView === View.PAYMENTS_OVERVIEW && <PaymentsOverview providers={providers} onDeleteProvider={handleDeleteProvider} onUpdateProviders={handleUpdateProvider} transfers={transfers} onUpdateTransfers={handleUpdateTransfer} onConfirmTransfer={handleConfirmTransfer} onDeleteTransfer={handleDeleteTransfer} />}
-                    {currentView === View.PAYMENTS_PROVIDERS && <PaymentsProviders providers={providers} onUpdateProviders={handleUpdateProvider} onDeleteProvider={handleDeleteProvider} />}
+                    {currentView === View.PAYMENTS_PROVIDERS && <PaymentsProviders providers={providers} onUpdateProviders={handleUpdateProvider} onDeleteProvider={handleDeleteProvider} onResetProvider={handleResetProvider} />}
                     {currentView === View.PAYMENTS_HISTORY && <PaymentsHistory transfers={transfers} onDeleteTransfer={handleDeleteTransfer} onClearHistory={handleClearHistory} onUpdateTransfers={handleUpdateTransfer} onUpdateStatus={handleUpdateTransferStatus} providers={providers} />}
                     {currentView === View.PROVIDER_STATEMENTS && <ProviderStatements currentUser={currentUser} />}
                     {currentView === View.CLIENTS_MASTER && <ClientsMaster currentUser={currentUser} />}
