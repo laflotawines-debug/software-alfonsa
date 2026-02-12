@@ -34,7 +34,9 @@ import {
     ChevronRight,
     PlusCircle,
     Coins,
-    ChevronLeft
+    ChevronLeft,
+    Edit2,
+    Check
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { User, WorkerAttendanceConfig, GlobalAttendanceSettings } from '../types';
@@ -43,7 +45,7 @@ const DAYS_OF_WEEK = [
     { key: 'Lunes', short: 'Lun' },
     { key: 'Martes', short: 'Mar' },
     { key: 'Miércoles', short: 'Mié' },
-    { key: 'Jueves', short: 'Jue' },
+    { key: 'Jueves', short: 'Ju' },
     { key: 'Viernes', short: 'Vie' },
     { key: 'Sábado', short: 'Sáb' },
     { key: 'Domingo', short: 'Dom' }
@@ -62,6 +64,7 @@ interface ParsedDay {
     observation: string;
     isFeriado: boolean;
     isJustified: boolean;
+    isNoMark: boolean; 
     hours: number;
     penaltyHours: number;
     status: string;
@@ -106,6 +109,8 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
     const [manualExtraAmount, setManualExtraAmount] = useState<number>(0);
 
     const [selectedPerfDetail, setSelectedPerfDetail] = useState<PerformanceRecord | null>(null);
+    
+    const [editingTime, setEditingTime] = useState<{ date: string, type: 'entry' | 'exit' } | null>(null);
 
     const isVale = currentUser?.role === 'vale';
 
@@ -207,6 +212,12 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
         } catch (e) { setSaveStatus('error'); }
     };
 
+    const timeToMinutes = (time: string) => {
+        if (!time) return 0;
+        const [h, m] = (time || "00:00").split(':').map(Number);
+        return h * 60 + m;
+    };
+
     const processReport = () => {
         if (!rawReport.trim() || !currentConfig) return;
         const lines = rawReport.split('\n');
@@ -237,16 +248,16 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
 
         lines.forEach(line => {
             const trimmed = line.trim();
-            if (!trimmed || /tabla|asistencia|dd\/ss|ent|sal|am|pm|extra/i.test(trimmed) || trimmed.includes('==')) return;
+            if (!trimmed || /tabla|asistencia|dd\/ss|ent|sal|am|pm|extra|Primer registro|Ultimo registro|Horas cumplidas/i.test(trimmed) || trimmed.includes('==')) return;
 
             const llerenaRegex = /^(\d{2})\s+([A-Za-z]+)(.*)/;
-            const match = trimmed.match(llerenaRegex);
+            const matchLlerena = trimmed.match(llerenaRegex);
 
-            if (match) {
-                const dayNumStr = match[1];
+            if (matchLlerena) {
+                const dayNumStr = matchLlerena[1];
                 const dayNum = parseInt(dayNumStr);
-                const dayShort = match[2]; 
-                const restOfLine = match[3];
+                const dayShort = matchLlerena[2]; 
+                const restOfLine = matchLlerena[3];
 
                 if (previousDayNum !== -1 && dayNum < previousDayNum) {
                     currentMonth++;
@@ -261,34 +272,84 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                 const isoDate = fullDate.toISOString().split('T')[0];
 
                 const timesMatch = restOfLine.match(/(\d{1,2}:\d{2})/g) || [];
-                
                 let entry = ""; 
                 let exit = "";
-                
-                if (timesMatch.length >= 2) {
-                    entry = timesMatch[0];
-                    exit = timesMatch[timesMatch.length - 1];
-                } else if (timesMatch.length === 1) {
-                    entry = timesMatch[0];
+
+                if (timesMatch.length >= 2) { 
+                    entry = timesMatch[0]; 
+                    exit = timesMatch[timesMatch.length - 1]; 
+                } 
+                else if (timesMatch.length === 1) { 
+                    const foundTime = timesMatch[0];
+                    const foundMins = timeToMinutes(foundTime);
+                    
+                    // Lógica inteligente: ¿Qué está más cerca según la configuración del trabajador?
+                    const schedEntry = timeToMinutes(currentConfig.entry_time);
+                    const schedExit = timeToMinutes(currentConfig.exit_time);
+                    const schedEntryPm = timeToMinutes(currentConfig.entry_time_pm || "");
+                    const schedExitPm = timeToMinutes(currentConfig.exit_time_pm || "");
+
+                    const distEntry = Math.abs(foundMins - schedEntry);
+                    const distExit = Math.abs(foundMins - schedExit);
+                    const distEntryPm = currentConfig.entry_time_pm ? Math.abs(foundMins - schedEntryPm) : 9999;
+                    const distExitPm = currentConfig.exit_time_pm ? Math.abs(foundMins - schedExitPm) : 9999;
+
+                    const minDist = Math.min(distEntry, distExit, distEntryPm, distExitPm);
+
+                    if (minDist === distEntry || minDist === distEntryPm) {
+                        entry = foundTime;
+                    } else {
+                        exit = foundTime;
+                    }
                 }
 
                 const dayName = DAY_MAP[dayShort.substring(0, 2)] || dayShort;
 
                 results.push({ 
-                    date: isoDate, 
-                    dayName: dayName, 
-                    entry, 
-                    exit, 
-                    observation: "", 
-                    isFeriado: false, 
-                    isJustified: false, 
-                    hours: 0, 
-                    penaltyHours: 0, 
-                    status: '', 
-                    isEarly: false, 
-                    isLate: false, 
+                    date: isoDate, dayName, entry, exit, observation: "", 
+                    isFeriado: false, isJustified: false, isNoMark: false, hours: 0, penaltyHours: 0, 
+                    status: '', isEarly: false, isLate: false, minutesLate: 0, 
+                    originalRawDate: dayNumStr 
+                });
+                return;
+            }
+
+            const betbederRegex = /^(\d{2}\/\d{2})\s+(\d{2}:\d{2})\s+(\d{2}:\d{2}).*?([a-zA-Z]+)$/;
+            const matchBetbeder = trimmed.match(betbederRegex);
+
+            if (matchBetbeder) {
+                const datePart = matchBetbeder[1]; 
+                const entry = matchBetbeder[2];    
+                const exit = matchBetbeder[3];     
+                const dayText = matchBetbeder[4];  
+
+                const [d, m] = datePart.split('/').map(Number);
+                
+                let itemYear = today.getFullYear();
+                if (today.getMonth() === 0 && m === 12) {
+                    itemYear = itemYear - 1;
+                }
+
+                const fullDate = new Date(itemYear, m - 1, d);
+                const isoDate = fullDate.toISOString().split('T')[0];
+                const dayName = DAY_MAP[dayText] || dayText;
+
+                results.push({
+                    date: isoDate,
+                    dayName: dayName,
+                    entry,
+                    exit,
+                    observation: "",
+                    isFeriado: false,
+                    isJustified: false,
+                    isNoMark: false,
+                    hours: 0,
+                    penaltyHours: 0,
+                    status: '',
+                    isEarly: false,
+                    isLate: false,
                     minutesLate: 0,
-                    originalRawDate: dayNumStr
+                    originalRawDate: String(d).padStart(2, '0')
                 });
             }
         });
@@ -297,21 +358,15 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
             setParsedReport(results);
             setActiveTab('report');
         } else {
-            alert("No se detectaron líneas válidas. Asegúrese de copiar desde 'dd/ss' hacia abajo.");
+            alert("No se detectaron líneas válidas. Asegúrese de copiar el texto correctamente (formato Llerena o Betbeder).");
         }
     };
 
     const finalReportData = useMemo(() => {
         if (!selectedWorkerId || !currentConfig || parsedReport.length === 0) return null;
 
-        const timeToMinutes = (time: string) => {
-            const [h, m] = (time || "00:00").split(':').map(Number);
-            return h * 60 + m;
-        };
-
         const reportMap = new Map<string, ParsedDay>(parsedReport.map(r => [r.date, r] as [string, ParsedDay]));
         
-        // --- CAMBIO CLAVE: RANGO DINÁMICO BASADO EN EL PEGADO ---
         const sortedDates = [...parsedReport].map(r => r.date).sort();
         const startIso = sortedDates[0];
         const endIso = sortedDates[sortedDates.length - 1];
@@ -322,13 +377,11 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
         const [ey, em, ed] = endIso.split('-').map(Number);
         const endDate = new Date(ey, em - 1, ed);
 
-        // Calcular la duración real del reporte pegado
         const diffTime = Math.abs(endDate.getTime() - startDate.getTime());
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
         const fullPeriod: ParsedDay[] = [];
         
-        // Iterar exactamente desde el primer día al último día pegados
         for (let i = 0; i <= diffDays; i++) {
             const current = new Date(startDate);
             current.setDate(startDate.getDate() + i);
@@ -344,7 +397,7 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                     date: iso, 
                     dayName, 
                     entry: "", exit: "", observation: "", 
-                    isFeriado: false, isJustified: false, 
+                    isFeriado: false, isJustified: false, isNoMark: false,
                     hours: 0, penaltyHours: 0, status: "", 
                     isEarly: false, isLate: false, minutesLate: 0,
                     originalRawDate: String(current.getDate()).padStart(2, '0')
@@ -472,6 +525,7 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
         const totalToPay = subtotal + bonusAmount + totalAdditions - debtAmount;
 
         const markedCount = detailedDays.filter(d => {
+            if (d.isNoMark) return false; 
             if (d.entry && d.exit) return true;
             if (d.status === 'FERIADO') return true;
             if (d.isJustified) return true;
@@ -505,7 +559,7 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
         };
     }, [parsedReport, currentConfig, globalSettings, debtAmount, extraHoursInput, manualExtraAmount]);
 
-    const toggleFlag = (idx: number, field: 'isFeriado' | 'isJustified') => {
+    const toggleFlag = (idx: number, field: 'isFeriado' | 'isJustified' | 'isNoMark') => {
         const dayToFlag = finalReportData?.detailedDays[idx];
         if (!dayToFlag) return;
         setParsedReport(prev => {
@@ -519,6 +573,29 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
             }
             return next;
         });
+    };
+
+    const updateManualTime = (date: string, type: 'entry' | 'exit', value: string) => {
+        // Validar formato 24h HH:mm
+        const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+        if (value && !timeRegex.test(value)) {
+             // Intento de auto-corrección simple: si faltan los dos puntos pero hay 4 números
+             if (/^\d{4}$/.test(value)) {
+                value = value.slice(0, 2) + ':' + value.slice(2);
+             } else {
+                 setEditingTime(null);
+                 return;
+             }
+        }
+
+        setParsedReport(prev => {
+            const existingIdx = prev.findIndex(p => p.date === date);
+            if (existingIdx === -1) return prev;
+            const next = [...prev];
+            next[existingIdx] = { ...next[existingIdx], [type]: value };
+            return next;
+        });
+        setEditingTime(null);
     };
 
     const handleSavePerformance = async () => {
@@ -710,7 +787,7 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                                         <div className="pt-4 border-t border-surfaceHighlight/50 space-y-6">
                                             <div className="space-y-3">
                                                 <label className="text-xs font-black text-primary uppercase tracking-widest flex items-center gap-2"><Zap size={16} /> Procesar Informe de Huella</label>
-                                                <textarea value={rawReport} onChange={e => setRawReport(e.target.value)} placeholder="Pegue aquí el texto del reporte de asistencia (incluya fechas dd/ss)..." className="w-full h-32 bg-white dark:bg-background border border-surfaceHighlight rounded-2xl p-4 text-xs font-mono text-text outline-none focus:border-primary shadow-inner resize-none transition-all" />
+                                                <textarea value={rawReport} onChange={e => setRawReport(e.target.value)} placeholder="Pegue aquí el texto del reporte de asistencia (formato Llerena o Betbeder)..." className="w-full h-32 bg-white dark:bg-background border border-surfaceHighlight rounded-2xl p-4 text-xs font-mono text-text outline-none focus:border-primary shadow-inner resize-none transition-all" />
                                             </div>
 
                                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -797,7 +874,8 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                                     <h3 className="text-xs font-black uppercase text-muted tracking-[0.2em]">Detalle Diario</h3>
                                     <div className="flex gap-4 text-[9px] font-black text-muted uppercase tracking-widest">
                                         <span className="flex items-center gap-1"><Circle size={8} fill="#f97316" className="text-orange-500"/> Feriado</span>
-                                        <span className="flex items-center gap-1"><Circle size={8} fill="#2563eb" className="text-blue-600"/> Justificado (Tardanza/Falta)</span>
+                                        <span className="flex items-center gap-1"><Circle size={8} fill="#2563eb" className="text-blue-600"/> Justificado</span>
+                                        <span className="flex items-center gap-1"><Circle size={8} fill="#ef4444" className="text-red-500"/> NM (No Marcado)</span>
                                     </div>
                                 </div>
                                 <table className="w-full text-left min-w-[800px]">
@@ -812,6 +890,7 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                                             <th className="p-4">Estado / Novedad</th>
                                             <th className="p-4 text-center w-12">F</th>
                                             <th className="p-4 text-center w-12">J</th>
+                                            <th className="p-4 text-center w-12">NM</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-surfaceHighlight">
@@ -821,14 +900,88 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                                                 ? 'bg-surfaceHighlight/20 opacity-60 text-muted' 
                                                 : day.status === 'FALTA' ? 'bg-red-500/5' : 'hover:bg-primary/5';
 
+                                            const isEditingEntry = editingTime?.date === day.date && editingTime?.type === 'entry';
+                                            const isEditingExit = editingTime?.date === day.date && editingTime?.type === 'exit';
+
                                             return (
                                                 <tr key={idx} className={`transition-colors ${rowClass}`}>
                                                     <td className={`p-4 pl-8 text-xs font-black ${day.status === 'FALTA' ? 'text-red-600' : ''}`}>
                                                         {new Date(day.date + 'T12:00:00').toLocaleDateString('es-AR')}
                                                     </td>
                                                     <td className={`p-4 text-xs font-bold ${isNonWorking ? '' : 'text-blue-600'}`}>{day.dayName.substring(0, 2)}</td>
-                                                    <td className="p-4 text-xs font-medium">{day.entry || '--:--'}</td>
-                                                    <td className="p-4 text-xs font-medium">{day.exit || '--:--'}</td>
+                                                    
+                                                    {/* ENTRADA EDITABLE 24H SI NM ESTÁ ACTIVO */}
+                                                    <td className="p-4 text-xs font-medium">
+                                                        <div className="flex items-center gap-2 group/time">
+                                                            {isEditingEntry ? (
+                                                                <input 
+                                                                    type="text" 
+                                                                    autoFocus
+                                                                    placeholder="00:00"
+                                                                    maxLength={5}
+                                                                    defaultValue={day.entry} 
+                                                                    onInput={(e) => {
+                                                                        const val = (e.target as HTMLInputElement).value.replace(/\D/g, '');
+                                                                        if (val.length >= 3) {
+                                                                            (e.target as HTMLInputElement).value = val.slice(0, 2) + ':' + val.slice(2, 4);
+                                                                        }
+                                                                    }}
+                                                                    onBlur={(e) => updateManualTime(day.date, 'entry', e.target.value)}
+                                                                    onKeyDown={(e) => e.key === 'Enter' && updateManualTime(day.date, 'entry', (e.target as HTMLInputElement).value)}
+                                                                    className="bg-background border border-primary rounded p-1 text-[10px] w-16 text-center outline-none font-black shadow-sm"
+                                                                />
+                                                            ) : (
+                                                                <>
+                                                                    <span className={day.isNoMark ? 'text-blue-600 font-bold' : ''}>{day.entry || '--:--'}</span>
+                                                                    {day.isNoMark && (
+                                                                        <button 
+                                                                            onClick={() => setEditingTime({ date: day.date, type: 'entry' })}
+                                                                            className="opacity-0 group-hover/time:opacity-100 p-1 rounded hover:bg-surfaceHighlight text-muted hover:text-primary transition-all"
+                                                                        >
+                                                                            <Edit2 size={10} />
+                                                                        </button>
+                                                                    )}
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    </td>
+
+                                                    {/* SALIDA EDITABLE 24H SI NM ESTÁ ACTIVO */}
+                                                    <td className="p-4 text-xs font-medium">
+                                                        <div className="flex items-center gap-2 group/time">
+                                                            {isEditingExit ? (
+                                                                <input 
+                                                                    type="text" 
+                                                                    autoFocus
+                                                                    placeholder="00:00"
+                                                                    maxLength={5}
+                                                                    defaultValue={day.exit} 
+                                                                    onInput={(e) => {
+                                                                        const val = (e.target as HTMLInputElement).value.replace(/\D/g, '');
+                                                                        if (val.length >= 3) {
+                                                                            (e.target as HTMLInputElement).value = val.slice(0, 2) + ':' + val.slice(2, 4);
+                                                                        }
+                                                                    }}
+                                                                    onBlur={(e) => updateManualTime(day.date, 'exit', e.target.value)}
+                                                                    onKeyDown={(e) => e.key === 'Enter' && updateManualTime(day.date, 'exit', (e.target as HTMLInputElement).value)}
+                                                                    className="bg-background border border-primary rounded p-1 text-[10px] w-16 text-center outline-none font-black shadow-sm"
+                                                                />
+                                                            ) : (
+                                                                <>
+                                                                    <span className={day.isNoMark ? 'text-blue-600 font-bold' : ''}>{day.exit || '--:--'}</span>
+                                                                    {day.isNoMark && (
+                                                                        <button 
+                                                                            onClick={() => setEditingTime({ date: day.date, type: 'exit' })}
+                                                                            className="opacity-0 group-hover/time:opacity-100 p-1 rounded hover:bg-surfaceHighlight text-muted hover:text-primary transition-all"
+                                                                        >
+                                                                            <Edit2 size={10} />
+                                                                        </button>
+                                                                    )}
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    </td>
+
                                                     <td className="p-4 text-center text-xs font-black">{day.hours > 0 ? (day.hours - day.penaltyHours).toFixed(2) : '-'}</td>
                                                     <td className="p-4 text-center">
                                                         {day.penaltyHours > 0 && <span className="text-xs font-black text-red-500">-{day.penaltyHours} hs</span>}
@@ -848,6 +1001,9 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                                                     <td className="p-4 text-center">
                                                         <button onClick={() => toggleFlag(idx, 'isJustified')} className={`w-5 h-5 rounded-full border-2 transition-all ${day.isJustified ? 'bg-blue-600 border-blue-700 shadow-sm' : 'border-surfaceHighlight hover:border-blue-200'}`} />
                                                     </td>
+                                                    <td className="p-4 text-center">
+                                                        <button onClick={() => toggleFlag(idx, 'isNoMark')} className={`w-5 h-5 rounded-full border-2 transition-all ${day.isNoMark ? 'bg-red-500 border-red-600 shadow-sm' : 'border-surfaceHighlight hover:border-red-200'}`} title="No Marcado (NM)" />
+                                                    </td>
                                                 </tr>
                                             );
                                         })}
@@ -855,13 +1011,24 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                                 </table>
                             </div>
                             
-                            <div className="bg-primary/5 border border-primary/20 rounded-3xl p-6 flex items-start gap-4">
-                                <AlertTriangle className="text-primary shrink-0" size={20} />
-                                <div>
-                                    <h4 className="text-[11px] font-black text-primary uppercase tracking-widest">Información de Rendimiento</h4>
-                                    <p className="text-[10px] text-muted font-bold leading-relaxed uppercase mt-1">
-                                        Las horas de multa impactan el neto a pagar. Al marcar "Justificado" (J) en una tardanza o falta, el trabajador no pierde el derecho al bono 2 y su puntaje de ranking se protege parcialmente.
-                                    </p>
+                            <div className="bg-primary/5 border border-primary/20 rounded-3xl p-6 flex flex-col md:flex-row items-start gap-8">
+                                <div className="flex gap-4">
+                                    <AlertTriangle className="text-primary shrink-0" size={20} />
+                                    <div>
+                                        <h4 className="text-[11px] font-black text-primary uppercase tracking-widest">Información de Rendimiento</h4>
+                                        <p className="text-[10px] text-muted font-bold leading-relaxed uppercase mt-1">
+                                            Las horas de multa impactan el neto a pagar. Al marcar "Justificado" (J) en una tardanza o falta, el trabajador no pierde el derecho al bono 2 y su puntaje de ranking se protege parcialmente.
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex gap-4">
+                                    <Clock className="text-red-500 shrink-0" size={20} />
+                                    <div>
+                                        <h4 className="text-[11px] font-black text-red-500 uppercase tracking-widest">Flag NM (No Marcado)</h4>
+                                        <p className="text-[10px] text-muted font-bold leading-relaxed uppercase mt-1">
+                                            Al habilitar **NM**, el trabajador cobrará las horas que ingreses manualmente usando el lápiz. El formato debe ser **24 horas** (ej: 17:30 para las 5:30 PM). Este día **no contará** para su efectividad de marcado.
+                                        </p>
+                                    </div>
                                 </div>
                             </div>
 

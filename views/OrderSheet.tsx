@@ -25,7 +25,13 @@ import {
     Receipt, 
     Wallet, 
     ArrowDownRight, 
-    TrendingUp 
+    TrendingUp,
+    FileText, 
+    Printer, 
+    Coffee, 
+    MoreHorizontal,
+    Users,
+    Info 
 } from 'lucide-react';
 import { Trip, TripClient, User as UserType, TripExpense, PaymentStatus, DetailedOrder, OrderStatus, DeliveryZone, ExpenseType } from '../types';
 import { hasPermission } from '../logic';
@@ -320,11 +326,11 @@ const TripDetailView: React.FC<{
             {/* BOTONES ACCIÓN */}
             <div className="flex gap-2">
                 {!isClosed && (
-                    <button onClick={() => setIsExpenseModalOpen(true)} className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-red-500/10 text-red-500 font-bold text-sm border border-red-500/20">
+                    <button onClick={() => setIsExpenseModalOpen(true)} className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-red-500/10 text-red-500 font-bold text-sm border border-red-500/20 hover:bg-red-500/20 transition-all">
                         <Fuel size={18} /> Gasto
                     </button>
                 )}
-                <button onClick={() => setIsReportOpen(true)} className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-surface border border-surfaceHighlight text-text font-bold text-sm">
+                <button onClick={() => setIsReportOpen(true)} className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-surface border border-surfaceHighlight text-text font-bold text-sm hover:bg-surfaceHighlight transition-all">
                     <ClipboardList size={18} /> Rendición
                 </button>
             </div>
@@ -569,19 +575,31 @@ const PaymentModal: React.FC<{ client: TripClient; totals: any; onClose: () => v
                     </div>
                 )}
 
-                <div className="flex flex-col gap-1 p-4 bg-surfaceHighlight/20 rounded-2xl border border-surfaceHighlight">
-                    <div className="flex justify-between text-xs font-bold text-muted">
-                        <span>Total Deuda:</span>
-                        <span>$ {currentTotalDebt.toLocaleString()}</span>
+                <div className="flex flex-col gap-3 p-4 bg-surfaceHighlight/20 rounded-2xl border border-surfaceHighlight">
+                    <div className="grid grid-cols-2 gap-4 pb-3 border-b border-surfaceHighlight/50">
+                        <div className="flex flex-col">
+                            <span className="text-[9px] font-bold text-muted uppercase tracking-wider">Saldo Anterior</span>
+                            <span className="text-xs font-black text-text">$ {pBal.toLocaleString('es-AR')}</span>
+                        </div>
+                        <div className="flex flex-col text-right">
+                            <span className="text-[9px] font-bold text-muted uppercase tracking-wider">Factura Actual</span>
+                            <span className="text-xs font-black text-text">$ {client.currentInvoiceAmount.toLocaleString('es-AR')}</span>
+                        </div>
                     </div>
-                    <div className="flex justify-between text-lg font-black text-text">
-                        <span>Pagando:</span>
-                        <span className="text-green-600">$ {currentTotalPaid.toLocaleString()}</span>
+
+                    <div className="flex justify-between items-center">
+                        <span className="text-xs font-black text-muted uppercase tracking-widest">Total Deuda</span>
+                        <span className="text-base font-black text-text">$ {currentTotalDebt.toLocaleString('es-AR')}</span>
+                    </div>
+
+                    <div className="flex justify-between items-center text-lg font-black text-text">
+                        <span className="text-sm uppercase tracking-widest">Pagando</span>
+                        <span className="text-green-600">$ {currentTotalPaid.toLocaleString('es-AR')}</span>
                     </div>
                     {remaining > 0 && (
-                        <div className="flex justify-between text-xs font-bold text-red-500 mt-1 border-t border-surfaceHighlight pt-1">
+                        <div className="flex justify-between text-xs font-bold text-red-500 mt-1 border-t border-surfaceHighlight pt-2">
                             <span>Resta:</span>
-                            <span>$ {remaining.toLocaleString()}</span>
+                            <span>$ {remaining.toLocaleString('es-AR')}</span>
                         </div>
                     )}
                 </div>
@@ -639,37 +657,236 @@ const ExpenseModal: React.FC<{ onClose: () => void; onSave: (expense: any) => vo
 
 const TripReportModal: React.FC<{ trip: Trip; onClose: () => void }> = ({ trip, onClose }) => {
     const cashTotal = trip.clients.reduce((acc, c) => acc + (c.paymentCash || 0), 0);
+    const transferTotal = trip.clients.reduce((acc, c) => acc + (c.paymentTransfer || 0), 0);
     const expensesTotal = trip.expenses.reduce((acc, e) => acc + (e.amount || 0), 0);
     const netCash = cashTotal - expensesTotal;
 
-    return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm">
-            <div className="bg-surface w-full max-w-md rounded-3xl border border-surfaceHighlight p-8 shadow-2xl flex flex-col gap-6 relative">
-                <button onClick={onClose} className="absolute top-4 right-4 p-2 rounded-full hover:bg-surfaceHighlight"><X size={20}/></button>
+    const getExpenseIcon = (type: string) => {
+        switch (type) {
+            case 'combustible': return <Fuel size={16} />;
+            case 'peaje': return <Truck size={16} />;
+            case 'viatico': return <Coffee size={16} />;
+            default: return <MoreHorizontal size={16} />;
+        }
+    };
+
+    const SummarySection = () => (
+        <div className="flex flex-col gap-6">
+            <h3 className="text-lg font-black text-text uppercase italic tracking-tight flex items-center gap-2">
+                <Wallet size={20} className="text-[#e47c00]"/> Resumen Final
+            </h3>
+
+            <div className="space-y-4">
+                <div className="flex justify-between items-center py-2 border-b border-surfaceHighlight/50">
+                    <span className="text-xs font-bold text-muted uppercase flex items-center gap-2"><DollarSign size={14} className="text-green-600"/> Cobrado en Efectivo</span>
+                    <span className="text-base font-black text-text">$ {cashTotal.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b border-surfaceHighlight/50">
+                    <span className="text-xs font-bold text-muted uppercase flex items-center gap-2"><CreditCard size={14} className="text-blue-600"/> Cobrado x Transf.</span>
+                    <span className="text-base font-black text-text">$ {transferTotal.toLocaleString()}</span>
+                </div>
                 
-                <div className="text-center">
-                    <h3 className="text-2xl font-black text-text uppercase italic">Rendición de Viaje</h3>
-                    <p className="text-sm font-bold text-muted mt-1">{trip.name}</p>
+                <div className="flex justify-between items-end pt-2">
+                    <span className="text-[10px] font-black text-[#e47c00] uppercase tracking-widest">Total Cobrado</span>
+                    <span className="text-xl font-black text-[#e47c00]">$ {(cashTotal + transferTotal).toLocaleString()}</span>
+                </div>
+            </div>
+
+            <div className="flex justify-between items-center py-2 border-b border-red-200">
+                <span className="text-xs font-bold text-red-500 uppercase tracking-wide">Total Gastos (-)</span>
+                <span className="text-base font-black text-red-500">$ {expensesTotal.toLocaleString()}</span>
+            </div>
+
+            <div className="bg-background/50 border border-surfaceHighlight rounded-2xl p-6 text-center space-y-2">
+                <p className="text-[10px] font-black text-muted uppercase tracking-[0.2em]">Saldo Neto a Entregar</p>
+                <p className="text-4xl font-black text-text tracking-tighter">$ {netCash.toLocaleString()}</p>
+            </div>
+
+            <button 
+                onClick={onClose}
+                className="w-full py-4 bg-[#e47c00] hover:bg-[#cc6f00] text-white rounded-2xl font-black uppercase text-sm shadow-xl shadow-orange-500/20 transition-all active:scale-95 flex items-center justify-center gap-2"
+            >
+                Cerrar Rendición <ChevronRight size={16} strokeWidth={3} />
+            </button>
+
+            <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl flex gap-3 items-start">
+                <Info size={18} className="text-blue-600 shrink-0 mt-0.5" />
+                <p className="text-[10px] text-blue-800 font-bold leading-relaxed uppercase">
+                    Asegúrese de que todos los comprobantes de gastos estén adjuntos digitalmente antes de finalizar la rendición diaria.
+                </p>
+            </div>
+        </div>
+    );
+
+    return (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 p-0 md:p-4 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-surface w-full md:max-w-6xl h-full md:h-[90vh] md:rounded-3xl border-none md:border border-surfaceHighlight shadow-2xl flex flex-col overflow-hidden relative">
+                
+                {/* Header */}
+                <div className="bg-surface border-b border-surfaceHighlight p-4 md:p-6 flex items-center justify-between shrink-0">
+                    <div className="flex items-center gap-3 md:gap-4">
+                        <div className="p-2 md:p-3 bg-[#e47c00] rounded-xl text-white shadow-lg shadow-orange-500/20">
+                            <Receipt size={20} className="md:w-6 md:h-6" />
+                        </div>
+                        <div>
+                            <h2 className="text-lg md:text-2xl font-black text-text uppercase italic tracking-tight">Rendición Detallada</h2>
+                            <p className="text-xs md:text-sm font-bold text-muted mt-0.5 md:mt-1 uppercase tracking-wider flex items-center gap-2">
+                                <span className="truncate max-w-[120px] md:max-w-none">{trip.driverName}</span>
+                                <span className="w-1 h-1 bg-muted rounded-full"></span>
+                                <span>{trip.date}</span>
+                            </p>
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="p-2 rounded-full hover:bg-surfaceHighlight text-muted transition-all">
+                        <X size={24} className="md:w-7 md:h-7" />
+                    </button>
                 </div>
 
-                <div className="space-y-4">
-                    <div className="flex justify-between items-center p-3 bg-background rounded-xl border border-surfaceHighlight">
-                        <span className="text-xs font-bold text-muted uppercase">Efectivo Cobrado</span>
-                        <span className="text-lg font-black text-green-600">$ {cashTotal.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between items-center p-3 bg-background rounded-xl border border-surfaceHighlight">
-                        <span className="text-xs font-bold text-muted uppercase">Gastos Totales</span>
-                        <span className="text-lg font-black text-red-500">$ {expensesTotal.toLocaleString()}</span>
-                    </div>
-                    <div className="h-px bg-surfaceHighlight my-2"></div>
-                    <div className="flex justify-between items-center p-4 bg-primary/10 rounded-2xl border border-primary/20">
-                        <span className="text-sm font-black text-primary uppercase">A Rendir (Neto)</span>
-                        <span className="text-2xl font-black text-primary">$ {netCash.toLocaleString()}</span>
-                    </div>
-                </div>
+                <div className="flex-1 flex flex-col lg:flex-row overflow-hidden bg-background/50">
+                    
+                    {/* Main Content (Left) - Scrollable */}
+                    <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 md:space-y-8 scrollbar-thin">
+                        
+                        {/* COBRANZAS */}
+                        <div className="space-y-3 md:space-y-4">
+                            <h3 className="text-xs md:text-sm font-black text-primary uppercase tracking-widest flex items-center gap-2">
+                                <Users size={14} className="md:w-4 md:h-4" /> Listado de Cobranzas
+                            </h3>
+                            
+                            {/* MOBILE LIST */}
+                            <div className="md:hidden flex flex-col gap-3">
+                                {(trip.clients || []).map(c => {
+                                    const totalDebt = (c.previousBalance || 0) + (c.currentInvoiceAmount || 0);
+                                    const totalPaid = (c.paymentCash || 0) + (c.paymentTransfer || 0);
+                                    return (
+                                        <div key={c.id} className="bg-surface border border-surfaceHighlight rounded-2xl p-4 shadow-sm">
+                                            <div className="flex justify-between items-start mb-3">
+                                                <div>
+                                                    <p className="font-black text-sm text-text uppercase">{c.name}</p>
+                                                    <p className="text-[10px] font-bold text-muted uppercase mt-0.5">{c.address}</p>
+                                                </div>
+                                                <StatusBadge status={c.status} />
+                                            </div>
+                                            
+                                            <div className="grid grid-cols-2 gap-4 py-3 border-y border-surfaceHighlight/50">
+                                                <div>
+                                                    <p className="text-[9px] font-black text-muted uppercase">Total a Cobrar</p>
+                                                    <p className="text-sm font-black text-text">$ {totalDebt.toLocaleString()}</p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="text-[9px] font-black text-muted uppercase">Pagado</p>
+                                                    <p className={`text-sm font-black ${totalPaid > 0 ? 'text-green-600' : 'text-muted'}`}>$ {totalPaid.toLocaleString()}</p>
+                                                </div>
+                                            </div>
 
-                <div className="text-[10px] text-muted text-center font-bold uppercase tracking-widest mt-4">
-                    Generado el {new Date().toLocaleString()}
+                                            {(c.paymentCash > 0 || c.paymentTransfer > 0) && (
+                                                <div className="flex gap-2 mt-3 pt-1">
+                                                    {c.paymentCash > 0 && (
+                                                        <span className="bg-green-100 text-green-700 px-2 py-1 rounded border border-green-200 text-[9px] font-black uppercase flex items-center gap-1">
+                                                            <DollarSign size={10} /> Ef: ${c.paymentCash.toLocaleString()}
+                                                        </span>
+                                                    )}
+                                                    {c.paymentTransfer > 0 && (
+                                                        <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded border border-blue-200 text-[9px] font-black uppercase flex items-center gap-1">
+                                                            <CreditCard size={10} /> Tr: ${c.paymentTransfer.toLocaleString()}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )
+                                })}
+                            </div>
+
+                            {/* DESKTOP TABLE */}
+                            <div className="hidden md:block bg-surface border border-surfaceHighlight rounded-2xl overflow-hidden shadow-sm">
+                                <table className="w-full text-left">
+                                    <thead className="bg-background/50 border-b border-surfaceHighlight text-[10px] font-black text-muted uppercase tracking-widest">
+                                        <tr>
+                                            <th className="p-4 pl-6">Cliente</th>
+                                            <th className="p-4 text-right">Saldo Ant.</th>
+                                            <th className="p-4 text-right">Factura</th>
+                                            <th className="p-4 text-right bg-surfaceHighlight/30">Total a Cobrar</th>
+                                            <th className="p-4 text-right pr-6">Cobrado (Detalle)</th>
+                                            <th className="p-4 text-center">Estado</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-surfaceHighlight">
+                                        {(trip.clients || []).map(c => {
+                                            const totalDebt = (c.previousBalance || 0) + (c.currentInvoiceAmount || 0);
+                                            const totalPaid = (c.paymentCash || 0) + (c.paymentTransfer || 0);
+                                            return (
+                                                <tr key={c.id} className="hover:bg-surfaceHighlight/20 transition-colors">
+                                                    <td className="p-4 pl-6">
+                                                        <span className="text-xs font-black text-text uppercase">{c.name}</span>
+                                                        <span className="block text-[9px] font-bold text-muted uppercase mt-0.5">{c.address}</span>
+                                                    </td>
+                                                    <td className="p-4 text-right text-xs text-muted font-bold">$ {(c.previousBalance||0).toLocaleString()}</td>
+                                                    <td className="p-4 text-right text-xs text-muted font-bold">$ {(c.currentInvoiceAmount||0).toLocaleString()}</td>
+                                                    <td className="p-4 text-right text-xs font-black text-text bg-surfaceHighlight/10">$ {totalDebt.toLocaleString()}</td>
+                                                    <td className="p-4 text-right pr-6">
+                                                        <div className="flex flex-col items-end gap-1">
+                                                            {c.paymentCash > 0 && (
+                                                                <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded border border-green-200 text-[10px] font-black uppercase flex items-center gap-1 shadow-sm">
+                                                                    <DollarSign size={10} strokeWidth={3} /> Efectivo: $ {c.paymentCash.toLocaleString()}
+                                                                </span>
+                                                            )}
+                                                            {c.paymentTransfer > 0 && (
+                                                                <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded border border-blue-200 text-[10px] font-black uppercase flex items-center gap-1 shadow-sm">
+                                                                    <CreditCard size={10} strokeWidth={3} /> Transf: $ {c.paymentTransfer.toLocaleString()}
+                                                                </span>
+                                                            )}
+                                                            {totalPaid === 0 && <span className="text-[10px] font-bold text-muted italic">-</span>}
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-4 text-center">
+                                                        <StatusBadge status={c.status} />
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        {/* GASTOS */}
+                        <div className="space-y-3 md:space-y-4">
+                            <h3 className="text-xs md:text-sm font-black text-orange-500 uppercase tracking-widest flex items-center gap-2">
+                                <Fuel size={14} className="md:w-4 md:h-4" /> Gastos de Rendición
+                            </h3>
+                            {trip.expenses.length === 0 ? (
+                                <div className="p-6 md:p-8 text-center border-2 border-dashed border-surfaceHighlight rounded-2xl bg-surface/50 text-muted text-xs font-bold uppercase italic opacity-60">
+                                    No se registraron gastos en este viaje.
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                                    {trip.expenses.map((exp, idx) => (
+                                        <div key={idx} className="bg-surface border border-surfaceHighlight rounded-2xl p-4 flex items-start gap-4 shadow-sm hover:border-red-200 transition-colors group">
+                                            <div className="p-3 bg-red-50 text-red-500 rounded-xl group-hover:bg-red-500 group-hover:text-white transition-colors shadow-inner">
+                                                {getExpenseIcon(exp.type)}
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] font-black text-muted uppercase tracking-widest">{exp.type}</p>
+                                                <p className="text-sm font-black text-text uppercase mt-0.5">{exp.note || 'Sin detalle'}</p>
+                                                <p className="text-lg font-black text-red-500 mt-2">$ {exp.amount.toLocaleString()}</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* MOBILE SUMMARY SECTION */}
+                        <div className="lg:hidden pt-4 border-t border-surfaceHighlight">
+                            <SummarySection />
+                        </div>
+                    </div>
+
+                    {/* Summary Sidebar (Desktop Only) */}
+                    <div className="hidden lg:flex w-96 bg-surface border-l border-surfaceHighlight p-8 flex-col gap-8 shadow-xl z-10 shrink-0 overflow-y-auto">
+                        <SummarySection />
+                    </div>
                 </div>
             </div>
         </div>

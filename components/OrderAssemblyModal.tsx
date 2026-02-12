@@ -37,7 +37,8 @@ import {
     ChevronRight, 
     Send, 
     User, 
-    FilePlus 
+    FilePlus,
+    Circle
 } from 'lucide-react';
 import { Order, Product, User as UserType, OrderStatus, PaymentMethod, MasterProduct, HistoryEntry } from '../types';
 import { updatePaymentMethod } from '../logic';
@@ -103,8 +104,6 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     const isFinishedStep = order.status === OrderStatus.ENTREGADO || order.status === OrderStatus.PAGADO;
 
     // --- LÓGICA DE UX: PASOS DE REPARTO Y ENTREGA AUTOMÁTICOS ---
-    // Si estamos en "Factura Controlada" (listo para salir a reparto) o "En Tránsito" (listo para entregar),
-    // o el pedido ya finalizó, los checks se consideran completos visual y lógicamente.
     const isAutoCheckStep = isReadyForTransit || isTransitStep || isFinishedStep;
 
     const canPrint = isBillingStep || isInvoiceControlStep || isReadyForTransit || isTransitStep || isFinishedStep;
@@ -181,7 +180,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     const assemblerName = order.history.find(h => h.newState === OrderStatus.ARMADO || h.details?.includes('Armado'))?.userName || order.assemblerName || '-';
     const showFinancials = isVale;
 
-    const originalInvoiceTotal = order.products.reduce((acc, p) => acc + (p.originalQuantity * p.unitPrice), 0);
+    const originalInvoiceTotal = order.products.reduce((acc, p) => acc + (Math.max(0, p.originalQuantity) * p.unitPrice), 0);
     const finalTotal = order.total;
     const refundTotal = originalInvoiceTotal - finalTotal;
 
@@ -191,51 +190,55 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         const dateStr = timestamp.toLocaleDateString();
 
         let label = "Acción registrada";
-        let icon = <Activity size={16} />;
-        let colorClass = "bg-gray-500/10 text-gray-500 border-gray-200";
-        let actorLabel = "Por:";
+        let colorClass = "text-gray-500";
+        let dotColor = "bg-gray-400";
 
         if (entry.action === 'CREATE_ORDER') {
             label = "Pedido Creado";
-            icon = <FilePlus size={16} />;
-            colorClass = "bg-blue-500/10 text-blue-500 border-blue-200";
+            colorClass = "text-blue-500";
+            dotColor = "bg-blue-500";
+        } else if (entry.action === 'ITEM_REMOVED' || entry.action === 'ITEM_RETURNED') {
+            label = "Quita Producto";
+            colorClass = "text-slate-500";
+            dotColor = "bg-slate-400";
+        } else if (entry.action === 'ITEM_ADDED' || entry.action === 'ITEM_ADDED_NEW') {
+            label = "Agregó Producto";
+            colorClass = "text-emerald-500";
+            dotColor = "bg-emerald-500";
         } else if (entry.newState === OrderStatus.ARMADO) {
             label = "Armado Finalizado";
-            actorLabel = "Armado por:";
-            icon = <Box size={16} />;
-            colorClass = "bg-orange-500/10 text-orange-600 border-orange-200";
+            colorClass = "text-orange-600";
+            dotColor = "bg-orange-500";
         } else if (entry.newState === OrderStatus.ARMADO_CONTROLADO) {
-            label = "Control de Calidad OK";
-            actorLabel = "Controlado por:";
-            icon = <ShieldCheck size={16} />;
-            colorClass = "bg-purple-500/10 text-purple-600 border-purple-200";
+            label = "Control Calidad OK";
+            colorClass = "text-purple-600";
+            dotColor = "bg-purple-500";
         } else if (entry.newState === OrderStatus.FACTURADO) {
-            label = "Facturación Realizada";
-            actorLabel = "Facturado por:";
-            icon = <Receipt size={16} />;
-            colorClass = "bg-indigo-500/10 text-indigo-600 border-indigo-200";
+            label = "Facturado";
+            colorClass = "text-indigo-600";
+            dotColor = "bg-indigo-500";
         } else if (entry.newState === OrderStatus.FACTURA_CONTROLADA) {
-            label = "Factura Verificada";
-            actorLabel = "Verificado por:";
-            icon = <ClipboardCheck size={16} />;
-            colorClass = "bg-cyan-500/10 text-cyan-600 border-cyan-200";
+            label = "Factura Controlada";
+            colorClass = "text-cyan-600";
+            dotColor = "bg-cyan-500";
         } else if (entry.newState === OrderStatus.EN_TRANSITO) {
-            label = "Despachado / En Ruta";
-            actorLabel = "Despachado por:";
-            icon = <Truck size={16} />;
-            colorClass = "bg-blue-600/10 text-blue-700 border-blue-300";
+            label = "Despachado";
+            colorClass = "text-blue-700";
+            dotColor = "bg-blue-500";
         } else if (entry.newState === OrderStatus.ENTREGADO) {
-            label = "Entrega Confirmada";
-            actorLabel = "Confirmado por:";
-            icon = <CheckCircle2 size={16} />;
-            colorClass = "bg-green-500/10 text-green-600 border-green-200";
+            label = "Entregado";
+            colorClass = "text-green-600";
+            dotColor = "bg-green-500";
+        } else if (entry.newState === OrderStatus.PAGADO) {
+            label = "Pago Registrado";
+            colorClass = "text-slate-600";
+            dotColor = "bg-slate-400";
         }
 
-        return { label, icon, colorClass, dateStr, timeStr, actorLabel };
+        return { label, colorClass, dotColor, dateStr, timeStr };
     };
 
     const buildInvoicePDF = () => {
-        // ... (Logic for PDF remains same)
         const doc = new jsPDF();
         const primaryColor = [228, 124, 0]; 
         const textColor = [17, 24, 39]; 
@@ -295,9 +298,10 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         const isPostShipping = [OrderStatus.EN_TRANSITO, OrderStatus.ENTREGADO, OrderStatus.PAGADO].includes(order.status);
 
         const shortages = order.products.map(p => {
+             const absOrig = Math.abs(p.originalQuantity);
              const sentOrCurrent = isPostShipping ? (p.shippedQuantity ?? p.quantity) : p.quantity;
-             const missing = Math.max(0, p.originalQuantity - sentOrCurrent);
-             return { ...p, missing };
+             const missing = Math.max(0, absOrig - sentOrCurrent);
+             return { ...p, missing, absOrig };
         }).filter(p => p.missing > 0);
 
         if (shortages.length > 0) {
@@ -326,7 +330,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
              shortages.forEach(p => {
                  doc.text(p.code, 20, currentY);
                  doc.text(p.name.substring(0, 45).toUpperCase(), 35, currentY);
-                 doc.text(p.originalQuantity.toString(), 160, currentY, { align: 'right' });
+                 doc.text(p.absOrig.toString(), 160, currentY, { align: 'right' });
                  
                  doc.setTextColor(redColor[0], redColor[1], redColor[2]);
                  doc.text(p.missing.toString(), 190, currentY, { align: 'right' });
@@ -453,8 +457,22 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         if (!newProdCode || !newProdName || !onAddProduct) return;
         const qty = parseInt(newProdQty) || 1;
         const price = parseFloat(newProdPrice) || 0;
-        onAddProduct({ code: newProdCode, name: newProdName, originalQuantity: qty, quantity: qty, unitPrice: price, subtotal: qty * price, isChecked: false });
-        setIsAddingProduct(false); setNewProdCode(''); setNewProdName(''); setNewProdQty('1'); setNewProdPrice('0'); setSearchProdTerm('');
+        // FLAG NEGATIVO: Se usa el valor negativo para identificarlo como agregado y tener línea de base para faltantes
+        onAddProduct({ 
+            code: newProdCode, 
+            name: newProdName, 
+            originalQuantity: -qty, 
+            quantity: qty, 
+            unitPrice: price, 
+            subtotal: qty * price, 
+            isChecked: false 
+        });
+        setIsAddingProduct(false); 
+        setNewProdCode(''); 
+        setNewProdName(''); 
+        setNewProdQty('1'); 
+        setNewProdPrice('0'); 
+        setSearchProdTerm('');
     };
 
     const handleInvoiceClick = () => {
@@ -472,8 +490,6 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     const handleConfirmTransition = (notes: string) => { onSave(order, true, notes); setShowTransitionModal(false); };
 
     const uncheckedCount = order.products.filter(p => !p.isChecked).length;
-    
-    // --- CAMBIO LÓGICO: Si es un paso automático (Reparto/Entregado), se considera listo siempre ---
     const isReady = isAutoCheckStep ? true : uncheckedCount === 0;
 
     let titleText = "Armado de Pedido";
@@ -712,10 +728,8 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                 </div>
 
                 <div className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
-                    {/* Contenedor de Scroll Principal */}
                     <div className="flex-1 overflow-y-auto bg-background scroll-smooth overscroll-contain flex flex-col">
                         
-                        {/* TABS HEADER */}
                         <div className="p-4 border-b border-surfaceHighlight bg-surface flex gap-2 shrink-0 sticky top-0 z-30">
                             <button 
                                 onClick={() => setActiveTab('products')} 
@@ -731,7 +745,6 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                             </button>
                         </div>
 
-                        {/* CONTENT */}
                         {activeTab === 'products' ? (
                             <div className="p-4 md:p-6 pb-48 lg:pb-10 flex flex-col gap-6">
                                 <div className="lg:hidden"><InfoBlock /></div>
@@ -797,38 +810,34 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                         {order.products.map((product) => {
                                             const isEditingQty = editingProductCode === product.code;
                                             const isEditingPrice = editingPriceCode === product.code;
-                                            
-                                            // --- LÓGICA CORREGIDA DE FALTANTES VS DEVOLUCIONES ---
                                             const isPostShipping = [OrderStatus.EN_TRANSITO, OrderStatus.ENTREGADO, OrderStatus.PAGADO].includes(order.status);
+                                            
+                                            // DETERMINACIÓN DE PRODUCTO AGREGADO (originalQuantity <= 0 indica agregado a posteriori)
+                                            const isAddedNew = product.originalQuantity <= 0;
+                                            const absOriginal = Math.abs(product.originalQuantity);
 
-                                            // Faltante: Diferencia entre lo Original y lo que se logró armar/enviar.
-                                            // Si estamos en armado: Original - Cantidad Actual.
-                                            // Si ya salió: Original - Cantidad Despachada.
+                                            // Faltante: Original (Absoluto) - Cantidad Actual.
                                             const missingAmount = isPostShipping
-                                                ? Math.max(0, product.originalQuantity - (product.shippedQuantity ?? product.quantity))
-                                                : Math.max(0, product.originalQuantity - product.quantity);
+                                                ? Math.max(0, absOriginal - (product.shippedQuantity ?? product.quantity))
+                                                : Math.max(0, absOriginal - product.quantity);
 
-                                            // Devolución (Nota de Crédito): SOLO si ya salió a reparto.
-                                            // Diferencia entre lo Despachado y lo que el cliente aceptó (Cantidad Actual).
                                             const returnedAmount = isPostShipping && product.shippedQuantity 
                                                 ? Math.max(0, product.shippedQuantity - product.quantity) 
                                                 : 0;
 
                                             const isShortage = missingAmount > 0;
                                             const isReturned = returnedAmount > 0;
-                                            // -----------------------------------------------------
-
-                                            // Visualmente marcamos como checkeado si estamos en etapas donde la verificación es automática
                                             const displayChecked = isAutoCheckStep ? true : product.isChecked;
 
                                             return (
-                                                <div key={product.code} className={`flex items-start md:items-center gap-3 p-4 rounded-xl border transition-all ${displayChecked && !isFinishedStep ? 'bg-green-500/5 border-green-500/20' : 'bg-surface border-surfaceHighlight shadow-sm'}`}>
+                                                <div key={product.code} className={`flex items-start md:items-center gap-3 p-4 rounded-xl border transition-all 
+                                                    ${isAddedNew ? 'bg-orange-50/70 dark:bg-orange-900/10 border-orange-200' : (displayChecked && !isFinishedStep ? 'bg-green-500/5 border-green-500/20' : 'bg-surface border-surfaceHighlight shadow-sm')}
+                                                `}>
                                                     {!isFinishedStep && (
                                                         <input 
                                                             type="checkbox"
                                                             checked={displayChecked}
                                                             onChange={() => {
-                                                                // Permite checkear solo si se pueden editar productos Y NO estamos en una etapa de auto-check
                                                                 if (canEditProducts && !isAutoCheckStep) onToggleCheck(product.code);
                                                             }}
                                                             disabled={!canEditProducts || isAutoCheckStep}
@@ -837,12 +846,19 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                                     )}
                                                     
                                                     <div className="flex-1 min-w-0">
-                                                        <p className="font-bold text-sm leading-tight text-text uppercase">{product.name}</p>
+                                                        <div className="flex items-center gap-2">
+                                                            <p className="font-bold text-sm leading-tight text-text uppercase">{product.name}</p>
+                                                            {isAddedNew && (
+                                                                <span className="text-[7px] font-black uppercase bg-orange-500 text-white px-1.5 py-0.5 rounded shadow-sm flex items-center gap-0.5 animate-in fade-in zoom-in">
+                                                                    Agregado
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                         <div className="flex flex-wrap gap-2 mt-1">
                                                             <span className="text-[10px] font-mono text-muted bg-surfaceHighlight/50 px-1.5 rounded">#{product.code}</span>
                                                             
                                                             {isShortage && (
-                                                                <span className="text-[10px] font-bold text-orange-600 bg-orange-500/10 px-1.5 rounded italic flex items-center gap-1">
+                                                                <span className="text-[10px] font-bold text-orange-600 bg-orange-500/10 px-1.5 rounded italic flex items-center gap-1 border border-orange-500/20">
                                                                     <AlertTriangle size={10} /> Faltante: {missingAmount}
                                                                 </span>
                                                             )}
@@ -864,11 +880,11 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                                         ) : (
                                                             <div className="flex flex-col items-center">
                                                                 <div className="flex items-center gap-2">
-                                                                    <span className="text-lg font-black text-text">{product.quantity}</span>
+                                                                    <span className={`text-lg font-black ${isAddedNew ? 'text-orange-600' : 'text-text'}`}>{product.quantity}</span>
                                                                     {canEditProducts && <button onClick={() => handleEditQtyClick(product)} className="p-1 text-muted hover:text-primary"><Edit2 size={14} /></button>}
                                                                 </div>
                                                                 {isShortage && !isPostShipping && (
-                                                                    <span className="text-[9px] text-muted font-bold">de {product.originalQuantity}</span>
+                                                                    <span className="text-[9px] text-muted font-bold uppercase tracking-tighter">de {absOriginal}</span>
                                                                 )}
                                                             </div>
                                                         )}
@@ -887,51 +903,84 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                 </div>
                             </div>
                         ) : (
-                            <div className="p-4 md:p-8 space-y-6">
-                                <h3 className="text-lg font-black text-text uppercase italic tracking-tight">Historial de Actividad</h3>
-                                <div className="space-y-0 relative border-l-2 border-surfaceHighlight ml-3">
-                                    {order.history && order.history.length > 0 ? (
-                                        order.history.map((h, idx) => {
-                                            const { label, icon, colorClass, dateStr, timeStr, actorLabel } = getHistoryVisuals(h);
-                                            return (
-                                                <div key={idx} className="relative pl-8 pb-8 last:pb-0">
-                                                    <div className={`absolute -left-[9px] top-0 w-4 h-4 rounded-full border-2 border-background ${h.action.includes('ADVANCE') ? 'bg-green-500' : 'bg-surfaceHighlight'}`}></div>
-                                                    <div className="bg-surface border border-surfaceHighlight p-4 rounded-xl shadow-sm hover:shadow-md transition-shadow">
-                                                        <div className="flex justify-between items-start mb-3">
-                                                            <div className="flex items-center gap-3">
-                                                                <div className={`p-2 rounded-lg ${colorClass}`}>
-                                                                    {icon}
-                                                                </div>
-                                                                <div>
-                                                                    <h4 className="text-sm font-black text-text uppercase leading-tight">{label}</h4>
-                                                                    <p className="text-[10px] font-bold text-muted uppercase mt-0.5">{dateStr} • {timeStr}</p>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                        
-                                                        <div className="flex items-center gap-2 bg-background/50 p-2 rounded-lg border border-surfaceHighlight/50 mb-2">
-                                                            <span className="text-[9px] font-black text-muted uppercase tracking-widest">{actorLabel}</span>
-                                                            <div className="flex items-center gap-1.5">
-                                                                <User size={12} className="text-primary"/>
-                                                                <span className="text-xs font-black text-text uppercase">{h.userName || 'Sistema'}</span>
-                                                            </div>
-                                                        </div>
-
-                                                        {h.details && (
-                                                            <div className="bg-surfaceHighlight/30 p-2.5 rounded-lg border-l-2 border-surfaceHighlight">
-                                                                <p className="text-[10px] font-medium text-text italic leading-relaxed">"{h.details}"</p>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            );
-                                        })
-                                    ) : (
-                                        <div className="p-8 text-center border-2 border-dashed border-surfaceHighlight rounded-2xl">
-                                            <History size={24} className="mx-auto text-muted mb-2 opacity-50"/>
-                                            <p className="text-muted font-bold text-xs uppercase">Sin registros de historia.</p>
+                            <div className="flex flex-col h-full bg-surface">
+                                <div className="p-4 md:p-6 pb-20">
+                                    {/* CABECERA VISTA DESKTOP */}
+                                    <div className="hidden md:block">
+                                        <div className="overflow-x-auto border border-surfaceHighlight rounded-2xl shadow-sm">
+                                            <table className="w-full text-left border-collapse">
+                                                <thead>
+                                                    <tr className="bg-background/50 border-b border-surfaceHighlight">
+                                                        <th className="px-6 py-4 text-[10px] font-black text-muted uppercase tracking-widest">ESTADO / ACTIVIDAD</th>
+                                                        <th className="px-6 py-4 text-[10px] font-black text-muted uppercase tracking-widest">FECHA/HORA</th>
+                                                        <th className="px-6 py-4 text-[10px] font-black text-muted uppercase tracking-widest">RESPONSABLE</th>
+                                                        <th className="px-6 py-4 text-[10px] font-black text-muted uppercase tracking-widest">OBS.</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-surfaceHighlight">
+                                                    {order.history && order.history.length > 0 ? (
+                                                        [...order.history].map((entry, idx) => {
+                                                            const { label, colorClass, dotColor, dateStr, timeStr } = getHistoryVisuals(entry);
+                                                            return (
+                                                                <tr key={idx} className="hover:bg-background/30 transition-colors">
+                                                                    <td className="px-6 py-4">
+                                                                        <div className="flex items-center gap-3">
+                                                                            <div className={`h-2 w-2 rounded-full ${dotColor}`} />
+                                                                            <span className={`text-xs font-black uppercase tracking-tight ${colorClass}`}>{label}</span>
+                                                                        </div>
+                                                                    </td>
+                                                                    <td className="px-6 py-4">
+                                                                        <span className="text-[11px] font-bold text-muted uppercase">{dateStr} {timeStr}</span>
+                                                                    </td>
+                                                                    <td className="px-6 py-4">
+                                                                        <span className="text-[11px] font-black text-text uppercase">{entry.userName || 'SISTEMA'}</span>
+                                                                    </td>
+                                                                    <td className="px-6 py-4">
+                                                                        <span className="text-[10px] font-medium text-muted italic uppercase">{entry.details || '-'}</span>
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        })
+                                                    ) : (
+                                                        <tr><td colSpan={4} className="p-10 text-center text-muted uppercase font-black text-xs">Sin actividad</td></tr>
+                                                    )}
+                                                </tbody>
+                                            </table>
                                         </div>
-                                    )}
+                                    </div>
+
+                                    {/* VISTA MOBILE COMPACTA */}
+                                    <div className="md:hidden space-y-4">
+                                        {order.history && order.history.length > 0 ? (
+                                            [...order.history].map((entry, idx) => {
+                                                const { label, colorClass, dotColor, dateStr, timeStr } = getHistoryVisuals(entry);
+                                                return (
+                                                    <div key={idx} className="flex gap-4 p-2">
+                                                        <div className="flex flex-col items-center">
+                                                            <div className={`h-2.5 w-2.5 rounded-full mt-1.5 ${dotColor}`} />
+                                                            {idx < order.history.length - 1 && <div className="w-px flex-1 bg-surfaceHighlight my-1" />}
+                                                        </div>
+                                                        <div className="flex flex-col flex-1 min-w-0">
+                                                            <h4 className={`text-sm font-black uppercase tracking-tight leading-none ${colorClass}`}>{label}</h4>
+                                                            <p className="text-[10px] font-bold text-muted uppercase mt-1">
+                                                                {dateStr} {timeStr} • {entry.userName || 'SISTEMA'}
+                                                            </p>
+                                                            {entry.details && (
+                                                                <p className="text-[10px] font-medium text-muted italic uppercase mt-1 leading-tight">
+                                                                    {entry.details}
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })
+                                        ) : (
+                                            <div className="py-20 text-center text-muted uppercase font-black text-xs opacity-50">Sin actividad</div>
+                                        )}
+                                        <div className="pt-4 text-center opacity-30">
+                                            <p className="text-[8px] font-black uppercase tracking-[0.3em]">... fin de eventos</p>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         )}

@@ -275,7 +275,7 @@ export default function App() {
                 if (error) throw error;
                 tripId = data.id;
             } else {
-                const { error } = await supabase.from('trips').update(tripPayload).eq('id', tripId);
+                const { error = null } = await supabase.from('trips').update(tripPayload).eq('id', tripId);
                 if (error) throw error;
             }
 
@@ -660,7 +660,7 @@ export default function App() {
             updates.controller_name = currentUser?.name;
         }
 
-        const { error } = await supabase.from('orders').update(updates).eq('id', order.id);
+        const { error = null } = await supabase.from('orders').update(updates).eq('id', order.id);
         
         if (!error) {
             await supabase.from('order_items').update({ is_checked: false }).eq('order_id', order.id);
@@ -686,7 +686,7 @@ export default function App() {
             return;
         }
 
-        const { error } = await supabase.from('orders').update(updates).eq('id', order.id);
+        const { error = null } = await supabase.from('orders').update(updates).eq('id', order.id);
         
         if (error) {
             alert("Error al asignar el pedido: " + error.message);
@@ -731,7 +731,7 @@ export default function App() {
         }
 
         if (Object.keys(updates).length > 0) {
-            const { error } = await supabase.from('orders').update(updates).eq('id', order.id);
+            const { error = null } = await supabase.from('orders').update(updates).eq('id', order.id);
             if (error) {
                 alert("Error al actualizar candado: " + error.message);
                 return;
@@ -820,7 +820,7 @@ export default function App() {
                      code: p.code,
                      name: p.name,
                      quantity: p.quantity,
-                     original_quantity: p.originalQuantity || p.quantity,
+                     original_quantity: p.originalQuantity, // Usar directamente el valor original (permite 0 para nuevos items)
                      shipped_quantity: finalShippedQuantity,
                      unit_price: p.unitPrice,
                      subtotal: p.subtotal,

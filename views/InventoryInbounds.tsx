@@ -10,7 +10,8 @@ import {
     Clock,
     RefreshCw,
     Warehouse,
-    User
+    User,
+    MessageSquare
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { StockInbound, MasterProduct, User as UserType, WarehouseCode } from '../types';
@@ -33,6 +34,8 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
 
     const [selectedProvider, setSelectedProvider] = useState('');
     const [supplierRef, setSupplierRef] = useState(''); 
+    const [assemblerComment, setAssemblerComment] = useState('');
+    const [lastReference, setLastReference] = useState<string | null>(null);
     const [selectedWarehouse, setSelectedWarehouse] = useState<string>('');
     const [warehouses, setWarehouses] = useState<{id: string, name: string}[]>([]);
     const [providers, setProviders] = useState<{codigo: string, razon_social: string}[]>([]);
@@ -67,14 +70,31 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
                 supabase.from('providers_master').select('codigo, razon_social').eq('activo', true)
             ]);
 
-            if (inbRes.data) setInbounds(inbRes.data.map((i: any) => ({
-                ...i,
-                supplier_name: i.providers_master?.razon_social || i.supplier_code,
-                warehouse_name: i.warehouses?.name,
-                user_name: i.profiles?.name || 'Sistema'
-            })));
+            if (inbRes.data) {
+                const mapped = inbRes.data.map((i: any) => ({
+                    ...i,
+                    supplier_name: i.providers_master?.razon_social || i.supplier_code,
+                    warehouse_name: i.warehouses?.name,
+                    user_name: i.profiles?.name || 'Sistema'
+                }));
+                setInbounds(mapped);
+                
+                // Obtener la última referencia utilizada
+                if (mapped.length > 0) {
+                    const latestRef = mapped[0].observations;
+                    if (latestRef) setLastReference(latestRef);
+                }
+            }
+
             if (whRes.data) setWarehouses(whRes.data);
-            if (provRes.data) setProviders(provRes.data);
+            
+            if (provRes.data) {
+                // Ordenar proveedores alfabéticamente por razon_social
+                const sortedProviders = [...provRes.data].sort((a, b) => 
+                    a.razon_social.localeCompare(b.razon_social)
+                );
+                setProviders(sortedProviders);
+            }
         } catch (err) { 
             console.error("Error cargando ingresos:", err); 
         } finally { 
@@ -182,6 +202,20 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
         setTimeout(() => searchInputRef.current?.focus(), 10);
     };
 
+    const editDraftItem = (idx: number) => {
+        const item = draftItems[idx];
+        setActiveProduct(item.product);
+        setBoxes(String(item.boxes || ''));
+        setUnitsPerBox(String(item.unitsPerBox || 12));
+        setLooseUnits(String(item.looseUnits || ''));
+        setTempExpiry(item.expiry || '');
+        
+        // Quitarlo de la lista para re-procesar
+        setDraftItems(draftItems.filter((_, i) => i !== idx));
+        
+        setTimeout(() => boxesInputRef.current?.focus(), 10);
+    };
+
     const handleCalculatorKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter') {
             e.preventDefault();
@@ -195,17 +229,23 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
 
     const handleFinalizeAndSend = async () => {
         if (!selectedProvider || !selectedWarehouse || !supplierRef || draftItems.length === 0) {
-            return alert("Faltan datos obligatorios.");
+            return alert("Faltan datos obligatorios (Proveedor, Comprobante, Depósito o Artículos).");
         }
         setIsSaving(true);
         try {
+            // Concatenar referencia y comentario si existe
+            const finalObservations = assemblerComment.trim() 
+                ? `${supplierRef.trim()} | NOTA: ${assemblerComment.trim()}`
+                : supplierRef.trim();
+
             const { data: inbound, error: inbErr } = await supabase.from('stock_inbounds').insert({
                 supplier_code: selectedProvider, 
                 warehouse_id: selectedWarehouse,
-                observations: supplierRef.trim(),
+                observations: finalObservations,
                 status: 'enviado',
                 created_by: currentUser.id
             }).select().single();
+            
             if (inbErr) throw inbErr;
             
             const itemsToInsert = draftItems.map(item => ({ 
@@ -214,16 +254,26 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
                 quantity: item.total,
                 expiry_date: item.expiry || null 
             }));
+            
             const { error: itemsErr } = await supabase.from('stock_inbound_items').insert(itemsToInsert);
             if (itemsErr) throw itemsErr;
-            setDraftItems([]); setSupplierRef(''); setSelectedProvider(''); setSelectedWarehouse('');
-            setView('list'); fetchInitialData();
-        } catch (e: any) { alert("Error: " + e.message); } finally { setIsSaving(false); }
+            
+            setDraftItems([]); 
+            setSupplierRef(''); 
+            setAssemblerComment('');
+            setSelectedProvider(''); 
+            setSelectedWarehouse('');
+            setView('list'); 
+            fetchInitialData();
+        } catch (e: any) { 
+            alert("Error al finalizar el ingreso: " + e.message); 
+        } finally { 
+            setIsSaving(false); 
+        }
     };
 
     const handleAnular = async (inb: StockInbound) => {
         if (inb.status === 'aprobado') return alert("No se puede anular un ingreso ya aprobado.");
-        // Se elimina el confirm del navegador, la UI maneja la confirmación
         setIsLoading(true);
         try {
             const { error } = await supabase.rpc('anular_ingreso_stock', { p_inbound_id: inb.id });
@@ -247,23 +297,31 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
                     <button onClick={() => setView('list')} className="p-2 rounded-full hover:bg-surfaceHighlight text-muted transition-colors"><ChevronLeft size={24}/></button>
                     <h2 className="text-2xl font-black text-text uppercase italic">Cargar Mercadería</h2>
                 </div>
-                {/* ... resto del formulario de creación se mantiene igual ... */}
+                
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div className="lg:col-span-2 space-y-6">
-                        <div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 shadow-sm grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 shadow-sm grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div className="space-y-1">
-                                <label className="text-[10px] font-black text-muted uppercase ml-1">Proveedor</label>
+                                <label className="text-[10px] font-black text-muted uppercase ml-1">Proveedor (Orden Alfabetico)</label>
                                 <select value={selectedProvider} onChange={e => setSelectedProvider(e.target.value)} className="w-full bg-background border border-surfaceHighlight rounded-xl p-3 text-sm font-bold outline-none uppercase cursor-pointer focus:border-primary transition-all">
                                     <option value="">Seleccionar...</option>
                                     {providers.map(p => <option key={p.codigo} value={p.codigo}>{p.razon_social}</option>)}
                                 </select>
                             </div>
                             <div className="space-y-1">
-                                <label className="text-[10px] font-black text-muted uppercase ml-1">Nro Comprobante</label>
+                                <label className="text-[10px] font-black text-muted uppercase ml-1">Nro Comprobante / Ref.</label>
                                 <div className="relative">
                                     <Hash className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={14} />
                                     <input type="text" placeholder="Ej: 0001-00045" value={supplierRef} onChange={e => setSupplierRef(e.target.value)} className="w-full bg-background border border-surfaceHighlight rounded-xl p-3 pl-9 text-sm font-black outline-none uppercase focus:border-primary shadow-inner" />
                                 </div>
+                                {lastReference && (
+                                    <button 
+                                        onClick={() => setSupplierRef(lastReference)}
+                                        className="text-[9px] font-black text-primary hover:underline uppercase ml-1 transition-all"
+                                    >
+                                        Última usada: {lastReference}
+                                    </button>
+                                )}
                             </div>
                             <div className="space-y-1">
                                 <label className="text-[10px] font-black text-muted uppercase ml-1">Depósito Arribo</label>
@@ -271,6 +329,19 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
                                     <option value="">Seleccionar...</option>
                                     {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                                 </select>
+                            </div>
+                            
+                            {/* CAMPO DE COMENTARIO ARMADOR */}
+                            <div className="md:col-span-3 space-y-1">
+                                <label className="text-[10px] font-black text-muted uppercase ml-1 flex items-center gap-1">
+                                    <MessageSquare size={12}/> Comentario del Armador (Opcional)
+                                </label>
+                                <textarea 
+                                    value={assemblerComment} 
+                                    onChange={e => setAssemblerComment(e.target.value)}
+                                    placeholder="Nota sobre el estado de la carga o faltantes informales..."
+                                    className="w-full bg-background border border-surfaceHighlight rounded-xl p-3 text-xs font-bold outline-none focus:border-primary shadow-inner resize-none h-20"
+                                />
                             </div>
                         </div>
 
@@ -314,7 +385,7 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
                                     <div className="flex flex-col gap-4 pr-10">
                                         <div className="flex-1">
                                             <h4 className="font-black text-primary uppercase text-sm leading-tight">{activeProduct.desart}</h4>
-                                            <p className="text-[10px] font-bold text-muted uppercase mt-0.5">Stock Betbeder: {activeProduct.stock_betbeder} | Llerena: {activeProduct.stock_llerena}</p>
+                                            <p className="text-[10px] font-bold text-muted uppercase mt-0.5">Stock BBD: {activeProduct.stock_betbeder} | LLE: {activeProduct.stock_llerena}</p>
                                         </div>
                                         <div className="flex flex-col gap-1 w-full max-w-[280px]">
                                             <label className="text-[9px] font-black text-muted uppercase ml-1">Vencimiento (Opcional)</label>
@@ -328,28 +399,62 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
                                     </div>
                                     <div className="flex items-center justify-between pt-2 border-t border-primary/10">
                                         <div className="flex flex-col"><span className="text-[10px] font-black text-muted uppercase tracking-widest">A ingresar</span><span className="text-2xl font-black text-text">{totalUnitsToAdd} <small className="text-[10px]">unidades</small></span></div>
-                                        <button onClick={addToDraft} className="bg-primary text-white px-10 py-4 rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-primaryHover transition-all active:scale-95 flex items-center gap-2"><PackagePlus size={18} /> Agregar Ítem</button>
+                                        <button onClick={addToDraft} className="bg-primary text-white px-10 py-4 rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-primaryHover transition-all active:scale-95 flex items-center gap-2"><PackagePlus size={18} /> Cargar Item</button>
                                     </div>
                                     <div className="text-center"><p className="text-[8px] font-black text-muted uppercase tracking-[0.2em]">ESC para cancelar • ENTER para confirmar • TAB para navegar</p></div>
                                 </div>
                             )}
                         </div>
                     </div>
-                    <div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 shadow-sm flex flex-col h-[600px]">
-                        <h3 className="text-sm font-black text-text uppercase italic border-b border-surfaceHighlight pb-3 mb-4 flex items-center gap-2"><Boxes size={16} className="text-primary" /> Items Cargados ({draftItems.length})</h3>
+                    
+                    <div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 shadow-sm flex flex-col h-[650px]">
+                        <h3 className="text-sm font-black text-text uppercase italic border-b border-surfaceHighlight pb-3 mb-4 flex items-center gap-2">
+                            <Boxes size={16} className="text-primary" /> 
+                            Items en Borrador ({draftItems.length})
+                        </h3>
                         <div className="flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-thin">
                             {draftItems.map((item, idx) => (
                                 <div key={idx} className="p-4 bg-background border border-surfaceHighlight rounded-2xl flex justify-between items-center group animate-in slide-in-from-right-2">
-                                    <div className="min-w-0 flex-1"><p className="text-[11px] font-black text-text uppercase truncate">{item.product.desart}</p>
-                                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5"><p className="text-[9px] text-primary font-black uppercase tracking-tighter">{item.boxes} CJ x {item.unitsPerBox} {item.looseUnits > 0 ? `+ ${item.looseUnits}` : ''} = <span className="text-text">{item.total} un.</span></p>
+                                    <div className="min-w-0 flex-1">
+                                        <p className="text-[11px] font-black text-text uppercase truncate">{item.product.desart}</p>
+                                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5">
+                                            <p className="text-[9px] text-primary font-black uppercase tracking-tighter">
+                                                {item.boxes} CJ x {item.unitsPerBox} {item.looseUnits > 0 ? `+ ${item.looseUnits}` : ''} = <span className="text-text">{item.total} un.</span>
+                                            </p>
                                             {item.expiry && <span className="text-[9px] font-black text-orange-500 uppercase flex items-center gap-1 bg-orange-500/5 px-1.5 py-0.5 rounded border border-orange-500/20"><Calendar size={10} /> {new Date(item.expiry + 'T12:00:00').toLocaleDateString('es-AR')}</span>}
                                         </div>
                                     </div>
-                                    <button onClick={() => setDraftItems(draftItems.filter((_, i) => i !== idx))} className="ml-4 p-2 text-muted hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all"><Trash2 size={16}/></button>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                        <button 
+                                            onClick={() => editDraftItem(idx)} 
+                                            className="p-2 text-muted hover:text-primary hover:bg-primary/10 rounded-xl transition-all"
+                                            title="Editar cantidad"
+                                        >
+                                            <Edit2 size={16}/>
+                                        </button>
+                                        <button 
+                                            onClick={() => setDraftItems(draftItems.filter((_, i) => i !== idx))} 
+                                            className="p-2 text-muted hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all"
+                                            title="Quitar"
+                                        >
+                                            <Trash2 size={16}/>
+                                        </button>
+                                    </div>
                                 </div>
                             ))}
+                            {draftItems.length === 0 && (
+                                <div className="h-full flex flex-col items-center justify-center opacity-30 italic text-center p-10">
+                                    <Boxes size={48} className="mb-4 text-muted"/>
+                                    <p className="text-xs font-black uppercase tracking-widest">No hay artículos cargados aún.</p>
+                                </div>
+                            )}
                         </div>
-                        <button onClick={handleFinalizeAndSend} disabled={isSaving || draftItems.length === 0} className={`w-full mt-6 py-5 rounded-2xl font-black text-xs uppercase shadow-xl flex items-center justify-center gap-2 transition-all active:scale-95 ${isSaving || draftItems.length === 0 ? 'bg-surfaceHighlight text-muted cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700 shadow-green-900/20'}`}>{isSaving ? <Loader2 className="animate-spin" size={20}/> : <Send size={20}/>} Finalizar y Enviar</button>
+                        <div className="pt-4 border-t border-surfaceHighlight">
+                            <button onClick={handleFinalizeAndSend} disabled={isSaving || draftItems.length === 0} className={`w-full py-5 rounded-2xl font-black text-xs uppercase shadow-xl flex items-center justify-center gap-2 transition-all active:scale-95 ${isSaving || draftItems.length === 0 ? 'bg-surfaceHighlight text-muted cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700 shadow-green-900/20'}`}>
+                                {isSaving ? <Loader2 className="animate-spin" size={20}/> : <Send size={20}/>} 
+                                Finalizar Ingreso
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

@@ -165,9 +165,13 @@ export const getOrderShippedTotal = (order: Order): number => {
 
 /**
  * Calcula el monto total original del presupuesto (intención inicial).
+ * Los items agregados a posteriori (originalQuantity <= 0) no suman al total de presupuesto original.
  */
 export const getOrderOriginalTotal = (order: Order): number => {
-    return (order.products || []).reduce((acc, p) => acc + (p.originalQuantity * p.unitPrice), 0);
+    return (order.products || []).reduce((acc, p) => {
+        const baseQty = Math.max(0, p.originalQuantity);
+        return acc + (baseQty * p.unitPrice);
+    }, 0);
 };
 
 /**
@@ -185,8 +189,16 @@ export const getOrderRefundTotal = (order: Order): number => {
     return Math.max(0, shippedTotal - deliveredTotal);
 };
 
+/**
+ * Obtiene lista de productos con faltantes.
+ * Usa valor absoluto para soportar productos agregados manualmente con flag negativo.
+ */
 export const getMissingProducts = (order: Order) => {
-    return order.products.filter(p => p.originalQuantity > (p.shippedQuantity ?? p.quantity));
+    return order.products.filter(p => {
+        const absOrig = Math.abs(p.originalQuantity);
+        const actual = p.shippedQuantity ?? p.quantity;
+        return absOrig > actual;
+    });
 };
 
 export const getReturnedProducts = (order: Order) => {
