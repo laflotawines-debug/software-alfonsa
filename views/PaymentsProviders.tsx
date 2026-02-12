@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
     Plus, 
     Edit2, 
@@ -17,7 +17,10 @@ import {
     Eraser,
     Sparkles,
     Building2,
-    Loader2
+    Loader2,
+    Search,
+    Check,
+    Info
 } from 'lucide-react';
 import { Provider, ProviderAccount, ProviderStatus, SupplierMaster } from '../types';
 import { supabase } from '../supabase';
@@ -157,6 +160,20 @@ const NewProviderModal: React.FC<{
     const [status, setStatus] = useState<ProviderStatus>(initialData?.status || 'Activado');
     const [accounts, setAccounts] = useState<ProviderAccount[]>(initialData?.accounts || []);
 
+    // Estados para el buscador tipo Google
+    const [showDropdown, setShowDropdown] = useState(false);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setShowDropdown(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
     // Cargar proveedores del maestro al abrir el modal (solo si es nuevo)
     useEffect(() => {
         if (!initialData) {
@@ -180,20 +197,33 @@ const NewProviderModal: React.FC<{
     }, [initialData]);
 
     const handleAddAccount = () => {
-        // ID temporal 'acc-' para que el backend sepa que es nuevo
         const newAcc: ProviderAccount = { id: `acc-${Date.now()}`, providerId: initialData?.id || '', condition: '', holder: '', identifierAlias: '', identifierCBU: '', metaAmount: 0, currentAmount: 0, pendingAmount: 0, status: 'Activa' };
         setAccounts([...accounts, newAcc]);
     };
 
     const submit = () => {
-        if (!name) return alert("Seleccione un proveedor del maestro.");
-        // ID temporal 'p-' si es nuevo
+        if (!name.trim()) return alert("El nombre del proveedor es obligatorio.");
         const finalId = (initialData && initialData.id) ? initialData.id : `p-${Date.now()}`;
-        onSave({ id: finalId, name, goalAmount: parseFloat(parseCurrencyInput(goalAmountDisplay)) || 0, priority: parseInt(priority) || 1, status, accounts });
+        onSave({ id: finalId, name: name.trim().toUpperCase(), goalAmount: parseFloat(parseCurrencyInput(goalAmountDisplay)) || 0, priority: parseInt(priority) || 1, status, accounts });
     };
 
-    // Filtrar proveedores del maestro que ya están configurados como perfiles de pago
-    const availableSuppliers = masterSuppliers.filter(s => !existingProviderNames.includes(s.razon_social));
+    // Lógica de filtrado "Google-style" para proveedores NO vinculados aún
+    const filteredMasterSuppliers = useMemo(() => {
+        const keywords = name.toLowerCase().split(/\s+/).filter(k => k.length > 0);
+        
+        return masterSuppliers
+            .filter(s => !existingProviderNames.includes(s.razon_social)) // Excluir ya vinculados
+            .filter(s => {
+                const text = `${s.razon_social} ${s.codigo} ${s.nombre_comercial || ''}`.toLowerCase();
+                return keywords.every(k => text.includes(k));
+            })
+            .slice(0, 10); // Limitar resultados
+    }, [masterSuppliers, name, existingProviderNames]);
+
+    const handleSelectMaster = (supplier: SupplierMaster) => {
+        setName(supplier.razon_social);
+        setShowDropdown(false);
+    };
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
@@ -201,7 +231,7 @@ const NewProviderModal: React.FC<{
                 <div className="p-6 md:p-8 border-b border-surfaceHighlight bg-surface flex justify-between items-center shrink-0">
                     <div>
                         <h3 className="text-2xl font-black text-text uppercase tracking-tight italic">
-                            {initialData ? 'Configurar Perfil' : 'Vincular del Maestro'}
+                            {initialData ? 'Configurar Perfil' : 'Vincular Proveedor'}
                         </h3>
                         <p className="text-muted text-xs font-bold mt-1">Configura identidades de pago y metas financieras.</p>
                     </div>
@@ -231,36 +261,58 @@ const NewProviderModal: React.FC<{
                     )}
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="space-y-2 md:col-span-2">
+                        <div className="space-y-2 md:col-span-2" ref={dropdownRef}>
                             <label className="text-[10px] font-black uppercase text-muted tracking-widest ml-1 flex items-center gap-1">
-                                <Building2 size={12} className="text-primary"/> Proveedor (Identidad Maestra)
+                                <Building2 size={12} className="text-primary"/> Nombre / Razón Social
                             </label>
-                            {initialData ? (
-                                <div className="w-full bg-background/50 border border-surfaceHighlight rounded-2xl py-4 px-5 text-sm font-black text-text shadow-inner uppercase opacity-80">
-                                    {name}
-                                </div>
-                            ) : (
-                                <div className="relative">
-                                    <select 
-                                        value={name} 
-                                        onChange={e => setName(e.target.value)} 
-                                        disabled={isMasterLoading}
-                                        className="w-full bg-background border border-surfaceHighlight rounded-2xl py-4 px-5 text-sm font-black text-text outline-none focus:border-primary transition-all shadow-inner appearance-none uppercase cursor-pointer"
-                                    >
-                                        <option value="">{isMasterLoading ? "Cargando..." : "-- Seleccionar del Maestro --"}</option>
-                                        {availableSuppliers.map(s => (
-                                            <option key={s.codigo} value={s.razon_social}>
-                                                {s.codigo} — {s.razon_social}
-                                            </option>
-                                        ))}
-                                    </select>
-                                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-muted">
-                                        {isMasterLoading ? <Loader2 size={16} className="animate-spin"/> : <RefreshCw size={16}/>}
+                            
+                            {/* INPUT BUSCADOR TIPO GOOGLE */}
+                            <div className="relative">
+                                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                                <input 
+                                    type="text"
+                                    value={name}
+                                    onChange={(e) => { setName(e.target.value); setShowDropdown(true); }}
+                                    onFocus={() => setShowDropdown(true)}
+                                    placeholder={isMasterLoading ? "Cargando maestro..." : "Buscar o escribir nombre nuevo..."}
+                                    disabled={!!initialData}
+                                    className={`w-full bg-background border border-surfaceHighlight rounded-2xl py-4 pl-12 pr-4 text-sm font-black text-text outline-none focus:border-primary transition-all shadow-inner uppercase ${!!initialData ? 'opacity-70 cursor-not-allowed' : ''}`}
+                                    autoComplete="off"
+                                />
+                                {isMasterLoading && (
+                                    <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                                        <Loader2 size={16} className="animate-spin text-primary"/>
                                     </div>
-                                </div>
-                            )}
-                            {!initialData && availableSuppliers.length === 0 && !isMasterLoading && (
-                                <p className="text-[9px] text-orange-500 font-bold uppercase ml-1">⚠️ Todos los proveedores activos ya tienen perfiles de pago configurados.</p>
+                                )}
+
+                                {/* DROPDOWN DE RESULTADOS */}
+                                {showDropdown && !initialData && filteredMasterSuppliers.length > 0 && (
+                                    <div className="absolute top-full left-0 w-full mt-2 bg-surface border border-primary/20 rounded-2xl shadow-2xl z-50 overflow-hidden max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2">
+                                        <div className="px-4 py-2 bg-primary/5 text-[9px] font-black text-primary uppercase tracking-widest border-b border-primary/10">
+                                            Sugerencias del Maestro
+                                        </div>
+                                        {filteredMasterSuppliers.map(s => (
+                                            <button 
+                                                key={s.codigo}
+                                                type="button"
+                                                onClick={() => handleSelectMaster(s)}
+                                                className="w-full text-left px-4 py-3 hover:bg-primary/5 border-b border-surfaceHighlight last:border-none flex justify-between items-center group transition-colors"
+                                            >
+                                                <div className="flex flex-col">
+                                                    <span className="text-xs font-bold text-text uppercase group-hover:text-primary">{s.razon_social}</span>
+                                                    <span className="text-[9px] font-mono text-muted">#{s.codigo}</span>
+                                                </div>
+                                                <Check size={14} className="text-primary opacity-0 group-hover:opacity-100 transition-opacity" />
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                            
+                            {!initialData && name.length > 0 && filteredMasterSuppliers.length === 0 && !isMasterLoading && (
+                                <p className="text-[9px] text-orange-500 font-bold uppercase ml-1 flex items-center gap-1">
+                                    <Info size={10} /> Se creará como un nuevo proveedor externo (no vinculado).
+                                </p>
                             )}
                         </div>
 
