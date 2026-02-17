@@ -106,7 +106,9 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     // --- LÓGICA DE UX: PASOS DE REPARTO Y ENTREGA AUTOMÁTICOS ---
     const isAutoCheckStep = isReadyForTransit || isTransitStep || isFinishedStep;
 
-    const canPrint = isBillingStep || isInvoiceControlStep || isReadyForTransit || isTransitStep || isFinishedStep;
+    const hasPrintAndPricePermission = isVale || (currentUser.permissions || []).includes('orders.print_and_price');
+
+    const canPrint = (isBillingStep || isInvoiceControlStep || isReadyForTransit || isTransitStep || isFinishedStep) && hasPrintAndPricePermission;
 
     useEffect(() => {
         const fetchClientPhone = async () => {
@@ -178,7 +180,9 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     const showAdvanceButton = !isBillingStep && !isFinishedStep; 
     
     const assemblerName = order.history.find(h => h.newState === OrderStatus.ARMADO || h.details?.includes('Armado'))?.userName || order.assemblerName || '-';
-    const showFinancials = isVale;
+    
+    // Updated Logic: Show financials if Admin (Vale) OR has Print/Price Permission
+    const showFinancials = hasPrintAndPricePermission;
 
     const originalInvoiceTotal = order.products.reduce((acc, p) => acc + (Math.max(0, p.originalQuantity) * p.unitPrice), 0);
     const finalTotal = order.total;
@@ -515,7 +519,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
 
              {!isFinishedStep ? (
                 <>
-                    {canPrint && isVale && (
+                    {canPrint && (
                         <div className="flex gap-2 mb-2">
                             {clientPhone && (
                                 <button 
@@ -588,7 +592,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                 </>
              ) : (
                  <>
-                    {isFinishedStep && isVale && (
+                    {isFinishedStep && hasPrintAndPricePermission && (
                         <div className="flex gap-2">
                             {clientPhone && (
                                 <button 
@@ -700,7 +704,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                     </div>
                     
                     <div className="flex items-center gap-2 md:gap-4">
-                        {isVale && canPrint && (
+                        {canPrint && (
                             <div className="flex gap-2">
                                 {clientPhone && (
                                     <button 

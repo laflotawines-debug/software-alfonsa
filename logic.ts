@@ -110,6 +110,7 @@ export const SYSTEM_NAV_STRUCTURE = [
 
 export const EXTRA_PERMISSIONS = [
     { key: 'orders.sheet_manage', label: 'Gestionar/Borrar Viajes', module: 'Pedidos' },
+    { key: 'orders.print_and_price', label: 'Imprimir y Ver Precios (Armador)', module: 'Pedidos' },
     { key: 'tools.attendance', label: 'Asistencia', module: 'Herramientas' },
     { key: 'catalog.clients', label: 'Gestión de Clientes', module: 'Clientes' },
     { key: 'catalog.collections', label: 'Cobranzas Clientes', module: 'Clientes' }

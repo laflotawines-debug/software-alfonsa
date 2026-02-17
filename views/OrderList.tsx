@@ -666,6 +666,11 @@ const DetailedOrderCard: React.FC<{
 
   const missingProducts = getMissingProducts(order);
   const refundAmount = getOrderRefundTotal(order);
+  
+  // LOGIC: Show financial info if 'vale' role OR 'orders.view_financials' OR 'orders.print_and_price' permission
+  const showFinancials = hasPermission(currentUser, 'orders.view_financials') ||
+                         hasPermission(currentUser, 'orders.print_and_price') ||
+                         isVale;
 
   return (
     <div className={`bg-surface rounded-xl p-5 flex flex-col gap-3 border transition-all group relative overflow-hidden shadow-sm hover:shadow-lg hover:-translate-y-0.5 ${zoneStyles.borderColor} border-opacity-40`}>
@@ -727,7 +732,7 @@ const DetailedOrderCard: React.FC<{
                 <span className="text-xs text-text font-black">{order.productCount}</span>
             </div>
             
-            {hasPermission(currentUser, 'orders.view_financials') || isVale ? (
+            {showFinancials ? (
                 <div className="flex justify-between items-center">
                     <span className="text-[11px] text-muted font-bold">Total Neto:</span>
                     <div className="flex flex-col items-end">
