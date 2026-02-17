@@ -69,6 +69,25 @@ export interface GlobalAttendanceSettings {
     bonus_2: number;
 }
 
+export interface AttendancePeriod {
+    id: string;
+    user_id: string;
+    start_date: string;
+    end_date: string;
+    period_label: string;
+    total_hours: number;
+    total_penalty_hours: number;
+    hourly_rate: number;
+    bonus_amount: number;
+    extra_amount: number;
+    debt_amount: number;
+    total_to_pay: number;
+    details: any; // JSON with daily breakdown
+    score_obtained: number;
+    days_worked: number;
+    created_at: string;
+}
+
 // --- REST OF DOMAIN MODELS ---
 export interface DeliveryZone {
     id: string;
@@ -394,6 +413,8 @@ export interface Order {
     history: HistoryEntry[];
     customerColor?: string;
     customerInitials?: string;
+    isReservation?: boolean; 
+    scheduledDate?: string;
 }
 export interface DetailedOrder extends Order {
     productCount: number;

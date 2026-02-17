@@ -31,7 +31,8 @@ import {
     Coffee, 
     MoreHorizontal,
     Users,
-    Info 
+    Info,
+    Edit2
 } from 'lucide-react';
 import { Trip, TripClient, User as UserType, TripExpense, PaymentStatus, DetailedOrder, OrderStatus, DeliveryZone, ExpenseType } from '../types';
 import { hasPermission } from '../logic';
@@ -201,6 +202,12 @@ const TripDetailView: React.FC<{
     const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
     const [isReportOpen, setIsReportOpen] = useState(false);
     
+    // Estado para edición de gastos
+    const [expenseToEdit, setExpenseToEdit] = useState<TripExpense | null>(null);
+    
+    // Estado para confirmación de eliminación de gasto (ID del gasto)
+    const [expenseDeletingId, setExpenseDeletingId] = useState<string | null>(null);
+
     // Estados para edición en línea de saldos
     const [editingPrevBal, setEditingPrevBal] = useState<string | null>(null); 
     const [tempPrevBal, setTempPrevBal] = useState<string>('');
@@ -259,10 +266,33 @@ const TripDetailView: React.FC<{
         setSelectedClient(null);
     };
 
-    const handleAddExpense = (expense: Omit<TripExpense, 'id' | 'timestamp'>) => {
-        const newExpense: TripExpense = { ...expense, id: `exp-${Date.now()}`, timestamp: new Date() };
-        onUpdateTrip({ ...trip, expenses: [...(trip.expenses || []), newExpense] });
+    const handleSaveExpense = (expenseData: any) => {
+        let newExpenses = [...(trip.expenses || [])];
+        
+        if (expenseToEdit) {
+            // Update existing
+            newExpenses = newExpenses.map(e => 
+                e.id === expenseToEdit.id ? { ...e, ...expenseData } : e
+            );
+        } else {
+            // Create new
+            const newExpense: TripExpense = { 
+                ...expenseData, 
+                id: `exp-${Date.now()}`, 
+                timestamp: new Date() 
+            };
+            newExpenses.push(newExpense);
+        }
+
+        onUpdateTrip({ ...trip, expenses: newExpenses });
         setIsExpenseModalOpen(false);
+        setExpenseToEdit(null);
+    };
+
+    const handleDeleteExpense = (expenseId: string) => {
+        const newExpenses = (trip.expenses || []).filter(e => e.id !== expenseId);
+        onUpdateTrip({ ...trip, expenses: newExpenses });
+        setExpenseDeletingId(null);
     };
 
     const toggleStatus = () => {
@@ -283,6 +313,16 @@ const TripDetailView: React.FC<{
             handleUpdatePayment(client.id, client.paymentCash, client.paymentTransfer, client.isTransferExpected, newVal, client.currentInvoiceAmount);
         }
         setEditingPrevBal(null);
+    };
+
+    const openCreateExpense = () => {
+        setExpenseToEdit(null);
+        setIsExpenseModalOpen(true);
+    };
+
+    const openEditExpense = (expense: TripExpense) => {
+        setExpenseToEdit(expense);
+        setIsExpenseModalOpen(true);
     };
 
     return (
@@ -326,7 +366,7 @@ const TripDetailView: React.FC<{
             {/* BOTONES ACCIÓN */}
             <div className="flex gap-2">
                 {!isClosed && (
-                    <button onClick={() => setIsExpenseModalOpen(true)} className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-red-500/10 text-red-500 font-bold text-sm border border-red-500/20 hover:bg-red-500/20 transition-all">
+                    <button onClick={openCreateExpense} className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-red-500/10 text-red-500 font-bold text-sm border border-red-500/20 hover:bg-red-500/20 transition-all">
                         <Fuel size={18} /> Gasto
                     </button>
                 )}
@@ -457,6 +497,73 @@ const TripDetailView: React.FC<{
                 </div>
             </div>
 
+            {/* GASTOS - LISTADO CON EDICIÓN */}
+            <div className="space-y-3 md:space-y-4">
+                <h3 className="text-xs md:text-sm font-black text-orange-500 uppercase tracking-widest flex items-center gap-2">
+                    <Fuel size={14} className="md:w-4 md:h-4" /> Gastos de Rendición
+                </h3>
+                {trip.expenses.length === 0 ? (
+                    <div className="p-6 md:p-8 text-center border-2 border-dashed border-surfaceHighlight rounded-2xl bg-surface/50 text-muted text-xs font-bold uppercase italic opacity-60">
+                        No se registraron gastos en este viaje.
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                        {trip.expenses.map((exp, idx) => (
+                            <div key={idx} className="bg-surface border border-surfaceHighlight rounded-2xl p-4 flex items-start gap-4 shadow-sm hover:border-red-200 transition-colors group relative">
+                                <div className="p-3 bg-red-50 text-red-500 rounded-xl group-hover:bg-red-500 group-hover:text-white transition-colors shadow-inner shrink-0">
+                                    {getExpenseIcon(exp.type)}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-[10px] font-black text-muted uppercase tracking-widest">{exp.type}</p>
+                                    <p className="text-sm font-black text-text uppercase mt-0.5 truncate">{exp.note || 'Sin detalle'}</p>
+                                    <p className="text-lg font-black text-red-500 mt-2">$ {exp.amount.toLocaleString()}</p>
+                                </div>
+                                
+                                {/* BOTONES DE EDICIÓN / ELIMINACIÓN (SOLO SI NO ESTÁ CERRADO) */}
+                                {!isClosed && (
+                                    expenseDeletingId === exp.id ? (
+                                        <div className="flex flex-col gap-1 w-full absolute inset-0 bg-surface/90 backdrop-blur-sm p-2 justify-center items-center rounded-2xl animate-in zoom-in-95">
+                                            <p className="text-[9px] font-black text-red-500 uppercase mb-1">¿Eliminar?</p>
+                                            <div className="flex gap-2">
+                                                <button 
+                                                    onClick={() => handleDeleteExpense(exp.id)} 
+                                                    className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase shadow-md active:scale-95"
+                                                >
+                                                    Sí
+                                                </button>
+                                                <button 
+                                                    onClick={() => setExpenseDeletingId(null)} 
+                                                    className="px-3 py-1.5 bg-surfaceHighlight text-text rounded-lg text-[9px] font-black uppercase active:scale-95"
+                                                >
+                                                    No
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button 
+                                                onClick={() => openEditExpense(exp)} 
+                                                className="p-1.5 rounded-lg bg-surfaceHighlight hover:bg-primary/10 text-muted hover:text-primary transition-colors"
+                                                title="Editar Gasto"
+                                            >
+                                                <Edit2 size={14} />
+                                            </button>
+                                            <button 
+                                                onClick={() => setExpenseDeletingId(exp.id)} 
+                                                className="p-1.5 rounded-lg bg-surfaceHighlight hover:bg-red-500/10 text-muted hover:text-red-500 transition-colors"
+                                                title="Eliminar Gasto"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
+                                    )
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
             {selectedClient && (
                 <PaymentModal 
                     client={selectedClient} 
@@ -467,7 +574,11 @@ const TripDetailView: React.FC<{
                 />
             )}
             {isExpenseModalOpen && (
-                <ExpenseModal onClose={() => setIsExpenseModalOpen(false)} onSave={handleAddExpense} />
+                <ExpenseModal 
+                    initialData={expenseToEdit}
+                    onClose={() => setIsExpenseModalOpen(false)} 
+                    onSave={handleSaveExpense} 
+                />
             )}
             {isReportOpen && (
                 <TripReportModal trip={trip} onClose={() => setIsReportOpen(false)} />
@@ -484,6 +595,15 @@ const SummaryCard: React.FC<{ label: string; value: number; color: string }> = (
         <span className={`text-xl font-black ${color}`}>$ {value.toLocaleString('es-AR')}</span>
     </div>
 );
+
+const getExpenseIcon = (type: string) => {
+    switch (type) {
+        case 'combustible': return <Fuel size={16} />;
+        case 'peaje': return <Truck size={16} />;
+        case 'viatico': return <Coffee size={16} />;
+        default: return <MoreHorizontal size={16} />;
+    }
+};
 
 const StatusBadge: React.FC<{ status: PaymentStatus }> = ({ status }) => {
     let color = 'bg-surfaceHighlight text-muted border-surfaceHighlight';
@@ -629,15 +749,21 @@ const PaymentModal: React.FC<{ client: TripClient; totals: any; onClose: () => v
     );
 };
 
-const ExpenseModal: React.FC<{ onClose: () => void; onSave: (expense: any) => void }> = ({ onClose, onSave }) => {
-    const [type, setType] = useState<ExpenseType>('combustible');
-    const [amount, setAmount] = useState('');
-    const [note, setNote] = useState('');
+const ExpenseModal: React.FC<{ 
+    initialData?: TripExpense | null;
+    onClose: () => void; 
+    onSave: (expense: any) => void 
+}> = ({ initialData, onClose, onSave }) => {
+    const [type, setType] = useState<ExpenseType>(initialData?.type || 'combustible');
+    const [amount, setAmount] = useState(initialData?.amount?.toString() || '');
+    const [note, setNote] = useState(initialData?.note || '');
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
             <div className="bg-surface w-full max-w-sm rounded-2xl border border-surfaceHighlight p-6 shadow-2xl flex flex-col gap-4">
-                <h3 className="font-bold text-lg text-text">Registrar Gasto</h3>
+                <h3 className="font-bold text-lg text-text">
+                    {initialData ? 'Editar Gasto' : 'Registrar Gasto'}
+                </h3>
                 <select value={type} onChange={e => setType(e.target.value as ExpenseType)} className="bg-background border border-surfaceHighlight rounded-xl p-3 text-sm font-bold outline-none uppercase">
                     <option value="combustible">Combustible</option>
                     <option value="peaje">Peaje</option>
@@ -648,7 +774,9 @@ const ExpenseModal: React.FC<{ onClose: () => void; onSave: (expense: any) => vo
                 <input type="text" placeholder="Nota / Detalle" value={note} onChange={e => setNote(e.target.value)} className="bg-background border border-surfaceHighlight rounded-xl p-3 text-sm font-bold outline-none" />
                 <div className="flex gap-2">
                     <button onClick={onClose} className="flex-1 py-3 rounded-xl bg-surfaceHighlight text-text font-bold text-xs uppercase">Cancelar</button>
-                    <button onClick={() => onSave({ type, amount: parseFloat(amount)||0, note })} className="flex-1 py-3 rounded-xl bg-red-500 text-white font-bold text-xs uppercase">Guardar</button>
+                    <button onClick={() => onSave({ type, amount: parseFloat(amount)||0, note })} className="flex-1 py-3 rounded-xl bg-red-500 text-white font-bold text-xs uppercase">
+                        {initialData ? 'Actualizar' : 'Guardar'}
+                    </button>
                 </div>
             </div>
         </div>
@@ -660,15 +788,6 @@ const TripReportModal: React.FC<{ trip: Trip; onClose: () => void }> = ({ trip, 
     const transferTotal = trip.clients.reduce((acc, c) => acc + (c.paymentTransfer || 0), 0);
     const expensesTotal = trip.expenses.reduce((acc, e) => acc + (e.amount || 0), 0);
     const netCash = cashTotal - expensesTotal;
-
-    const getExpenseIcon = (type: string) => {
-        switch (type) {
-            case 'combustible': return <Fuel size={16} />;
-            case 'peaje': return <Truck size={16} />;
-            case 'viatico': return <Coffee size={16} />;
-            default: return <MoreHorizontal size={16} />;
-        }
-    };
 
     const SummarySection = () => (
         <div className="flex flex-col gap-6">

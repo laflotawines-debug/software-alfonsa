@@ -5,32 +5,55 @@ import { User } from '../types';
 
 export const SqlEditor: React.FC<{ currentUser: User }> = ({ currentUser }) => {
     const [query, setQuery] = useState(`-- ========================================================
--- SCRIPT DE SISTEMA DE NOTIFICACIONES CON NOMBRE DE CLIENTE
+-- SCRIPT DE ACTUALIZACIÓN: RESERVAS Y NOTIFICACIONES
 -- ========================================================
 
--- 1. TABLA DE NOTIFICACIONES
+-- 1. ACTUALIZAR TABLA DE PEDIDOS (Soporte Reservas)
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS is_reservation boolean DEFAULT false;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS scheduled_date date;
+
+-- 2. TABLA DE NOTIFICACIONES (Si no existe)
 CREATE TABLE IF NOT EXISTS public.notifications (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id uuid REFERENCES auth.users(id) NOT NULL,
   message text NOT NULL,
-  type text DEFAULT 'info', -- 'info', 'success', 'warning'
-  link_id uuid, -- ID del pedido
+  type text DEFAULT 'info',
+  link_id uuid, 
   is_read boolean DEFAULT false,
   created_at timestamp with time zone DEFAULT now()
 );
 
--- Políticas RLS
 ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can see own notifications" ON public.notifications;
 CREATE POLICY "Users can see own notifications" ON public.notifications FOR SELECT USING (auth.uid() = user_id);
 DROP POLICY IF EXISTS "Users can update own notifications" ON public.notifications;
 CREATE POLICY "Users can update own notifications" ON public.notifications FOR UPDATE USING (auth.uid() = user_id);
 
--- 2. MODIFICACIÓN TABLA PEDIDOS (Auditoría)
+-- 3. MODIFICACIÓN TABLA PEDIDOS (Auditoría)
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS created_by uuid REFERENCES auth.users(id);
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS updated_by uuid REFERENCES auth.users(id);
 
--- 3. FUNCIÓN TRIGGER (LÓGICA DE MENSAJES)
+-- 4. NUEVA TABLA: PERIODOS DE ASISTENCIA (HISTORIAL)
+CREATE TABLE IF NOT EXISTS public.attendance_periods (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid REFERENCES public.profiles(id) NOT NULL,
+  start_date date NOT NULL,
+  end_date date NOT NULL,
+  period_label text, 
+  total_hours numeric DEFAULT 0,
+  total_penalty_hours numeric DEFAULT 0,
+  hourly_rate numeric DEFAULT 0,
+  bonus_amount numeric DEFAULT 0,
+  extra_amount numeric DEFAULT 0,
+  debt_amount numeric DEFAULT 0,
+  total_to_pay numeric DEFAULT 0,
+  details jsonb, 
+  score_obtained integer DEFAULT 0,
+  days_worked integer DEFAULT 0,
+  created_at timestamp with time zone DEFAULT now()
+);
+
+-- 5. FUNCIÓN TRIGGER (LÓGICA DE MENSAJES)
 CREATE OR REPLACE FUNCTION public.handle_order_notifications()
 RETURNS trigger AS $$
 DECLARE
@@ -38,15 +61,12 @@ DECLARE
   actor_id uuid;
   client_text text;
 BEGIN
-  -- Determinar actor
   IF (TG_OP = 'INSERT') THEN actor_id := NEW.created_by; ELSE actor_id := NEW.updated_by; END IF;
   IF actor_id IS NULL THEN actor_id := auth.uid(); END IF;
-  
-  -- Asegurar que el nombre del cliente no sea nulo
   client_text := COALESCE(NEW.client_name, 'Cliente');
 
-  -- CASO 1: Nuevo Pedido -> Notificar a 'armador' con nombre de cliente
-  IF (TG_OP = 'INSERT') THEN
+  -- Solo notificar si NO es una reserva
+  IF (TG_OP = 'INSERT' AND NEW.is_reservation = false) THEN
     FOR target_user IN SELECT id FROM public.profiles WHERE role = 'armador' LOOP
       IF target_user.id != actor_id THEN
         INSERT INTO public.notifications (user_id, message, type, link_id)
@@ -55,8 +75,6 @@ BEGIN
     END LOOP;
   END IF;
 
-  -- CASO 2: Armado Controlado -> Notificar a 'vale' (Admin)
-  -- Mensaje: "Fernando Satti listo para facturar"
   IF (TG_OP = 'UPDATE') THEN
     IF (OLD.status != 'armado_controlado' AND NEW.status = 'armado_controlado') THEN
       FOR target_user IN SELECT id FROM public.profiles WHERE role = 'vale' LOOP
@@ -72,7 +90,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 4. APLICAR TRIGGER
 DROP TRIGGER IF EXISTS on_order_change_notify ON public.orders;
 CREATE TRIGGER on_order_change_notify
   AFTER INSERT OR UPDATE ON public.orders

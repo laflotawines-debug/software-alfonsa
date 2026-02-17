@@ -32,7 +32,8 @@ import {
   ChevronRight,
   MessageSquare,
   Send,
-  Users
+  Users,
+  CalendarClock
 } from 'lucide-react';
 import { DetailedOrder, View, OrderStatus, User, DeliveryZone } from '../types';
 import { 
@@ -65,7 +66,7 @@ interface OrderListProps {
   historyFilter?: { month: number, year: number, search: string };
 }
 
-type TabType = 'active' | 'delivered';
+type TabType = 'active' | 'reservations' | 'delivered';
 
 interface GroupedOrderData {
     label: string;
@@ -122,10 +123,25 @@ export const OrderList: React.FC<OrderListProps> = ({
       setStatusFilter('');
   }, [currentTab]);
 
-  const activeOrders = orders.filter(o => o.status !== OrderStatus.ENTREGADO && o.status !== OrderStatus.PAGADO);
-  const deliveredOrders = orders.filter(o => o.status === OrderStatus.ENTREGADO || o.status === OrderStatus.PAGADO);
+  const activeOrders = orders.filter(o => 
+      o.status !== OrderStatus.ENTREGADO && 
+      o.status !== OrderStatus.PAGADO && 
+      !o.isReservation
+  );
 
-  let currentList = currentTab === 'active' ? activeOrders : deliveredOrders;
+  const reservationOrders = orders.filter(o => 
+      o.isReservation && 
+      o.status !== OrderStatus.ENTREGADO && 
+      o.status !== OrderStatus.PAGADO
+  );
+
+  const deliveredOrders = orders.filter(o => 
+      o.status === OrderStatus.ENTREGADO || 
+      o.status === OrderStatus.PAGADO
+  );
+
+  let currentList = currentTab === 'active' ? activeOrders : (currentTab === 'reservas' ? reservationOrders : deliveredOrders);
+  if (currentTab === 'reservations') currentList = reservationOrders;
 
   const filteredOrders = currentList.filter(order => {
       // Local filtering
@@ -208,7 +224,7 @@ export const OrderList: React.FC<OrderListProps> = ({
 
   const availableStatusOptions = useMemo(() => {
       const allStatuses = Object.keys(ORDER_WORKFLOW) as OrderStatus[];
-      if (currentTab === 'active') {
+      if (currentTab === 'active' || currentTab === 'reservations') {
           return allStatuses.filter(s => s !== OrderStatus.ENTREGADO && s !== OrderStatus.PAGADO);
       } else {
           return [OrderStatus.ENTREGADO, OrderStatus.PAGADO];
@@ -233,8 +249,8 @@ export const OrderList: React.FC<OrderListProps> = ({
         <div>
           <h2 className="text-text text-3xl md:text-4xl font-black tracking-tight">Gestión de Pedidos</h2>
           <p className="text-muted text-sm mt-1 flex items-center gap-2">
-            <span className={`h-2 w-2 rounded-full ${currentTab === 'active' ? 'bg-green-500' : 'bg-blue-500'}`}></span>
-            {currentTab === 'active' ? 'Control de proceso operativo' : 'Historial y control de cobros'}
+            <span className={`h-2 w-2 rounded-full ${currentTab === 'active' ? 'bg-green-500' : currentTab === 'reservations' ? 'bg-purple-500' : 'bg-blue-500'}`}></span>
+            {currentTab === 'active' ? 'Control de proceso operativo' : currentTab === 'reservations' ? 'Pedidos agendados' : 'Historial y control de cobros'}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -262,23 +278,25 @@ export const OrderList: React.FC<OrderListProps> = ({
       </div>
 
       <div className="flex flex-col gap-6">
-        <div className="p-1 rounded-xl bg-surface w-full sm:w-fit flex gap-1 border border-surfaceHighlight shadow-sm">
+        <div className="p-1 rounded-xl bg-surface w-full sm:w-fit flex gap-1 border border-surfaceHighlight shadow-sm overflow-x-auto">
           {[
-            { id: 'active', label: 'Activos' },
-            { id: 'delivered', label: 'Historial' }
+            { id: 'active', label: 'Activos', count: activeOrders.length },
+            { id: 'reservations', label: 'Reservas', count: reservationOrders.length },
+            { id: 'delivered', label: 'Historial', count: deliveredOrders.length }
           ].map((tab) => (
             <button 
                 key={tab.id} 
                 onClick={() => setCurrentTab(tab.id as TabType)} 
-                className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-sm font-black transition-all whitespace-nowrap ${currentTab === tab.id ? 'bg-surfaceHighlight text-text shadow-sm' : 'text-muted hover:text-text hover:bg-surfaceHighlight/50'}`}
+                className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-sm font-black transition-all whitespace-nowrap flex items-center justify-center gap-2 ${currentTab === tab.id ? 'bg-surfaceHighlight text-text shadow-sm' : 'text-muted hover:text-text hover:bg-surfaceHighlight/50'}`}
+                title={tab.label}
             >
-              {tab.label} ({tab.id === 'active' ? activeOrders.length : deliveredOrders.length})
+              {tab.id === 'delivered' ? <History size={18} /> : tab.label} ({tab.count})
             </button>
           ))}
         </div>
 
         {/* CONTROLES DE FILTRO */}
-        {currentTab === 'active' ? (
+        {currentTab !== 'delivered' ? (
             <div className="flex flex-col lg:flex-row gap-4">
                 <div className="relative flex-1 max-w-md">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={20} />
@@ -350,7 +368,7 @@ export const OrderList: React.FC<OrderListProps> = ({
         )}
       </div>
 
-      {currentTab === 'active' ? (
+      {currentTab === 'active' || currentTab === 'reservations' ? (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-in fade-in duration-500">
               {filteredOrders.map((order) => (
                   <DetailedOrderCard 
@@ -367,7 +385,7 @@ export const OrderList: React.FC<OrderListProps> = ({
               {filteredOrders.length === 0 && (
                   <div className="col-span-full py-24 text-center text-muted border-2 border-dashed border-surfaceHighlight rounded-3xl bg-surface/30 shadow-inner">
                       <Package size={56} className="mx-auto mb-4 opacity-20" />
-                      <p className="font-bold text-xl">Sin pedidos activos con este filtro</p>
+                      <p className="font-bold text-xl">Sin pedidos en {currentTab === 'reservations' ? 'reservas' : 'activos'} con este filtro</p>
                   </div>
               )}
           </div>
@@ -652,9 +670,16 @@ const DetailedOrderCard: React.FC<{
   return (
     <div className={`bg-surface rounded-xl p-5 flex flex-col gap-3 border transition-all group relative overflow-hidden shadow-sm hover:shadow-lg hover:-translate-y-0.5 ${zoneStyles.borderColor} border-opacity-40`}>
         <div className="flex justify-between items-start gap-3 mb-0.5">
-            <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${zoneStyles.badgeBg} ${zoneStyles.badgeText} ${zoneStyles.borderColor}`}>
-                {order.zone || 'SIN ZONA'}
-            </span>
+            <div className="flex flex-col items-start gap-1">
+                <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${zoneStyles.badgeBg} ${zoneStyles.badgeText} ${zoneStyles.borderColor}`}>
+                    {order.zone || 'SIN ZONA'}
+                </span>
+                {order.isReservation && (
+                    <span className="flex items-center gap-1 text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-purple-500/10 text-purple-600 border border-purple-500/20">
+                        <CalendarClock size={10} /> {order.scheduledDate ? new Date(order.scheduledDate).toLocaleDateString() : 'Sin Fecha'}
+                    </span>
+                )}
+            </div>
             <div className="flex items-center gap-2">
                 {!isFinished && (
                     <button 

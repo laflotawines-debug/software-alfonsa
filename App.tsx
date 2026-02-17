@@ -615,6 +615,8 @@ export default function App() {
             invoicerName: o.invoicer_name,
             total: o.total,
             observations: o.observations,
+            isReservation: o.is_reservation,
+            scheduledDate: o.scheduled_date,
             history: o.history || [],
             productCount: (o.order_items || []).length,
             products: (o.order_items || []).map((i: any) => ({
@@ -1159,6 +1161,8 @@ export default function App() {
                                         zone: order.zone,
                                         observations: order.observations,
                                         history: order.history,
+                                        is_reservation: order.isReservation,
+                                        scheduled_date: order.scheduledDate,
                                         created_by: currentUser.id 
                                     }).select().single();
                                     if (error) throw error;

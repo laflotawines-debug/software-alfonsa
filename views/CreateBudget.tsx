@@ -19,7 +19,8 @@ import {
   CheckCircle2, 
   Package,
   Phone,
-  MessageCircle
+  MessageCircle,
+  CalendarClock
 } from 'lucide-react';
 import { View, Product, OrderStatus, DetailedOrder, User, OrderZone, ClientMaster, SavedBudget, MasterProduct, DeliveryZone } from '../types';
 import { parseOrderText } from '../logic';
@@ -42,6 +43,10 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
   const [products, setProducts] = useState<Product[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Estados para reserva
+  const [isReservation, setIsReservation] = useState(false);
+  const [scheduledDate, setScheduledDate] = useState('');
 
   // Estados para búsqueda de clientes
   const [clientSearchResults, setClientSearchResults] = useState<ClientMaster[]>([]);
@@ -312,6 +317,7 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
   const handleSaveOrder = async () => {
     if (!clientName) return alert("Por favor ingrese el nombre del cliente");
     if (products.length === 0) return alert("El pedido debe tener al menos un producto");
+    if (isReservation && !scheduledDate) return alert("Si es reserva, debe indicar la fecha.");
 
     setIsSaving(true);
     try {
@@ -335,6 +341,8 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
             createdDate: new Date().toLocaleDateString('es-AR'),
             products: products,
             observations: finalObservations,
+            isReservation: isReservation,
+            scheduledDate: isReservation ? scheduledDate : undefined,
             history: [{
                 timestamp: new Date().toISOString(),
                 userId: currentUser.id, 
@@ -381,7 +389,16 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
       </div>
 
       <section className="bg-surface rounded-2xl p-6 border border-surfaceHighlight shadow-sm">
-        <h3 className="text-text text-lg font-bold mb-6 flex items-center gap-2">Datos del Cliente</h3>
+        <div className="flex justify-between items-center mb-6">
+            <h3 className="text-text text-lg font-bold flex items-center gap-2">Datos del Cliente</h3>
+            <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all cursor-pointer ${isReservation ? 'bg-purple-500/10 border-purple-500/30 text-purple-600' : 'bg-background border-surfaceHighlight text-muted'}`} onClick={() => setIsReservation(!isReservation)}>
+                <div className={`w-4 h-4 rounded border flex items-center justify-center ${isReservation ? 'bg-purple-600 border-purple-600' : 'border-muted'}`}>
+                    {isReservation && <Check size={12} className="text-white"/>}
+                </div>
+                <span className="text-xs font-black uppercase select-none">Es Reserva</span>
+            </div>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             
             {/* NOMBRE DEL CLIENTE */}
@@ -422,6 +439,22 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
                     </select>
                 </div>
             </div>
+
+            {/* FECHA RESERVA (Solo si es reserva) */}
+            {isReservation && (
+                <div className="flex flex-col gap-2 animate-in fade-in slide-in-from-top-2">
+                    <label className="text-xs font-bold text-purple-600 uppercase tracking-wider">Fecha de Reserva *</label>
+                    <div className="relative">
+                        <CalendarClock className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-500" size={18} />
+                        <input 
+                            type="date" 
+                            value={scheduledDate} 
+                            onChange={(e) => setScheduledDate(e.target.value)} 
+                            className="w-full bg-purple-50/50 border border-purple-200 rounded-xl py-3.5 pl-10 pr-4 text-sm text-text focus:border-purple-500 outline-none transition-colors shadow-sm font-bold" 
+                        />
+                    </div>
+                </div>
+            )}
 
             {/* DIRECCIÓN */}
             <div className="flex flex-col gap-2">
