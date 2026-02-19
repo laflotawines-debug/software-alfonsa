@@ -605,6 +605,15 @@ const DetailedOrderCard: React.FC<{
   };
 
   const getArmadorActions = () => {
+    // Si tiene permiso de "ver precios e imprimir", y está en estado listo para facturar, permitirle avanzar (Facturar)
+    if (order.status === OrderStatus.ARMADO_CONTROLADO && hasPermission(currentUser, 'orders.print_and_price')) {
+         return (
+            <button onClick={() => onAdvanceOrder(order)} className="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-black uppercase text-[11px] shadow-lg shadow-purple-500/20 flex items-center justify-center gap-2 active:scale-95 transition-all">
+                <Receipt size={14} /> Facturar
+            </button>
+        );
+    }
+
     if (order.status === OrderStatus.FACTURA_CONTROLADA) {
         return (
             <button onClick={() => onAdvanceOrder(order)} className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase text-[11px] shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2 active:scale-95 transition-all">
