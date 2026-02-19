@@ -97,7 +97,11 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
 
     const isVale = currentUser.role === 'vale';
     const isControlStep = order.status === OrderStatus.ARMADO;
-    const isBillingStep = order.status === OrderStatus.ARMADO_CONTROLADO && isVale; 
+    
+    // LOGIC UPDATE: isBillingStep only controls the ACTION button visibility for admins
+    const isStatusBilling = order.status === OrderStatus.ARMADO_CONTROLADO;
+    const isBillingStep = isStatusBilling && isVale; 
+    
     const isInvoiceControlStep = order.status === OrderStatus.FACTURADO;
     const isReadyForTransit = order.status === OrderStatus.FACTURA_CONTROLADA;
     const isTransitStep = order.status === OrderStatus.EN_TRANSITO; 
@@ -108,7 +112,8 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
 
     const hasPrintAndPricePermission = isVale || (currentUser.permissions || []).includes('orders.print_and_price');
 
-    const canPrint = (isBillingStep || isInvoiceControlStep || isReadyForTransit || isTransitStep || isFinishedStep) && hasPrintAndPricePermission;
+    // PERMITIR IMPRESIÓN SI EL ESTADO ES 'ARMADO_CONTROLADO' (o superior) Y TIENE PERMISO
+    const canPrint = (isStatusBilling || isInvoiceControlStep || isReadyForTransit || isTransitStep || isFinishedStep) && hasPrintAndPricePermission;
 
     useEffect(() => {
         const fetchClientPhone = async () => {
@@ -501,7 +506,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     let icon = <Box size={16} />;
 
     if (isControlStep) { titleText = "Control de Calidad"; buttonLabel = "Finalizar Control"; icon = <ShieldCheck size={16} />; } 
-    else if (isBillingStep) { titleText = "Facturación"; buttonLabel = "Confirmar Facturación"; icon = <FileText size={16} />; } 
+    else if (isStatusBilling) { titleText = "Facturación"; buttonLabel = "Confirmar Facturación"; icon = <FileText size={16} />; } 
     else if (isInvoiceControlStep) { titleText = "Control de Factura"; buttonLabel = "Factura Controlada"; icon = <ClipboardCheck size={16} />; } 
     else if (isReadyForTransit) { titleText = "Listo para Despacho"; buttonLabel = "Enviar a Reparto"; icon = <Truck size={16} />; } 
     else if (isTransitStep) { titleText = "En Reparto / Devoluciones"; buttonLabel = "Marcar Entregado"; icon = <Truck size={16} />; } 
@@ -903,7 +908,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                                 </div>
                                             );
                                         })}
-                                    </div>
+                                    </tbody>
                                 </div>
                             </div>
                         ) : (

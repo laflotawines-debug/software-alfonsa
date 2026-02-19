@@ -1,10 +1,10 @@
 
 import React, { useState } from 'react';
-import { 
-    Lock, 
-    User as UserIcon, 
-    LogIn, 
-    Sun, 
+import {
+    Lock,
+    User as UserIcon,
+    LogIn,
+    Sun,
     Moon,
     Loader2
 } from 'lucide-react';
@@ -69,8 +69,8 @@ export const Login: React.FC<LoginProps> = ({ isDarkMode, onToggleTheme }) => {
                             <label className="text-[10px] font-black uppercase text-muted tracking-widest ml-1">Correo Electrónico</label>
                             <div className="relative">
                                 <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
-                                <input 
-                                    type="email" 
+                                <input
+                                    type="email"
                                     placeholder="ejemplo@alfonsa.com"
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
@@ -84,8 +84,8 @@ export const Login: React.FC<LoginProps> = ({ isDarkMode, onToggleTheme }) => {
                             <label className="text-[10px] font-black uppercase text-muted tracking-widest ml-1">Contraseña</label>
                             <div className="relative">
                                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
-                                <input 
-                                    type="password" 
+                                <input
+                                    type="password"
                                     placeholder="••••••••"
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
@@ -95,8 +95,8 @@ export const Login: React.FC<LoginProps> = ({ isDarkMode, onToggleTheme }) => {
                             </div>
                         </div>
 
-                        <button 
-                            type="submit" 
+                        <button
+                            type="submit"
                             disabled={isLoading}
                             className="w-full py-4 rounded-2xl bg-primary hover:bg-primaryHover text-white font-black shadow-xl shadow-primary/20 transition-all active:scale-[0.98] uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-70"
                         >
@@ -108,7 +108,7 @@ export const Login: React.FC<LoginProps> = ({ isDarkMode, onToggleTheme }) => {
 
                 <div className="mt-8 text-center text-muted">
                     <p className="text-[9px] font-black uppercase tracking-[0.3em]">Alfonsa Distribuidora &copy; 2025</p>
-                    <p className="text-[8px] font-bold uppercase tracking-widest mt-1 opacity-60">Versión 3.1.2</p>
+                    <p className="text-[8px] font-bold uppercase tracking-widest mt-1 opacity-60">Versión 3.1.3</p>
                 </div>
             </div>
         </div>

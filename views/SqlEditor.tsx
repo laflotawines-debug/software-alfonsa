@@ -5,7 +5,7 @@ import { User } from '../types';
 
 export const SqlEditor: React.FC<{ currentUser: User }> = ({ currentUser }) => {
     const [query, setQuery] = useState(`-- ========================================================
--- SCRIPT DE ACTUALIZACIÓN: RESERVAS Y NOTIFICACIONES
+-- SCRIPT DE ACTUALIZACIÓN: PERMISOS Y ESTRUCTURA
 -- ========================================================
 
 -- 1. ACTUALIZAR TABLA DE PEDIDOS (Soporte Reservas)
@@ -94,6 +94,11 @@ DROP TRIGGER IF EXISTS on_order_change_notify ON public.orders;
 CREATE TRIGGER on_order_change_notify
   AFTER INSERT OR UPDATE ON public.orders
   FOR EACH ROW EXECUTE PROCEDURE public.handle_order_notifications();
+
+-- 6. INSERTAR PERMISO DE IMPRESIÓN Y PRECIOS (Si no existe)
+INSERT INTO public.app_permissions (key, module, label)
+VALUES ('orders.print_and_price', 'Pedidos', 'Imprimir y Ver Precios (Armador)')
+ON CONFLICT (key) DO UPDATE SET label = EXCLUDED.label, module = EXCLUDED.module;
 `);
 
     const copyToClipboard = () => {

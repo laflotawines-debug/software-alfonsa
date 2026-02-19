@@ -45,6 +45,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { User, WorkerAttendanceConfig, GlobalAttendanceSettings, AttendancePeriod } from '../types';
+import { hasPermission } from '../logic';
 
 const DAYS_OF_WEEK = [
     { key: 'Lunes', short: 'Lun' },
@@ -120,6 +121,9 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
     const [editingTime, setEditingTime] = useState<{ date: string, type: 'entry' | 'exit' } | null>(null);
 
     const isVale = currentUser?.role === 'vale';
+    
+    // PERMISO EXTENDIDO: 'vale' siempre puede, o quien tenga el permiso específico
+    const canViewPerformance = isVale || (currentUser && hasPermission(currentUser, 'tools.attendance'));
 
     const loadData = async () => {
         setIsLoading(true);
@@ -761,7 +765,7 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                         <span className="flex items-center gap-2"><Settings size={18}/> Ajustes Globales</span>
                     </button>
                 </div>
-                {isVale && (
+                {canViewPerformance && (
                     <button onClick={() => setActiveTab('performance')} className={`flex items-center gap-2 px-6 py-2 rounded-xl text-xs font-black uppercase transition-all shadow-sm ${activeTab === 'performance' ? 'bg-primary text-white shadow-primary/20' : 'bg-surfaceHighlight text-muted hover:text-text'}`}>
                         <Trophy size={16}/> Rendimiento
                     </button>
@@ -1134,7 +1138,7 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                     </div>
                 )}
 
-                {activeTab === 'performance' && isVale && (
+                {activeTab === 'performance' && canViewPerformance && (
                     <div className="flex-1 p-8 md:p-12 overflow-y-auto bg-background">
                         <div className="max-w-6xl mx-auto space-y-12">
                             <div className="flex justify-between items-end">
