@@ -96,13 +96,15 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     const [showTransitionModal, setShowTransitionModal] = useState(false);
 
     const isVale = currentUser.role === 'vale';
-    const hasPrintAndPricePermission = isVale || (currentUser.permissions || []).includes('orders.print_and_price');
+
+    // PERMISO CLAVE: Si tiene este permiso, actúa como Admin en este modal (edición, facturación, precios)
+    const hasAdminPrivileges = isVale || (currentUser.permissions || []).includes('orders.print_and_price');
 
     const isControlStep = order.status === OrderStatus.ARMADO;
 
-    // LOGIC UPDATE: isBillingStep enabled if user has specific permission
     const isStatusBilling = order.status === OrderStatus.ARMADO_CONTROLADO;
-    const isBillingStep = isStatusBilling && hasPrintAndPricePermission;
+    // Si es Billing Step y tiene privilegios de admin, puede ver el botón de facturar
+    const isBillingStep = isStatusBilling && hasAdminPrivileges;
 
     const isInvoiceControlStep = order.status === OrderStatus.FACTURADO;
     const isReadyForTransit = order.status === OrderStatus.FACTURA_CONTROLADA;
@@ -112,8 +114,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     // --- LÓGICA DE UX: PASOS DE REPARTO Y ENTREGA AUTOMÁTICOS ---
     const isAutoCheckStep = isReadyForTransit || isTransitStep || isFinishedStep;
 
-    // PERMITIR IMPRESIÓN SI EL ESTADO ES 'ARMADO_CONTROLADO' (o superior) Y TIENE PERMISO
-    const canPrint = (isStatusBilling || isInvoiceControlStep || isReadyForTransit || isTransitStep || isFinishedStep) && hasPrintAndPricePermission;
+    const canPrint = (isStatusBilling || isInvoiceControlStep || isReadyForTransit || isTransitStep || isFinishedStep) && hasAdminPrivileges;
 
     useEffect(() => {
         const fetchClientPhone = async () => {
@@ -171,8 +172,9 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         (order.status === OrderStatus.ARMADO && order.controllerId && order.controllerId !== currentUser.id)
     );
 
+    // Permisos de edición extendidos
     const canEditProducts = !isFinishedStep && (
-        isVale ||
+        hasAdminPrivileges ||
         (currentUser.role === 'armador' && order.status === OrderStatus.EN_ARMADO) ||
         (currentUser.role === 'armador' && isControlStep) ||
         (currentUser.role === 'armador' && isTransitStep) ||
@@ -180,14 +182,14 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         isReadyForTransit
     );
 
-    const canEditMetadata = isVale;
+    // Metadata editable si tiene privilegios
+    const canEditMetadata = hasAdminPrivileges;
 
     const showAdvanceButton = !isBillingStep && !isFinishedStep;
 
     const assemblerName = order.history.find(h => h.newState === OrderStatus.ARMADO || h.details?.includes('Armado'))?.userName || order.assemblerName || '-';
 
-    // Updated Logic: Show financials if Admin (Vale) OR has Print/Price Permission
-    const showFinancials = hasPrintAndPricePermission;
+    const showFinancials = hasAdminPrivileges;
 
     const originalInvoiceTotal = order.products.reduce((acc, p) => acc + (Math.max(0, p.originalQuantity) * p.unitPrice), 0);
     const finalTotal = order.total;
@@ -446,7 +448,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     };
 
     const handleEditPriceClick = (product: Product) => {
-        if (!canEditProducts || !isVale) return;
+        if (!canEditProducts || !hasAdminPrivileges) return;
         setEditingPriceCode(product.code);
         setTempValue(product.unitPrice.toString());
         setEditingProductCode(null);
@@ -492,7 +494,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     const handlePaymentMethodChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         const newMethod = e.target.value as PaymentMethod;
         const updatedOrder = updatePaymentMethod(order, newMethod);
-        if (isVale) onSave(updatedOrder, false);
+        if (hasAdminPrivileges) onSave(updatedOrder, false);
     };
 
     const handleAdvanceClick = () => { setShowTransitionModal(true); };
@@ -597,7 +599,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                 </>
             ) : (
                 <>
-                    {isFinishedStep && hasPrintAndPricePermission && (
+                    {isFinishedStep && hasAdminPrivileges && (
                         <div className="flex gap-2">
                             {clientPhone && (
                                 <button
@@ -840,7 +842,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
 
                                             return (
                                                 <div key={product.code} className={`flex items-start md:items-center gap-3 p-4 rounded-xl border transition-all 
-                                                    ${isAddedNew ? 'bg-orange-50/70 dark:bg-orange-900/10 border-orange-200' : (displayChecked && !isFinishedStep ? 'bg-green-500/5 border-green-500/20' : 'bg-surface border-surfaceHighlight shadow-sm')}
+                                                    ${isAddedNew ? 'bg-orange-50/70 dark:bg-orange-900/10 border-orange-200' : (displayChecked && !isFinishedStep ? 'bg-green-50/5 border-green-500/20' : 'bg-surface border-surfaceHighlight shadow-sm')}
                                                 `}>
                                                     {!isFinishedStep && (
                                                         <input

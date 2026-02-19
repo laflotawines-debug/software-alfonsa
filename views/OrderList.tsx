@@ -13,7 +13,7 @@ import {
   AlertTriangle, 
   Play, 
   Lock, 
-  Unlock,
+  Unlock, 
   Eye, 
   XCircle, 
   Loader2, 
@@ -517,7 +517,10 @@ const DetailedOrderCard: React.FC<{
   const zoneStyles = getZoneStyles(order.zone);
   
   const isFinished = order.status === OrderStatus.ENTREGADO || order.status === OrderStatus.PAGADO;
+  
+  // DETERMINE IF USER ACTS AS ADMIN (ROLE VALE OR PERMISSION 'orders.print_and_price')
   const isVale = currentUser.role === 'vale';
+  const hasAdminLikeAccess = isVale || hasPermission(currentUser, 'orders.print_and_price');
 
   // LOGIC FOR LOCKING VISUALS
   let lockedByMe = false;
@@ -567,6 +570,14 @@ const DetailedOrderCard: React.FC<{
                 <Receipt size={14} /> Facturar
             </button>
         );
+    } else if (order.status === OrderStatus.FACTURADO) {
+        // En este estado, el pedido ya está "facturado" pero no "controlada la factura"
+        // Botón para avanzar a "Factura Controlada" o "Reparto"
+        primaryAction = (
+            <button onClick={() => onAdvanceOrder(order)} className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase text-[11px] shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2">
+                <ClipboardCheck size={14} /> Controlar
+            </button>
+        );
     } else if (order.status === OrderStatus.FACTURA_CONTROLADA) {
         primaryAction = (
             <button onClick={() => onAdvanceOrder(order)} className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase text-[11px] shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2">
@@ -586,6 +597,7 @@ const DetailedOrderCard: React.FC<{
             </button>
         );
     } else {
+        // En Armado / Armado
         primaryAction = (
             <button disabled className="flex-1 py-2.5 rounded-xl bg-surfaceHighlight text-muted font-black uppercase text-[11px] flex items-center justify-center gap-2 opacity-50">
                 <Loader2 size={14} className="animate-spin" /> Espera
@@ -599,28 +611,14 @@ const DetailedOrderCard: React.FC<{
                 {secondaryBtn}
                 {primaryAction}
             </div>
-            {deleteBtn}
+            {isVale && deleteBtn} 
         </div>
     );
   };
 
   const getArmadorActions = () => {
-    // Si tiene permiso de "ver precios e imprimir", y está en estado listo para facturar, permitirle avanzar (Facturar)
-    if (order.status === OrderStatus.ARMADO_CONTROLADO && hasPermission(currentUser, 'orders.print_and_price')) {
-         return (
-            <button onClick={() => onAdvanceOrder(order)} className="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-black uppercase text-[11px] shadow-lg shadow-purple-500/20 flex items-center justify-center gap-2 active:scale-95 transition-all">
-                <Receipt size={14} /> Facturar
-            </button>
-        );
-    }
-
-    if (order.status === OrderStatus.FACTURA_CONTROLADA) {
-        return (
-            <button onClick={() => onAdvanceOrder(order)} className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase text-[11px] shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2 active:scale-95 transition-all">
-                <Truck size={14} /> Salir a Reparto
-            </button>
-        );
-    }
+    // Si tiene permiso admin-like, ya se usa getValeActions, esta función es fallback para armador normal
+    // sin permisos especiales.
 
     if (order.status === OrderStatus.EN_TRANSITO) {
         return (
@@ -637,13 +635,11 @@ const DetailedOrderCard: React.FC<{
     let action = () => onOpenAssembly(order);
 
     if (lockedByMe) {
-        // If locked by me -> "Continuar"
         label = "Continuar";
         icon = <Play size={14} />;
         className = "bg-primary text-white hover:bg-primaryHover shadow-lg shadow-primary/20";
         action = () => onOpenAssembly(order);
     } else if (lockedByOther) {
-        // If locked by other -> "Ver / Colaborar" (As per previous request)
         label = "Ver / Colaborar";
         icon = <Users size={14} />;
         className = "bg-surfaceHighlight text-muted hover:text-text border border-surfaceHighlight";
@@ -656,10 +652,6 @@ const DetailedOrderCard: React.FC<{
             label = "Controlar";
             icon = <ShieldCheck size={14} />;
             className = "bg-orange-500 text-white hover:bg-orange-600 shadow-lg shadow-orange-500/20";
-        } else if (order.status === OrderStatus.FACTURADO) {
-            label = "Controlar Factura";
-            icon = <ClipboardCheck size={14} />;
-            className = "bg-indigo-500 text-white hover:bg-indigo-600 shadow-lg shadow-indigo-500/20";
         }
     }
 
@@ -773,7 +765,8 @@ const DetailedOrderCard: React.FC<{
         </div>
 
         <div className="mt-auto pt-3 flex flex-col gap-2">
-            {isVale ? getValeActions() : getArmadorActions()}
+            {/* Si tiene privilegios admin (Vale O Permiso Especial), ve acciones completas. Si no, acciones limitadas */}
+            {hasAdminLikeAccess ? getValeActions() : getArmadorActions()}
         </div>
 
         <div className={`absolute bottom-0 left-0 w-full h-1 ${zoneStyles.borderColor} bg-current opacity-10`}></div>
