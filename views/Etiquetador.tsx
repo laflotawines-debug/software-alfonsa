@@ -66,21 +66,44 @@ export const Etiquetador: React.FC = () => {
     const fetchData = async () => {
         setIsLoading(true);
         try {
-            const [prodRes, stateRes] = await Promise.all([
-                supabase.from('master_products').select('*').gt('stock_betbeder', 0).order('desart', { ascending: true }),
-                supabase.from('printed_labels_state').select('*')
-            ]);
-            if (prodRes.data) setProducts(prodRes.data);
-            if (stateRes.data) {
-                const map: Record<string, { price: number, discount: number }> = {};
-                stateRes.data.forEach((s: any) => { 
-                    map[s.codart] = { 
-                        price: s.last_printed_price || 0, 
-                        discount: s.last_discount || 0 
-                    }; 
-                });
-                setPrintedState(map);
-            }
+            const fetchAllProducts = async () => {
+                let all: MasterProduct[] = [];
+                let page = 0;
+                while (true) {
+                    const { data, error } = await supabase.from('master_products').select('*').gt('stock_betbeder', 0).order('desart', { ascending: true }).range(page * 1000, (page + 1) * 1000 - 1);
+                    if (error) throw error;
+                    if (data) all.push(...data);
+                    if (!data || data.length < 1000) break;
+                    page++;
+                }
+                return all;
+            };
+
+            const fetchAllStates = async () => {
+                let all: any[] = [];
+                let page = 0;
+                while (true) {
+                    const { data, error } = await supabase.from('printed_labels_state').select('*').range(page * 1000, (page + 1) * 1000 - 1);
+                    if (error) throw error;
+                    if (data) all.push(...data);
+                    if (!data || data.length < 1000) break;
+                    page++;
+                }
+                return all;
+            };
+
+            const [allProducts, allStates] = await Promise.all([fetchAllProducts(), fetchAllStates()]);
+            
+            setProducts(allProducts);
+            
+            const map: Record<string, { price: number, discount: number }> = {};
+            allStates.forEach((s: any) => { 
+                map[s.codart] = { 
+                    price: s.last_printed_price || 0, 
+                    discount: s.last_discount || 0 
+                }; 
+            });
+            setPrintedState(map);
         } catch (err) { console.error(err); } finally { setIsLoading(false); }
     };
 
@@ -134,7 +157,7 @@ export const Etiquetador: React.FC = () => {
             if (listTypeFilter === 'CAMBIOS') matchesListType = p.isChange || p.isNew;
 
             return keywordsMatch && matchesSubfamily && matchesListType;
-        }).slice(0, 80); 
+        }); 
     }, [processedProducts, searchTerm, subfamilyFilter, listTypeFilter]);
 
     const toggleAllVisible = () => {
@@ -171,7 +194,7 @@ export const Etiquetador: React.FC = () => {
         setForceNormalPrice(next);
     };
 
-    const addSelectedToQueue = () => {
+    const addSelectedToQueue = async () => {
         const existingCodes = new Set(labelQueue.map(i => i.codart));
         const toAdd = processedProducts.filter(p => selectedFromSearch.has(p.codart) && !existingCodes.has(p.codart));
         
