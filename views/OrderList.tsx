@@ -25,15 +25,15 @@ import {
   Activity, 
   ArrowDownLeft, 
   CalendarDays, 
-  X,
-  Filter,
-  Clock,
-  ChevronLeft,
-  ChevronRight,
-  MessageSquare,
-  Send,
-  Users,
-  CalendarClock
+  X, 
+  Filter, 
+  Clock, 
+  ChevronLeft, 
+  ChevronRight, 
+  MessageSquare, 
+  Send, 
+  Users, 
+  CalendarClock 
 } from 'lucide-react';
 import { DetailedOrder, View, OrderStatus, User, DeliveryZone } from '../types';
 import { 
@@ -59,26 +59,19 @@ interface OrderListProps {
   onToggleLock: (order: DetailedOrder) => void;
   onRefresh: () => Promise<void>;
   
-  // NEW PROPS FOR OPTIMIZED HISTORY FETCHING
-  onFetchHistory?: (month: number, year: number, search?: string) => Promise<void>;
-  onLoadMoreHistory?: () => Promise<void>;
+  // Deprecated/Optional props kept for compatibility
+  onFetchHistory?: any;
+  onLoadMoreHistory?: any;
   hasMoreHistory?: boolean;
-  historyFilter?: { month: number, year: number, search: string };
+  historyFilter?: any;
 }
 
 type TabType = 'active' | 'reservations' | 'delivered';
-
-interface GroupedOrderData {
-    label: string;
-    orders: DetailedOrder[];
-}
 
 const MONTHS = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
 ];
-
-const YEARS = [2023, 2024, 2025, 2026];
 
 export const OrderList: React.FC<OrderListProps> = ({ 
     onNavigate, 
@@ -90,26 +83,28 @@ export const OrderList: React.FC<OrderListProps> = ({
     onDeleteOrders,
     onAdvanceOrder,
     onToggleLock,
-    onRefresh,
-    onFetchHistory,
-    onLoadMoreHistory,
-    hasMoreHistory,
-    historyFilter
+    onRefresh
 }) => {
   const [currentTab, setCurrentTab] = useState<TabType>('active');
-  const [localSearchTerm, setLocalSearchTerm] = useState(''); // Only filters what's loaded
+  const [localSearchTerm, setLocalSearchTerm] = useState(''); 
   const [zoneFilter, setZoneFilter] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>(''); 
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [confirmingBatchDelete, setConfirmingBatchDelete] = useState<string | null>(null);
-  const [zones, setZones] = useState<DeliveryZone[]>([]);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  
+  // --- HISTORY STATE ---
+  const [historyOrders, setHistoryOrders] = useState<DetailedOrder[]>([]);
+  const [historyPage, setHistoryPage] = useState(0);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [hasMoreHistoryData, setHasMoreHistoryData] = useState(true);
+  const [historyDate, setHistoryDate] = useState({ month: new Date().getMonth(), year: new Date().getFullYear() });
+  const [serverSearchTerm, setServerSearchTerm] = useState('');
+  const [isConfirmingDeleteMonth, setIsConfirmingDeleteMonth] = useState(false);
+  const [isDeletingMonth, setIsDeletingMonth] = useState(false);
 
+  const [zones, setZones] = useState<DeliveryZone[]>([]);
+  
   // Transition Modal State
   const [transitionOrder, setTransitionOrder] = useState<DetailedOrder | null>(null);
-
-  // Server-side search state
-  const [serverSearchTerm, setServerSearchTerm] = useState(historyFilter?.search || '');
 
   useEffect(() => {
       const fetchZones = async () => {
@@ -119,9 +114,137 @@ export const OrderList: React.FC<OrderListProps> = ({
       fetchZones();
   }, []);
 
+  // Fetch History when switching to Delivered tab OR changing date
   useEffect(() => {
-      setStatusFilter('');
-  }, [currentTab]);
+      if (currentTab === 'delivered') {
+          // Reset page and fetch whenever date or tab changes
+          setHistoryPage(0);
+          fetchHistoryOrders(0, true);
+      }
+  }, [currentTab, historyDate]);
+
+  const fetchHistoryOrders = async (pageIndex: number, isReset: boolean = false) => {
+      setIsLoadingHistory(true);
+      try {
+          const PAGE_SIZE = 20;
+          const from = pageIndex * PAGE_SIZE;
+          const to = from + PAGE_SIZE - 1;
+
+          // Calculate Start and End of selected month
+          const startDate = new Date(historyDate.year, historyDate.month, 1, 0, 0, 0);
+          const endDate = new Date(historyDate.year, historyDate.month + 1, 0, 23, 59, 59, 999);
+
+          let query = supabase
+              .from('orders')
+              .select('*, order_items(*)')
+              .in('status', ['entregado', 'pagado'])
+              .gte('created_at', startDate.toISOString())
+              .lte('created_at', endDate.toISOString())
+              .order('created_at', { ascending: false })
+              .range(from, to);
+
+          // Apply server-side text search if present
+          if (serverSearchTerm.trim()) {
+              query = query.or(`client_name.ilike.%${serverSearchTerm}%,display_id.ilike.%${serverSearchTerm}%`);
+          }
+
+          const { data, error } = await query;
+          
+          if (error) throw error;
+
+          if (data) {
+              const mapped: DetailedOrder[] = data.map((o: any) => ({
+                  id: o.id,
+                  displayId: o.display_id,
+                  clientName: o.client_name,
+                  zone: o.zone,
+                  status: o.status,
+                  createdDate: new Date(o.created_at).toLocaleDateString('es-AR'),
+                  isoDate: o.created_at, 
+                  lastUpdated: o.updated_at || o.created_at,
+                  paymentMethod: o.payment_method,
+                  total: o.total,
+                  productCount: (o.order_items || []).length,
+                  products: (o.order_items || []).map((i: any) => ({
+                      code: i.code,
+                      quantity: i.quantity,
+                      originalQuantity: i.original_quantity,
+                      shippedQuantity: i.shipped_quantity,
+                      unitPrice: i.unit_price,
+                      subtotal: i.subtotal,
+                      isChecked: i.is_checked
+                  })),
+                  history: typeof o.history === 'string' ? JSON.parse(o.history) : o.history || []
+              }));
+
+              if (isReset) {
+                  setHistoryOrders(mapped);
+              } else {
+                  setHistoryOrders(prev => [...prev, ...mapped]);
+              }
+              
+              setHasMoreHistoryData(data.length === PAGE_SIZE);
+          }
+      } catch (e) {
+          console.error("Error loading history", e);
+      } finally {
+          setIsLoadingHistory(false);
+      }
+  };
+
+  const handleLoadMoreHistory = () => {
+      const nextPage = historyPage + 1;
+      setHistoryPage(nextPage);
+      fetchHistoryOrders(nextPage, false);
+  };
+
+  const handleSearchHistory = () => {
+      setHistoryPage(0);
+      fetchHistoryOrders(0, true);
+  };
+
+  const handleChangeMonth = (delta: number) => {
+      setHistoryDate(prev => {
+          let newMonth = prev.month + delta;
+          let newYear = prev.year;
+          
+          if (newMonth > 11) { newMonth = 0; newYear++; }
+          else if (newMonth < 0) { newMonth = 11; newYear--; }
+          
+          return { month: newMonth, year: newYear };
+      });
+  };
+
+  const handleDeleteMonth = async () => {
+      if (!isConfirmingDeleteMonth) {
+          setIsConfirmingDeleteMonth(true);
+          return;
+      }
+
+      setIsDeletingMonth(true);
+      try {
+          const startDate = new Date(historyDate.year, historyDate.month, 1, 0, 0, 0);
+          const endDate = new Date(historyDate.year, historyDate.month + 1, 0, 23, 59, 59, 999);
+
+          // Delete orders in range with finished status
+          const { error } = await supabase
+              .from('orders')
+              .delete()
+              .in('status', ['entregado', 'pagado'])
+              .gte('created_at', startDate.toISOString())
+              .lte('created_at', endDate.toISOString());
+
+          if (error) throw error;
+
+          setHistoryOrders([]);
+          setIsConfirmingDeleteMonth(false);
+          alert("Mes eliminado correctamente.");
+      } catch (e: any) {
+          alert("Error al eliminar el mes: " + e.message);
+      } finally {
+          setIsDeletingMonth(false);
+      }
+  };
 
   const activeOrders = orders.filter(o => 
       o.status !== OrderStatus.ENTREGADO && 
@@ -135,16 +258,11 @@ export const OrderList: React.FC<OrderListProps> = ({
       o.status !== OrderStatus.PAGADO
   );
 
-  const deliveredOrders = orders.filter(o => 
-      o.status === OrderStatus.ENTREGADO || 
-      o.status === OrderStatus.PAGADO
-  );
+  // LIST SELECTION
+  const displayList = currentTab === 'delivered' ? historyOrders : (currentTab === 'active' ? activeOrders : reservationOrders);
 
-  let currentList = currentTab === 'active' ? activeOrders : (currentTab === 'reservas' ? reservationOrders : deliveredOrders);
-  if (currentTab === 'reservations') currentList = reservationOrders;
-
-  const filteredOrders = currentList.filter(order => {
-      // Local filtering
+  // Client-side filtering only applies to Active/Reservations. History is server-side filtered.
+  const filteredDisplayList = currentTab === 'delivered' ? displayList : displayList.filter(order => {
       const keywords = localSearchTerm.toLowerCase().split(/\s+/).filter(k => k.length > 0);
       const textToSearch = `${order.clientName} ${order.displayId}`.toLowerCase();
       const keywordsMatch = keywords.every(k => textToSearch.includes(k));
@@ -153,73 +271,20 @@ export const OrderList: React.FC<OrderListProps> = ({
       return keywordsMatch && matchesZone && matchesStatus;
   });
 
-  const groupedDeliveredOrders = useMemo<Record<string, GroupedOrderData>>(() => {
-      if (currentTab !== 'delivered') return {} as Record<string, GroupedOrderData>;
-      
-      const groups: Record<string, GroupedOrderData> = {};
-      
-      filteredOrders.forEach(order => {
-          const parts = order.createdDate.split('/');
-          if (parts.length === 3) {
-              const month = parseInt(parts[1], 10);
-              const year = parts[2];
-              const monthName = new Date(parseInt(year), month - 1, 1).toLocaleString('es-AR', { month: 'long' });
-              const key = `${year}-${month.toString().padStart(2, '0')}`;
-              const label = `${monthName} ${year}`;
-              
-              if (!groups[key]) {
-                  groups[key] = { label: label.charAt(0).toUpperCase() + label.slice(1), orders: [] };
-              }
-              groups[key].orders.push(order);
-          } else {
-              const key = 'otros';
-              if (!groups[key]) groups[key] = { label: 'Otros / Sin Fecha', orders: [] };
-              groups[key].orders.push(order);
-          }
-      });
-      
-      const sortedKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
-      
-      const sortedGroups: Record<string, GroupedOrderData> = {};
-      sortedKeys.forEach(key => {
-          sortedGroups[key] = groups[key];
-      });
-      
-      return sortedGroups;
-  }, [filteredOrders, currentTab]);
-
   const handleManualRefresh = async () => {
       setIsRefreshing(true);
-      await onRefresh();
+      await onRefresh(); // Refresh parent (Active orders)
+      if (currentTab === 'delivered') {
+          await fetchHistoryOrders(0, true); // Refresh history if active
+      }
       setIsRefreshing(false);
   };
 
-  const handleLoadMore = async () => {
-      if (!onLoadMoreHistory) return;
-      setIsLoadingMore(true);
-      await onLoadMoreHistory();
-      setIsLoadingMore(false);
-  };
-
-  const handleBatchDelete = (key: string, orderIds: string[]) => {
-      onDeleteOrders(orderIds);
-      setConfirmingBatchDelete(null);
-  };
-
-  // --- HISTORY FILTER HANDLERS ---
-  const changeHistoryMonth = (delta: number) => {
-      if (!onFetchHistory || !historyFilter) return;
-      let newMonth = historyFilter.month + delta;
-      let newYear = historyFilter.year;
-      if (newMonth > 11) { newMonth = 0; newYear++; }
-      if (newMonth < 0) { newMonth = 11; newYear--; }
-      onFetchHistory(newMonth, newYear, ''); // Clear search when changing month
-      setServerSearchTerm('');
-  };
-
-  const executeServerSearch = () => {
-      if (!onFetchHistory || !historyFilter) return;
-      onFetchHistory(historyFilter.month, historyFilter.year, serverSearchTerm);
+  const handleInternalDelete = (orderId: string) => {
+      onDeleteOrder(orderId);
+      if (currentTab === 'delivered') {
+          setHistoryOrders(prev => prev.filter(o => o.id !== orderId));
+      }
   };
 
   const availableStatusOptions = useMemo(() => {
@@ -269,7 +334,7 @@ export const OrderList: React.FC<OrderListProps> = ({
             {isRefreshing ? 'Actualizando...' : 'Actualizar'}
           </button>
           
-          {hasPermission(currentUser, 'orders.create') && (
+          {currentUser.role === 'vale' && (
               <button onClick={() => onNavigate(View.CREATE_BUDGET)} className="flex items-center gap-2 bg-primary hover:bg-primaryHover text-white px-6 py-3 rounded-full text-sm font-black transition-all shadow-lg shadow-primary/20 active:scale-95">
                 <Plus size={18} /> Nuevo Pedido
               </button>
@@ -282,7 +347,7 @@ export const OrderList: React.FC<OrderListProps> = ({
           {[
             { id: 'active', label: 'Activos', count: activeOrders.length },
             { id: 'reservations', label: 'Reservas', count: reservationOrders.length },
-            { id: 'delivered', label: 'Historial', count: deliveredOrders.length }
+            { id: 'delivered', label: 'Historial', count: null }
           ].map((tab) => (
             <button 
                 key={tab.id} 
@@ -290,7 +355,8 @@ export const OrderList: React.FC<OrderListProps> = ({
                 className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-sm font-black transition-all whitespace-nowrap flex items-center justify-center gap-2 ${currentTab === tab.id ? 'bg-surfaceHighlight text-text shadow-sm' : 'text-muted hover:text-text hover:bg-surfaceHighlight/50'}`}
                 title={tab.label}
             >
-              {tab.id === 'delivered' ? <History size={18} /> : tab.label} ({tab.count})
+              {tab.id === 'delivered' ? <History size={18} /> : tab.label} 
+              {tab.count !== null ? `(${tab.count})` : ''}
             </button>
           ))}
         </div>
@@ -300,7 +366,13 @@ export const OrderList: React.FC<OrderListProps> = ({
             <div className="flex flex-col lg:flex-row gap-4">
                 <div className="relative flex-1 max-w-md">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={20} />
-                    <input type="text" placeholder="Buscar por cliente o ID de pedido" value={localSearchTerm} onChange={(e) => setLocalSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-surface border border-surfaceHighlight focus:border-primary focus:ring-1 focus:ring-primary text-text placeholder-muted text-sm outline-none transition-all shadow-sm" />
+                    <input 
+                        type="text" 
+                        placeholder="Buscar por cliente o ID..." 
+                        value={localSearchTerm} 
+                        onChange={(e) => setLocalSearchTerm(e.target.value)} 
+                        className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-surface border border-surfaceHighlight focus:border-primary focus:ring-1 focus:ring-primary text-text placeholder-muted text-sm outline-none transition-all shadow-sm" 
+                    />
                 </div>
                 
                 <div className="relative min-w-[200px]">
@@ -310,7 +382,6 @@ export const OrderList: React.FC<OrderListProps> = ({
                         {zones.map(z => (
                             <option key={z.id} value={z.name}>{z.name}</option>
                         ))}
-                        {zones.length === 0 && <option value="V. Mercedes">V. Mercedes (Default)</option>}
                     </select>
                     <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-muted pointer-events-none" size={18} />
                 </div>
@@ -329,38 +400,41 @@ export const OrderList: React.FC<OrderListProps> = ({
                 </div>
             </div>
         ) : (
-            // CONTROLES DE HISTORIAL
-            <div className="bg-surface border border-surfaceHighlight p-4 rounded-2xl shadow-sm flex flex-col lg:flex-row gap-4 items-center justify-between">
-                <div className="flex items-center gap-2">
-                    <button onClick={() => changeHistoryMonth(-1)} className="p-2 rounded-full hover:bg-surfaceHighlight text-muted hover:text-primary transition-colors">
+            // BARRA DE HERRAMIENTAS HISTORIAL (FECHA + BUSCADOR)
+            <div className="flex flex-col lg:flex-row gap-4 items-center bg-surface border border-surfaceHighlight p-3 rounded-2xl shadow-sm">
+                <div className="flex items-center gap-2 bg-background border border-surfaceHighlight rounded-xl p-1">
+                    <button onClick={() => handleChangeMonth(-1)} className="p-2 hover:bg-surfaceHighlight rounded-lg text-muted hover:text-text transition-colors">
                         <ChevronLeft size={20} />
                     </button>
-                    <div className="flex items-center gap-2 px-4 py-2 bg-background border border-surfaceHighlight rounded-xl min-w-[180px] justify-center">
+                    <div className="flex items-center gap-2 px-4 min-w-[160px] justify-center">
                         <CalendarDays size={16} className="text-primary"/>
                         <span className="text-sm font-black uppercase text-text">
-                            {historyFilter ? `${MONTHS[historyFilter.month]} ${historyFilter.year}` : 'Cargando...'}
+                            {MONTHS[historyDate.month]} {historyDate.year}
                         </span>
                     </div>
-                    <button onClick={() => changeHistoryMonth(1)} className="p-2 rounded-full hover:bg-surfaceHighlight text-muted hover:text-primary transition-colors">
+                    <button onClick={() => handleChangeMonth(1)} className="p-2 hover:bg-surfaceHighlight rounded-lg text-muted hover:text-text transition-colors">
                         <ChevronRight size={20} />
                     </button>
                 </div>
 
                 <div className="w-full lg:w-px h-px lg:h-10 bg-surfaceHighlight mx-2"></div>
 
-                <div className="flex-1 w-full flex items-center gap-2">
-                    <div className="relative flex-1">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
-                        <input 
-                            type="text" 
-                            placeholder="Buscar en historial completo (Servidor)..." 
-                            value={serverSearchTerm} 
-                            onChange={(e) => setServerSearchTerm(e.target.value)} 
-                            onKeyDown={(e) => e.key === 'Enter' && executeServerSearch()}
-                            className="w-full pl-11 pr-4 py-3 rounded-xl bg-background border border-surfaceHighlight focus:border-primary text-text text-sm outline-none transition-all shadow-inner uppercase" 
-                        />
-                    </div>
-                    <button onClick={executeServerSearch} className="px-6 py-3 rounded-xl bg-primary text-white font-black text-xs uppercase shadow-lg active:scale-95 transition-all">
+                <div className="relative flex-1 w-full">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                    <input 
+                        type="text" 
+                        placeholder="Buscar en historial completo (Servidor)..." 
+                        value={serverSearchTerm} 
+                        onChange={(e) => setServerSearchTerm(e.target.value)} 
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSearchHistory();
+                        }}
+                        className="w-full pl-11 pr-20 py-3 rounded-xl bg-background border border-surfaceHighlight focus:border-primary text-text text-sm outline-none transition-all shadow-inner uppercase" 
+                    />
+                    <button 
+                        onClick={handleSearchHistory} 
+                        className="absolute right-1.5 top-1.5 bottom-1.5 px-4 bg-primary hover:bg-primaryHover text-white rounded-lg font-bold text-xs uppercase shadow-sm transition-all"
+                    >
                         Buscar
                     </button>
                 </div>
@@ -368,85 +442,81 @@ export const OrderList: React.FC<OrderListProps> = ({
         )}
       </div>
 
-      {currentTab === 'active' || currentTab === 'reservations' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-in fade-in duration-500">
-              {filteredOrders.map((order) => (
-                  <DetailedOrderCard 
-                      key={order.id} 
-                      order={order} 
-                      currentUser={currentUser} 
-                      onOpenAssembly={onOpenAssembly} 
-                      onClaimOrder={onClaimOrder}
-                      onDeleteOrder={onDeleteOrder} 
-                      onAdvanceOrder={requestAdvanceOrder} 
-                      onToggleLock={onToggleLock}
-                  />
-              ))}
-              {filteredOrders.length === 0 && (
-                  <div className="col-span-full py-24 text-center text-muted border-2 border-dashed border-surfaceHighlight rounded-3xl bg-surface/30 shadow-inner">
-                      <Package size={56} className="mx-auto mb-4 opacity-20" />
-                      <p className="font-bold text-xl">Sin pedidos en {currentTab === 'reservations' ? 'reservas' : 'activos'} con este filtro</p>
-                  </div>
+      {/* HEADER DE HISTORIAL Y BOTÓN DE BORRAR MES */}
+      {currentTab === 'delivered' && (
+          <div className="flex justify-between items-center pb-2 border-b border-surfaceHighlight">
+              <div className="flex items-center gap-3">
+                  <CalendarDays className="text-primary" size={24} />
+                  <h3 className="text-xl font-black text-text uppercase italic tracking-tight">
+                      {MONTHS[historyDate.month]} {historyDate.year}
+                  </h3>
+                  <span className="bg-surfaceHighlight text-muted px-2 py-0.5 rounded text-xs font-bold">
+                      {historyOrders.length} {hasMoreHistoryData ? '+' : ''}
+                  </span>
+              </div>
+              {currentUser.role === 'vale' && (
+                  isConfirmingDeleteMonth ? (
+                      <div className="flex items-center gap-2 animate-in zoom-in-95">
+                          <span className="text-[10px] font-black text-red-500 uppercase">¿Seguro?</span>
+                          <button 
+                              onClick={handleDeleteMonth} 
+                              disabled={isDeletingMonth}
+                              className="px-4 py-2 bg-red-600 text-white rounded-xl font-black text-xs uppercase shadow-lg shadow-red-500/20 active:scale-95 transition-all flex items-center gap-2"
+                          >
+                              {isDeletingMonth ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} 
+                              Sí, Borrar Mes
+                          </button>
+                          <button onClick={() => setIsConfirmingDeleteMonth(false)} className="p-2 bg-surfaceHighlight text-text rounded-xl hover:bg-surfaceHighlight/80"><X size={16} /></button>
+                      </div>
+                  ) : (
+                      <button onClick={() => setIsConfirmingDeleteMonth(true)} className="flex items-center gap-2 px-4 py-2 text-muted hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all text-xs font-black uppercase">
+                          <Trash2 size={16} /> Eliminar Mes
+                      </button>
+                  )
               )}
           </div>
-      ) : (
-          <div className="space-y-12 animate-in fade-in duration-500">
-              {filteredOrders.length === 0 && (
-                  <div className="py-24 text-center text-muted border-2 border-dashed border-surfaceHighlight rounded-3xl bg-surface/30 shadow-inner">
-                      <Package size={56} className="mx-auto mb-4 opacity-20" />
-                      <p className="font-bold text-xl">Sin historial en {historyFilter ? `${MONTHS[historyFilter.month]} ${historyFilter.year}` : 'este período'}</p>
-                      <p className="text-sm mt-2 font-medium">Intenta cambiar el mes o usar el buscador global.</p>
-                  </div>
-              )}
-              {Object.entries(groupedDeliveredOrders).map(([key, group]: [string, GroupedOrderData]) => (
-                  <div key={key} className="space-y-6">
-                      <div className="flex items-center justify-between border-b border-surfaceHighlight pb-2">
-                          <div className="flex items-center gap-3">
-                              <CalendarDays className="text-primary" size={24} />
-                              <h3 className="text-xl font-black text-text uppercase italic tracking-tight">{group.label}</h3>
-                              <span className="bg-surfaceHighlight text-muted px-2 py-0.5 rounded text-xs font-bold">{group.orders.length}</span>
-                          </div>
-                          {currentUser.role === 'vale' && (
-                              confirmingBatchDelete === key ? (
-                                  <div className="flex items-center gap-2 animate-in zoom-in-95">
-                                      <button onClick={() => handleBatchDelete(key, group.orders.map(o => o.id))} className="px-4 py-2 bg-red-600 text-white rounded-xl font-black text-xs uppercase shadow-lg shadow-red-500/20 active:scale-95 transition-all">¿Confirmar Eliminar Lote?</button>
-                                      <button onClick={() => setConfirmingBatchDelete(null)} className="p-2 bg-surfaceHighlight text-text rounded-xl hover:bg-surfaceHighlight/80"><X size={16} /></button>
-                                  </div>
-                              ) : (
-                                  <button onClick={() => setConfirmingBatchDelete(key)} className="flex items-center gap-2 px-4 py-2 text-muted hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all text-xs font-black uppercase"><Trash2 size={16} /> Eliminar Mes</button>
-                              )
-                          )}
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                          {group.orders.map((order) => (
-                              <DetailedOrderCard 
-                                  key={order.id} 
-                                  order={order} 
-                                  currentUser={currentUser} 
-                                  onOpenAssembly={onOpenAssembly} 
-                                  onClaimOrder={onClaimOrder}
-                                  onDeleteOrder={onDeleteOrder} 
-                                  onAdvanceOrder={requestAdvanceOrder} 
-                                  onToggleLock={onToggleLock}
-                              />
-                          ))}
-                      </div>
-                  </div>
-              ))}
-              
-              {/* Botón de Cargar Más */}
-              {hasMoreHistory && (
-                  <div className="flex justify-center pt-6 pb-2">
-                      <button 
-                          onClick={handleLoadMore}
-                          disabled={isLoadingMore}
-                          className="flex items-center gap-2 px-8 py-4 rounded-2xl bg-surface border border-surfaceHighlight hover:border-primary text-text hover:text-primary transition-all font-black text-xs uppercase shadow-sm active:scale-95 disabled:opacity-50"
-                      >
-                          {isLoadingMore ? <Loader2 size={16} className="animate-spin" /> : <Clock size={16} />}
-                          {isLoadingMore ? 'Cargando...' : 'Cargar más pedidos anteriores'}
-                      </button>
-                  </div>
-              )}
+      )}
+
+      {/* GRID DE PEDIDOS */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-in fade-in duration-500">
+          {filteredDisplayList.map((order) => (
+              <DetailedOrderCard 
+                  key={order.id} 
+                  order={order} 
+                  currentUser={currentUser} 
+                  onOpenAssembly={onOpenAssembly} 
+                  onClaimOrder={onClaimOrder}
+                  onDeleteOrder={handleInternalDelete} 
+                  onAdvanceOrder={requestAdvanceOrder} 
+                  onToggleLock={onToggleLock}
+              />
+          ))}
+          
+          {filteredDisplayList.length === 0 && !isLoadingHistory && (
+              <div className="col-span-full py-24 text-center text-muted border-2 border-dashed border-surfaceHighlight rounded-3xl bg-surface/30 shadow-inner">
+                  <Package size={56} className="mx-auto mb-4 opacity-20" />
+                  <p className="font-bold text-xl">Sin pedidos</p>
+                  {currentTab === 'delivered' && (
+                      <p className="text-sm mt-2 font-medium">No hay historial en {MONTHS[historyDate.month]} {historyDate.year}</p>
+                  )}
+              </div>
+          )}
+          
+          {isLoadingHistory && (
+              <div className="col-span-full py-20 flex justify-center">
+                  <Loader2 className="animate-spin text-primary" size={48} />
+              </div>
+          )}
+      </div>
+
+      {currentTab === 'delivered' && hasMoreHistoryData && !isLoadingHistory && (
+          <div className="flex justify-center pt-6 pb-2">
+              <button 
+                  onClick={handleLoadMoreHistory}
+                  className="flex items-center gap-2 px-8 py-4 rounded-2xl bg-surface border border-surfaceHighlight hover:border-primary text-text hover:text-primary transition-all font-black text-xs uppercase shadow-sm active:scale-95"
+              >
+                  <Clock size={16} /> Cargar más pedidos anteriores
+              </button>
           </div>
       )}
 
@@ -496,13 +566,6 @@ const TransitionModal: React.FC<{ order: DetailedOrder, onClose: () => void, onC
     );
 };
 
-const getTimeAgo = (dateStr?: string) => {
-    if (!dateStr) return '';
-    const diff = (new Date().getTime() - new Date(dateStr).getTime()) / 60000;
-    if (diff < 1) return 'Ahora';
-    return `${Math.floor(diff)} min`;
-};
-
 const DetailedOrderCard: React.FC<{ 
     order: DetailedOrder; 
     currentUser: User; 
@@ -518,11 +581,9 @@ const DetailedOrderCard: React.FC<{
   
   const isFinished = order.status === OrderStatus.ENTREGADO || order.status === OrderStatus.PAGADO;
   
-  // DETERMINE IF USER ACTS AS ADMIN (ROLE VALE OR PERMISSION 'orders.print_and_price')
   const isVale = currentUser.role === 'vale';
-  const hasAdminLikeAccess = isVale || hasPermission(currentUser, 'orders.print_and_price');
+  const hasAdminLikeAccess = isVale || (currentUser.permissions || []).includes('orders.print_and_price');
 
-  // LOGIC FOR LOCKING VISUALS
   let lockedByMe = false;
   let lockedByOther = false;
   let occupantName = '';
@@ -536,8 +597,6 @@ const DetailedOrderCard: React.FC<{
   }
 
   const waitingForNextStep = (order.status === OrderStatus.ARMADO && !order.controllerId && order.assemblerId === currentUser.id);
-
-  const timeAgo = (lockedByOther || lockedByMe) ? getTimeAgo(order.lastUpdated) : '';
 
   const getValeActions = () => {
     const secondaryBtn = (
@@ -571,8 +630,6 @@ const DetailedOrderCard: React.FC<{
             </button>
         );
     } else if (order.status === OrderStatus.FACTURADO) {
-        // En este estado, el pedido ya está "facturado" pero no "controlada la factura"
-        // Botón para avanzar a "Factura Controlada" o "Reparto"
         primaryAction = (
             <button onClick={() => onAdvanceOrder(order)} className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase text-[11px] shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2">
                 <ClipboardCheck size={14} /> Controlar
@@ -596,8 +653,51 @@ const DetailedOrderCard: React.FC<{
                 <Eye size={14} /> Ver
             </button>
         );
+    } else if (order.status === OrderStatus.EN_ARMADO || order.status === OrderStatus.ARMADO) {
+        let label = "Ver Detalle";
+        let icon = <Eye size={14} />;
+        let className = "bg-surfaceHighlight text-text hover:bg-surfaceHighlight/80";
+        let action = () => onOpenAssembly(order);
+
+        if (lockedByMe) {
+            if (order.status === OrderStatus.EN_ARMADO) {
+                label = "Armar Pedido";
+                icon = <Box size={14} />;
+            } else if (order.status === OrderStatus.ARMADO) {
+                label = "Controlar Armado";
+                icon = <ShieldCheck size={14} />;
+            } else {
+                label = "Continuar";
+                icon = <Play size={14} />;
+            }
+            
+            className = "bg-primary text-white hover:bg-primaryHover shadow-lg shadow-primary/20";
+            action = () => onOpenAssembly(order);
+        } else if (lockedByOther) {
+            label = "Ver / Colaborar";
+            icon = <Users size={14} />;
+            className = "bg-surfaceHighlight text-muted hover:text-text border border-surfaceHighlight";
+            action = () => onOpenAssembly(order);
+        } else {
+            if (order.status === OrderStatus.EN_ARMADO) {
+                label = "Armar Pedido";
+                icon = <Box size={14} />;
+            } else if (order.status === OrderStatus.ARMADO) {
+                label = "Controlar Armado";
+                icon = <ShieldCheck size={14} />;
+                className = "bg-orange-500 text-white hover:bg-orange-600 shadow-lg shadow-orange-500/20";
+            }
+        }
+
+        primaryAction = (
+            <button 
+                onClick={action}
+                className={`flex-1 py-2.5 rounded-xl font-black uppercase text-[11px] transition-all flex items-center justify-center gap-2 active:scale-95 ${className}`}
+            >
+                {icon} {label}
+            </button>
+        );
     } else {
-        // En Armado / Armado
         primaryAction = (
             <button disabled className="flex-1 py-2.5 rounded-xl bg-surfaceHighlight text-muted font-black uppercase text-[11px] flex items-center justify-center gap-2 opacity-50">
                 <Loader2 size={14} className="animate-spin" /> Espera
@@ -611,67 +711,99 @@ const DetailedOrderCard: React.FC<{
                 {secondaryBtn}
                 {primaryAction}
             </div>
-            {isVale && deleteBtn} 
+            {(isVale || hasPermission(currentUser, 'orders.create')) && deleteBtn} 
         </div>
     );
   };
 
   const getArmadorActions = () => {
-    // Si tiene permiso admin-like, ya se usa getValeActions, esta función es fallback para armador normal
-    // sin permisos especiales.
+    let primaryBtn = null;
 
     if (order.status === OrderStatus.EN_TRANSITO) {
-        return (
+        primaryBtn = (
             <button onClick={() => onOpenAssembly(order)} className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black uppercase text-[11px] shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2 active:scale-95 transition-all">
                 <CheckCircle size={14} /> Gestionar Entrega / Devolución
             </button>
         );
-    }
-
-    // Default Action: VIEW
-    let label = "Ver Detalle";
-    let icon = <Eye size={14} />;
-    let className = "bg-surfaceHighlight text-text hover:bg-surfaceHighlight/80";
-    let action = () => onOpenAssembly(order);
-
-    if (lockedByMe) {
-        label = "Continuar";
-        icon = <Play size={14} />;
-        className = "bg-primary text-white hover:bg-primaryHover shadow-lg shadow-primary/20";
-        action = () => onOpenAssembly(order);
-    } else if (lockedByOther) {
-        label = "Ver / Colaborar";
-        icon = <Users size={14} />;
-        className = "bg-surfaceHighlight text-muted hover:text-text border border-surfaceHighlight";
-        action = () => onOpenAssembly(order);
+    } else if (order.status === OrderStatus.FACTURADO) {
+        primaryBtn = (
+            <button 
+                onClick={() => onOpenAssembly(order)} 
+                className="w-full py-3 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-black uppercase text-[11px] shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2 active:scale-95 transition-all"
+            >
+                <ClipboardCheck size={14} /> Controlar Factura
+            </button>
+        );
     } else {
-        if (order.status === OrderStatus.EN_ARMADO) {
-            label = "Abrir Pedido";
-            icon = <Box size={14} />;
-        } else if (order.status === OrderStatus.ARMADO) {
-            label = "Controlar";
-            icon = <ShieldCheck size={14} />;
-            className = "bg-orange-500 text-white hover:bg-orange-600 shadow-lg shadow-orange-500/20";
+        let label = "Ver Detalle";
+        let icon = <Eye size={14} />;
+        let className = "bg-surfaceHighlight text-text hover:bg-surfaceHighlight/80";
+        let action = () => onOpenAssembly(order);
+
+        if (lockedByMe) {
+            if (order.status === OrderStatus.EN_ARMADO) {
+                label = "Armar Pedido";
+                icon = <Box size={14} />;
+            } else if (order.status === OrderStatus.ARMADO) {
+                label = "Controlar Pedido";
+                icon = <ShieldCheck size={14} />;
+            } else {
+                label = "Continuar";
+                icon = <Play size={14} />;
+            }
+            
+            className = "bg-primary text-white hover:bg-primaryHover shadow-lg shadow-primary/20";
+            action = () => onOpenAssembly(order);
+        } else if (lockedByOther) {
+            label = "Ver / Colaborar";
+            icon = <Users size={14} />;
+            className = "bg-surfaceHighlight text-muted hover:text-text border border-surfaceHighlight";
+            action = () => onOpenAssembly(order);
+        } else {
+            if (order.status === OrderStatus.EN_ARMADO) {
+                label = "Armar Pedido";
+                icon = <Box size={14} />;
+            } else if (order.status === OrderStatus.ARMADO) {
+                label = "Controlar Armado";
+                icon = <ShieldCheck size={14} />;
+                className = "bg-orange-500 text-white hover:bg-orange-600 shadow-lg shadow-orange-500/20";
+            }
         }
+
+        primaryBtn = (
+            <button 
+                onClick={action}
+                className={`w-full py-3 rounded-xl font-black uppercase text-[11px] transition-all flex items-center justify-center gap-2 active:scale-95 ${className}`}
+            >
+                {icon} {label}
+            </button>
+        );
     }
+
+    const canDelete = (currentUser.permissions || []).includes('orders.create');
 
     return (
-        <button 
-            onClick={action}
-            className={`w-full py-3 rounded-xl font-black uppercase text-[11px] transition-all flex items-center justify-center gap-2 active:scale-95 ${className}`}
-        >
-            {icon} {label}
-        </button>
+        <div className="flex flex-col gap-2 w-full">
+            {primaryBtn}
+            {canDelete && (
+                <button 
+                    onClick={() => { 
+                        if(isConfirmingDelete) onDeleteOrder(order.id); 
+                        else { setIsConfirmingDelete(true); setTimeout(() => setIsConfirmingDelete(false), 3000); } 
+                    }} 
+                    className={`w-full py-2 rounded-xl text-[9px] font-black uppercase transition-all flex items-center justify-center gap-2 ${isConfirmingDelete ? 'bg-red-600 text-white shadow-lg' : 'bg-red-500/10 text-red-500 hover:bg-red-500/20'}`}
+                >
+                    {isConfirmingDelete ? <XCircle size={14}/> : <Trash2 size={14} />}
+                    {isConfirmingDelete ? 'Confirmar' : 'Eliminar'}
+                </button>
+            )}
+        </div>
     );
   };
 
   const missingProducts = getMissingProducts(order);
   const refundAmount = getOrderRefundTotal(order);
-  
-  // LOGIC: Show financial info if 'vale' role OR 'orders.view_financials' OR 'orders.print_and_price' permission
-  const showFinancials = hasPermission(currentUser, 'orders.view_financials') ||
-                         hasPermission(currentUser, 'orders.print_and_price') ||
-                         isVale;
+  const showFinancials = hasAdminLikeAccess;
 
   return (
     <div className={`bg-surface rounded-xl p-5 flex flex-col gap-3 border transition-all group relative overflow-hidden shadow-sm hover:shadow-lg hover:-translate-y-0.5 ${zoneStyles.borderColor} border-opacity-40`}>
@@ -765,7 +897,6 @@ const DetailedOrderCard: React.FC<{
         </div>
 
         <div className="mt-auto pt-3 flex flex-col gap-2">
-            {/* Si tiene privilegios admin (Vale O Permiso Especial), ve acciones completas. Si no, acciones limitadas */}
             {hasAdminLikeAccess ? getValeActions() : getArmadorActions()}
         </div>
 

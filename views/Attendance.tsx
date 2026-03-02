@@ -1198,6 +1198,76 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                                     <p className="font-black uppercase tracking-[0.3em] text-sm">Sin datos históricos guardados.</p>
                                 </div>
                             )}
+
+                            {/* REGLAS DE PUNTUACIÓN */}
+                            <div className="mt-12 border-t border-surfaceHighlight pt-8">
+                                <h3 className="text-lg font-black text-text uppercase italic tracking-tight mb-6 flex items-center gap-2">
+                                    <Info size={20} className="text-muted" /> Reglas de Puntuación
+                                </h3>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <div className="bg-surface border border-surfaceHighlight p-6 rounded-3xl shadow-sm">
+                                        <div className="flex items-center gap-3 mb-4">
+                                            <div className="p-2 bg-primary/10 rounded-xl text-primary"><Clock size={18} /></div>
+                                            <h4 className="text-xs font-black text-primary uppercase tracking-widest">Puntualidad y Asistencia</h4>
+                                        </div>
+                                        <ul className="space-y-3">
+                                            <li className="flex justify-between items-center border-b border-surfaceHighlight pb-2 last:border-0">
+                                                <span className="text-[10px] font-bold text-muted uppercase">Llegada Temprano</span> 
+                                                <span className="text-xs font-black text-green-600 bg-green-500/10 px-2 py-1 rounded">+1 pto</span>
+                                            </li>
+                                            <li className="flex justify-between items-center border-b border-surfaceHighlight pb-2 last:border-0">
+                                                <span className="text-[10px] font-bold text-muted uppercase">Tardanza</span> 
+                                                <span className="text-xs font-black text-red-500 bg-red-500/10 px-2 py-1 rounded">-1 pto</span>
+                                            </li>
+                                            <li className="flex justify-between items-center border-b border-surfaceHighlight pb-2 last:border-0">
+                                                <span className="text-[10px] font-bold text-muted uppercase">Ausencia</span> 
+                                                <span className="text-xs font-black text-red-500 bg-red-500/10 px-2 py-1 rounded">-1 pto</span>
+                                            </li>
+                                        </ul>
+                                    </div>
+
+                                    <div className="bg-surface border border-surfaceHighlight p-6 rounded-3xl shadow-sm">
+                                        <div className="flex items-center gap-3 mb-4">
+                                            <div className="p-2 bg-blue-500/10 rounded-xl text-blue-600"><CheckCircle2 size={18} /></div>
+                                            <h4 className="text-xs font-black text-blue-600 uppercase tracking-widest">Justificación de Tardanzas</h4>
+                                        </div>
+                                        <ul className="space-y-3">
+                                            <li className="flex justify-between items-center border-b border-surfaceHighlight pb-2 last:border-0">
+                                                <span className="text-[10px] font-bold text-muted uppercase">≥ 80% Justificado</span> 
+                                                <span className="text-xs font-black text-green-600 bg-green-500/10 px-2 py-1 rounded">+1 pto</span>
+                                            </li>
+                                            <li className="flex justify-between items-center border-b border-surfaceHighlight pb-2 last:border-0">
+                                                <span className="text-[10px] font-bold text-muted uppercase">&lt; 80% Justificado</span> 
+                                                <span className="text-xs font-black text-red-500 bg-red-500/10 px-2 py-1 rounded">-1 pto</span>
+                                            </li>
+                                            <li className="text-[9px] text-muted italic mt-2 leading-tight">
+                                                * Solo aplica si existen tardanzas registradas en el periodo.
+                                            </li>
+                                        </ul>
+                                    </div>
+
+                                    <div className="bg-surface border border-surfaceHighlight p-6 rounded-3xl shadow-sm">
+                                        <div className="flex items-center gap-3 mb-4">
+                                            <div className="p-2 bg-orange-500/10 rounded-xl text-orange-600"><Zap size={18} /></div>
+                                            <h4 className="text-xs font-black text-orange-600 uppercase tracking-widest">Efectividad de Marcado</h4>
+                                        </div>
+                                        <ul className="space-y-3">
+                                            <li className="flex justify-between items-center border-b border-surfaceHighlight pb-2 last:border-0">
+                                                <span className="text-[10px] font-bold text-muted uppercase">100% Marcado</span> 
+                                                <span className="text-xs font-black text-green-600 bg-green-500/10 px-2 py-1 rounded">+2 ptos</span>
+                                            </li>
+                                            <li className="flex justify-between items-center border-b border-surfaceHighlight pb-2 last:border-0">
+                                                <span className="text-[10px] font-bold text-muted uppercase">&gt; 80% Marcado</span> 
+                                                <span className="text-xs font-black text-green-600 bg-green-500/10 px-2 py-1 rounded">+1 pto</span>
+                                            </li>
+                                            <li className="flex justify-between items-center border-b border-surfaceHighlight pb-2 last:border-0">
+                                                <span className="text-[10px] font-bold text-muted uppercase">&lt; 50% Marcado</span> 
+                                                <span className="text-xs font-black text-red-500 bg-red-500/10 px-2 py-1 rounded">-1 pto</span>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 )}

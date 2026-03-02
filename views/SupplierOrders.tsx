@@ -27,7 +27,8 @@ import {
     Sparkles,
     Calculator,
     PackagePlus,
-    Boxes
+    Boxes,
+    Copy
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { SupplierOrder, SupplierOrderItem, User, SupplierMaster, MasterProduct } from '../types';
@@ -363,9 +364,38 @@ const CreateSupplierOrderModal: React.FC<{ onClose: () => void, onSuccess: () =>
     const [pdfFile, setPdfFile] = useState<File | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    const [supplierSearchTerm, setSupplierSearchTerm] = useState('');
+    const [showSupplierDropdown, setShowSupplierDropdown] = useState(false);
+    const supplierInputRef = useRef<HTMLDivElement>(null);
+
     useEffect(() => {
         supabase.from('providers_master').select('*').eq('activo', true).order('razon_social').then(res => res.data && setSuppliers(res.data));
     }, []);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (supplierInputRef.current && !supplierInputRef.current.contains(event.target as Node)) {
+                setShowSupplierDropdown(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const handleSelectSupplier = (supplier: SupplierMaster) => {
+        setSelectedSupplier(supplier.codigo);
+        setSupplierSearchTerm(supplier.razon_social);
+        setShowSupplierDropdown(false);
+    };
+
+    const filteredSuppliers = useMemo(() => {
+        if (!supplierSearchTerm) return suppliers;
+        const terms = supplierSearchTerm.toLowerCase().split(/\s+/).filter(t => t.length > 0);
+        return suppliers.filter(s => {
+            const text = `${s.razon_social} ${s.codigo}`.toLowerCase();
+            return terms.every(term => text.includes(term));
+        });
+    }, [suppliers, supplierSearchTerm]);
 
     const handleSearchProd = async (val: string) => {
         setSearchProd(val);
@@ -624,16 +654,56 @@ const CreateSupplierOrderModal: React.FC<{ onClose: () => void, onSuccess: () =>
 
                         <div className="h-px bg-surfaceHighlight/50"></div>
 
-                        <div className="space-y-2">
+                        <div className="space-y-2 relative" ref={supplierInputRef}>
                             <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Proveedor</label>
-                            <select 
-                                value={selectedSupplier}
-                                onChange={e => setSelectedSupplier(e.target.value)}
-                                className="w-full bg-surface border border-surfaceHighlight rounded-2xl py-4 px-5 font-black text-text outline-none focus:border-primary shadow-inner appearance-none cursor-pointer"
-                            >
-                                <option value="">Seleccionar...</option>
-                                {suppliers.map(s => <option key={s.codigo} value={s.codigo}>{s.razon_social}</option>)}
-                            </select>
+                            <div className="relative">
+                                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                                <input 
+                                    type="text"
+                                    value={supplierSearchTerm}
+                                    onChange={e => {
+                                        setSupplierSearchTerm(e.target.value);
+                                        setSelectedSupplier('');
+                                        setShowSupplierDropdown(true);
+                                    }}
+                                    onFocus={() => setShowSupplierDropdown(true)}
+                                    placeholder="Buscar proveedor..."
+                                    className="w-full bg-surface border border-surfaceHighlight rounded-2xl py-4 pl-12 pr-10 font-black text-text outline-none focus:border-primary shadow-inner uppercase"
+                                />
+                                {selectedSupplier && (
+                                    <button 
+                                        onClick={() => {
+                                            setSelectedSupplier('');
+                                            setSupplierSearchTerm('');
+                                            setShowSupplierDropdown(true);
+                                        }}
+                                        className="absolute right-4 top-1/2 -translate-y-1/2 text-muted hover:text-red-500"
+                                    >
+                                        <X size={16} />
+                                    </button>
+                                )}
+                            </div>
+                            
+                            {showSupplierDropdown && (supplierSearchTerm || filteredSuppliers.length > 0) && (
+                                <div className="absolute top-full left-0 w-full bg-surface border border-surfaceHighlight rounded-2xl shadow-2xl mt-1 z-50 max-h-60 overflow-y-auto">
+                                    {filteredSuppliers.length > 0 ? (
+                                        filteredSuppliers.map(s => (
+                                            <button
+                                                key={s.codigo}
+                                                onClick={() => handleSelectSupplier(s)}
+                                                className="w-full text-left px-5 py-3 hover:bg-surfaceHighlight border-b border-surfaceHighlight last:border-none transition-colors"
+                                            >
+                                                <p className="text-xs font-black text-text uppercase">{s.razon_social}</p>
+                                                <p className="text-[9px] font-mono text-muted">#{s.codigo}</p>
+                                            </button>
+                                        ))
+                                    ) : (
+                                        <div className="p-4 text-center text-muted text-xs italic uppercase">
+                                            No se encontraron proveedores
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
                         <div className="space-y-2">
                             <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Fecha Estimada de Llegada</label>
@@ -712,6 +782,8 @@ const CreateSupplierOrderModal: React.FC<{ onClose: () => void, onSuccess: () =>
 // --- MODAL DE DETALLE ---
 const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => void, onUpdate: () => void, tab: string }> = ({ order, onClose, onUpdate, tab }) => {
     const [items, setItems] = useState<SupplierOrderItem[]>(order.items || []);
+    const [hasChanges, setHasChanges] = useState(false);
+    const [deletingItemId, setDeletingItemId] = useState<string | null>(null);
     
     useEffect(() => {
         if (order.items) setItems(order.items);
@@ -723,16 +795,40 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
             const { error } = await supabase.from('supplier_order_items').update({ quantity: newQty }).eq('id', itemId);
             if (error) throw error;
             setItems(items.map(i => i.id === itemId ? {...i, quantity: newQty} : i));
+            setHasChanges(true);
         } catch (e: any) { alert(e.message); }
     };
 
     const handleRemoveItem = async (itemId: string) => {
-        if (!confirm("¿Quitar este artículo del pedido?")) return;
         try {
             const { error } = await supabase.from('supplier_order_items').delete().eq('id', itemId);
             if (error) throw error;
             setItems(items.filter(i => i.id !== itemId));
+            setHasChanges(true);
+            setDeletingItemId(null);
         } catch (e: any) { alert(e.message); }
+    };
+
+    const handleCopyOrder = () => {
+        const header = `PEDIDO ${order.supplier_name}`;
+        const body = items.map(item => {
+            const upb = item.units_per_box || 6;
+            const boxes = Math.floor(item.quantity / upb);
+            // Format: 2x6 (12) PRODUCT NAME
+            return `${boxes}x${upb} (${item.quantity}) ${item.desart}`;
+        }).join('\n');
+
+        const fullText = `${header}\n\n${body}`;
+        navigator.clipboard.writeText(fullText);
+        alert("Pedido copiado al portapapeles");
+    };
+
+    const handleClose = () => {
+        if (hasChanges) {
+            onUpdate();
+        } else {
+            onClose();
+        }
     };
 
     return (
@@ -743,7 +839,16 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
                         <h3 className="text-xl font-black text-text uppercase italic">Detalle de Pedido</h3>
                         <p className="text-[10px] text-muted font-bold uppercase">{order.supplier_name}</p>
                     </div>
-                    <button onClick={onClose} className="p-2 rounded-full hover:bg-surfaceHighlight rounded-full text-muted transition-all"><X size={24}/></button>
+                    <div className="flex items-center gap-2">
+                        <button 
+                            onClick={handleCopyOrder}
+                            className="p-2 rounded-full hover:bg-surfaceHighlight text-primary transition-all"
+                            title="Copiar pedido"
+                        >
+                            <Copy size={20}/>
+                        </button>
+                        <button onClick={handleClose} className="p-2 rounded-full hover:bg-surfaceHighlight text-muted transition-all"><X size={24}/></button>
+                    </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -786,7 +891,7 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
                                 <tr>
                                     <th className="p-4">Artículo</th>
                                     <th className="p-4 text-center">Cantidad Total</th>
-                                    {tab === 'pendiente' && <th className="p-4 text-center w-12"></th>}
+                                    {tab === 'pendiente' && <th className="p-4 text-center w-24"></th>}
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-surfaceHighlight">
@@ -821,7 +926,14 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
                                             </td>
                                             {tab === 'pendiente' && (
                                                 <td className="p-4 text-center">
-                                                    <button onClick={() => handleRemoveItem(item.id)} className="text-muted hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
+                                                    {deletingItemId === item.id ? (
+                                                        <div className="flex items-center justify-center gap-2 animate-in zoom-in">
+                                                            <button onClick={() => handleRemoveItem(item.id)} className="bg-red-500 text-white p-1.5 rounded-lg hover:bg-red-600 transition-colors" title="Confirmar"><CheckCircle2 size={14}/></button>
+                                                            <button onClick={() => setDeletingItemId(null)} className="bg-surfaceHighlight text-text p-1.5 rounded-lg hover:bg-surfaceHighlight/80 transition-colors" title="Cancelar"><X size={14}/></button>
+                                                        </div>
+                                                    ) : (
+                                                        <button onClick={() => setDeletingItemId(item.id)} className="text-muted hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
+                                                    )}
                                                 </td>
                                             )}
                                         </tr>
@@ -836,11 +948,13 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
                 </div>
 
                 <div className="p-6 bg-surface border-t border-surfaceHighlight">
-                    <button onClick={onClose} className="w-full py-4 font-black uppercase text-xs text-text hover:bg-surfaceHighlight rounded-2xl border border-surfaceHighlight transition-all">Cerrar Detalle</button>
+                    <button onClick={handleClose} className="w-full py-4 font-black uppercase text-xs text-text hover:bg-surfaceHighlight rounded-2xl border border-surfaceHighlight transition-all">
+                        {hasChanges ? "Guardar y Cerrar" : "Cerrar Detalle"}
+                    </button>
                     {tab === 'confirmado' && (
                         <button 
                             onClick={() => { onClose(); onUpdate(); }} 
-                            className="w-full py-4 bg-primary/10 text-primary font-black uppercase text-xs rounded-2xl border border-primary/20 hover:bg-primary hover:text-white transition-all"
+                            className="w-full mt-2 py-4 bg-primary/10 text-primary font-black uppercase text-xs rounded-2xl border border-primary/20 hover:bg-primary hover:text-white transition-all"
                         >
                             Listo
                         </button>

@@ -20,7 +20,8 @@ import {
   Package,
   Phone,
   MessageCircle,
-  CalendarClock
+  CalendarClock,
+  Clipboard
 } from 'lucide-react';
 import { View, Product, OrderStatus, DetailedOrder, User, OrderZone, ClientMaster, SavedBudget, MasterProduct, DeliveryZone } from '../types';
 import { parseOrderText } from '../logic';
@@ -66,6 +67,7 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
   
   const dropdownRef = useRef<HTMLDivElement>(null);
   const productDropdownRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Cargar zonas disponibles
   useEffect(() => {
@@ -198,13 +200,26 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
   };
 
   const addManualProduct = (masterProd: MasterProduct) => {
+      // Determine price based on selected client's price list
+      let selectedPrice = masterProd.pventa_2; // Default to List 2
+      
+      if (selectedClient?.price_list) {
+          switch (selectedClient.price_list) {
+              case 1: selectedPrice = masterProd.pventa_1; break;
+              case 2: selectedPrice = masterProd.pventa_2; break;
+              case 3: selectedPrice = masterProd.pventa_3; break;
+              case 4: selectedPrice = masterProd.pventa_4; break;
+              default: selectedPrice = masterProd.pventa_2;
+          }
+      }
+
       const newProduct: Product = {
           code: masterProd.codart,
           name: masterProd.desart,
           originalQuantity: 1,
           quantity: 1,
-          unitPrice: masterProd.pventa_1 || 0,
-          subtotal: (masterProd.pventa_1 || 0),
+          unitPrice: selectedPrice || 0,
+          subtotal: (selectedPrice || 0),
           isChecked: false
       };
 
@@ -285,6 +300,41 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
   };
 
   const totalAmount = products.reduce((sum, p) => sum + p.subtotal, 0);
+
+  const handlePaste = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) return;
+
+      const textarea = textareaRef.current;
+      if (textarea) {
+        textarea.focus();
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const currentVal = textarea.value;
+        
+        // Insert text at cursor position or replace selection
+        const newVal = currentVal.substring(0, start) + text + currentVal.substring(end);
+        
+        // Update state
+        setRawText(newVal);
+        setSelectedBudgetId(null);
+
+        // Restore cursor position after pasted text
+        setTimeout(() => {
+            if (textarea) {
+                textarea.selectionStart = textarea.selectionEnd = start + text.length;
+            }
+        }, 0);
+      } else {
+        setRawText(text);
+        setSelectedBudgetId(null);
+      }
+    } catch (err) {
+      console.error("Failed to read clipboard:", err);
+      alert("No se pudo acceder al portapapeles. Pegá manualmente con Ctrl+V.");
+    }
+  };
 
   const handleProcessText = () => {
     if (!rawText.trim()) return;
@@ -562,11 +612,12 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
 
              {/* PEGADO DE TEXTO */}
              <div className="relative">
-                 <textarea value={rawText} onChange={(e) => { setRawText(e.target.value); setSelectedBudgetId(null); }} placeholder="Ej: 1 (x12) 49 FERNET BRANCA - $ 8.800,00 $ 105.600,00" className="w-full bg-surface border border-surfaceHighlight rounded-xl p-4 text-sm text-text focus:border-primary outline-none transition-colors min-h-[100px] resize-y font-mono leading-relaxed shadow-sm uppercase" />
+                 <textarea ref={textareaRef} value={rawText} onChange={(e) => { setRawText(e.target.value); setSelectedBudgetId(null); }} placeholder="Ej: 1 (x12) 49 FERNET BRANCA - $ 8.800,00 $ 105.600,00" className="w-full bg-surface border border-surfaceHighlight rounded-xl p-4 text-sm text-text focus:border-primary outline-none transition-colors min-h-[100px] resize-y font-mono leading-relaxed shadow-sm uppercase" />
              </div>
              
              <div className="flex gap-3">
                  <button onClick={handleProcessText} disabled={isProcessing || !rawText} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-surfaceHighlight hover:bg-surfaceHighlight/80 text-text text-sm font-bold transition-colors disabled:opacity-50">{isProcessing ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />} {isProcessing ? 'Procesando...' : 'Procesar Texto'}</button>
+                 <button onClick={handlePaste} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-surfaceHighlight hover:bg-surfaceHighlight/80 text-text text-sm font-bold transition-colors"><Clipboard size={16} /> Pegar</button>
                  <button onClick={handleClear} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-surfaceHighlight hover:bg-background text-muted hover:text-text text-sm font-bold transition-colors"><Eraser size={16} /> Limpiar</button>
              </div>
          </div>

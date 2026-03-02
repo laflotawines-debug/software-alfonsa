@@ -30,7 +30,10 @@ import {
   Library,
   ClipboardCheck,
   Building2,
-  BookOpen
+  BookOpen,
+  StickyNote,
+  Banknote,
+  Landmark
 } from 'lucide-react';
 import { NavItem, View, User } from '../types';
 import { SYSTEM_NAV_STRUCTURE } from '../logic';
@@ -53,6 +56,8 @@ const ICON_MAP: Record<string, React.ReactNode> = {
     [View.CLIENT_COLLECTIONS]: <Wallet size={20} />,
     [View.CATALOG]: <Library size={20} />,
     [View.PRESUPUESTADOR]: <Wrench size={20} />,
+    [View.ANOTACIONES]: <StickyNote size={20} />,
+    [View.CASH_COUNT]: <Banknote size={20} />,
     'list': <List size={16} />,
     'table': <Table size={16} />,
     'credit-card': <CreditCard size={16} />,
@@ -183,11 +188,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, curre
                               if (sub.id === View.CLIENTS_MASTER) subIcon = <Contact2 size={14} />;
                               if (sub.id === View.CLIENT_COLLECTIONS) subIcon = <Wallet size={14} />;
                               if (sub.id === View.SUPPLIERS_MASTER) subIcon = <Truck size={14} />;
+                              if (sub.id === View.INV_SUPPLIER_ORDERS) subIcon = <ShoppingBag size={14} />;
                               if (sub.id === View.STOCK_CONTROL) subIcon = <ClipboardCheck size={14} />;
                               if (sub.id === View.PRESUPUESTADOR) subIcon = <Calculator size={14} />;
                               if (sub.id === View.ETIQUETADOR) subIcon = <Tag size={14} />;
                               if (sub.id === View.EXPIRATIONS) subIcon = <AlertTriangle size={14} />;
                               if (sub.id === View.LISTA_CHINA) subIcon = <MessageSquareQuote size={14} />;
+                              if (sub.id === View.CASH_COUNT) subIcon = <Banknote size={14} />;
+                              if (sub.id === View.CASH_MOVEMENTS) subIcon = <ArrowRightLeft size={14} />;
+                              if (sub.id === View.BANK_MOVEMENTS) subIcon = <Landmark size={14} />;
+                              if (sub.id === View.CASH_CONCEPTS) subIcon = <Tag size={14} />;
 
                               return (
                                 <button key={sub.id} onClick={() => onNavigate(sub.id)} className={`text-left text-[11px] font-black uppercase py-2 px-3 rounded-lg transition-colors flex items-center gap-2 ${currentView === sub.id ? 'text-primary bg-primary/5' : 'text-muted hover:text-text hover:bg-surfaceHighlight/50'}`}>

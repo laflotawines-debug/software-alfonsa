@@ -30,7 +30,13 @@ export enum View {
     INV_ADJUSTMENTS = 'INV_ADJUSTMENTS',
     INV_TRANSFERS = 'INV_TRANSFERS',
     INV_HISTORY = 'INV_HISTORY',
-    INV_SUPPLIER_ORDERS = 'INV_SUPPLIER_ORDERS'
+    INV_SUPPLIER_ORDERS = 'INV_SUPPLIER_ORDERS',
+    ANOTACIONES = 'ANOTACIONES',
+    CASH_COUNT = 'CASH_COUNT',
+    CASH_CONCEPTS = 'CASH_CONCEPTS',
+    CASH_MOVEMENTS = 'CASH_MOVEMENTS',
+    BANK_MOVEMENTS = 'BANK_MOVEMENTS',
+    DAILY_CASH_SHEET = 'DAILY_CASH_SHEET'
 }
 
 export interface NavItem {
@@ -49,6 +55,23 @@ export interface AppNotification {
     link_id?: string;
     is_read: boolean;
     created_at: string;
+}
+
+// --- ANNOTATIONS ---
+export type AnnotationCategory = 'HORARIO' | 'PRODUCTO' | 'GASTOS' | 'OTROS';
+
+export interface Annotation {
+    id: string;
+    user_id: string;
+    content: string;
+    category: AnnotationCategory;
+    is_read: boolean;
+    created_at: string;
+    
+    // Joined fields
+    user_name?: string;
+    user_role?: string;
+    user_avatar?: string;
 }
 
 // --- ATTENDANCE DOMAIN ---
@@ -201,6 +224,9 @@ export interface ClientMaster {
     celular?: string;
     email?: string;
     created_at?: string;
+    price_list?: number;
+    contacto?: string;
+    activo?: boolean;
 }
 
 export interface ClientCollection {

@@ -33,6 +33,7 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
     const [clients, setClients] = useState<ClientMaster[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
+    const [showInactive, setShowInactive] = useState(false); // New state for filtering active/inactive
     
     // Modales y Estados
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -50,10 +51,20 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
     const fetchData = async () => {
         setIsLoading(true);
         try {
-            const { data, error } = await supabase
+            let query = supabase
                 .from('clients_master')
                 .select('*')
                 .order('nombre', { ascending: true });
+
+            // Optimización: Filtrar por estado en la base de datos
+            if (showInactive) {
+                query = query.eq('activo', false);
+            } else {
+                // Muestra activos (true) y nulos (por defecto)
+                query = query.neq('activo', false);
+            }
+
+            const { data, error } = await query;
 
             if (error) throw error;
             setClients(data || []);
@@ -66,7 +77,7 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
 
     useEffect(() => {
         fetchData();
-    }, []);
+    }, [showInactive]);
 
     // --- LÓGICA DE ELIMINACIÓN ---
     const executeDelete = async () => {
@@ -187,7 +198,7 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
     const filteredClients = useMemo(() => {
         const keywords = searchTerm.toLowerCase().split(/\s+/).filter(k => k.length > 0);
         return clients.filter(c => {
-            const textToSearch = `${c.nombre} ${c.codigo} ${c.localidad || ''} ${c.domicilio || ''}`.toLowerCase();
+            const textToSearch = `${c.nombre} ${c.codigo} ${c.localidad || ''} ${c.domicilio || ''} ${c.contacto || ''} ${c.celular || ''}`.toLowerCase();
             return keywords.every(k => textToSearch.includes(k));
         });
     }, [clients, searchTerm]);
@@ -229,13 +240,27 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
                 </div>
             </div>
 
-            {/* Barra de Búsqueda */}
+            {/* Barra de Búsqueda y Filtros */}
             <div className="bg-surface border border-surfaceHighlight rounded-3xl p-5 shadow-sm flex flex-col md:flex-row items-center gap-4">
+                <div className="flex items-center gap-2 w-full md:w-auto">
+                    <button 
+                        onClick={() => setShowInactive(false)}
+                        className={`px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${!showInactive ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-background text-muted border border-surfaceHighlight hover:bg-surfaceHighlight'}`}
+                    >
+                        Activos
+                    </button>
+                    <button 
+                        onClick={() => setShowInactive(true)}
+                        className={`px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${showInactive ? 'bg-red-500 text-white shadow-lg shadow-red-500/20' : 'bg-background text-muted border border-surfaceHighlight hover:bg-surfaceHighlight'}`}
+                    >
+                        Inactivos
+                    </button>
+                </div>
                 <div className="relative flex-1 w-full">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
                     <input 
                         type="text" 
-                        placeholder="Búsqueda inteligente: Ej 'fer satti'..." 
+                        placeholder={`Buscar en ${showInactive ? 'Inactivos' : 'Activos'}...`} 
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         className="w-full bg-background border border-surfaceHighlight rounded-xl py-3.5 pl-12 pr-4 text-sm font-bold text-text outline-none focus:border-primary transition-all shadow-inner uppercase"
@@ -453,7 +478,10 @@ const ClientModal: React.FC<{ initialData: ClientMaster | null, onClose: () => v
         localidad: initialData?.localidad || '',
         provincia: initialData?.provincia || '',
         celular: initialData?.celular || '',
-        email: initialData?.email || ''
+        email: initialData?.email || '',
+        price_list: initialData?.price_list || 2, // Default to List 2
+        contacto: initialData?.contacto || '',
+        activo: initialData?.activo !== false // Default to true
     });
 
     const isEdit = !!initialData;
@@ -472,7 +500,10 @@ const ClientModal: React.FC<{ initialData: ClientMaster | null, onClose: () => v
                 localidad: formData.localidad?.trim().toUpperCase() || null,
                 provincia: formData.provincia?.trim().toUpperCase() || null,
                 celular: formData.celular?.trim() || null,
-                email: formData.email?.trim().toLowerCase() || null
+                email: formData.email?.trim().toLowerCase() || null,
+                price_list: formData.price_list,
+                contacto: formData.contacto?.trim().toUpperCase() || null,
+                activo: formData.activo
             };
 
             if (isEdit) {
@@ -490,7 +521,15 @@ const ClientModal: React.FC<{ initialData: ClientMaster | null, onClose: () => v
             }
             onSuccess();
         } catch (err: any) {
-            setError(err.message);
+            if (err.message?.includes("Could not find the 'price_list' column")) {
+                setError("⚠️ Error de Base de Datos: Falta la columna 'price_list'. Por favor solicite al administrador ejecutar el script de actualización.");
+            } else if (err.message?.includes("Could not find the 'contacto' column")) {
+                setError("⚠️ Error de Base de Datos: Falta la columna 'contacto'. Por favor solicite al administrador ejecutar el script de actualización.");
+            } else if (err.message?.includes("Could not find the 'activo' column")) {
+                setError("⚠️ Error de Base de Datos: Falta la columna 'activo'. Por favor solicite al administrador ejecutar el script de actualización.");
+            } else {
+                setError(err.message);
+            }
         } finally {
             setIsSaving(false);
         }
@@ -498,23 +537,62 @@ const ClientModal: React.FC<{ initialData: ClientMaster | null, onClose: () => v
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-            <div className="bg-surface w-full max-w-2xl rounded-3xl border border-surfaceHighlight shadow-2xl overflow-hidden">
-                <div className="p-6 border-b border-surfaceHighlight flex justify-between items-center bg-background/30">
+            <div className="bg-surface w-full max-w-2xl rounded-3xl border border-surfaceHighlight shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                <div className="p-6 border-b border-surfaceHighlight flex justify-between items-center bg-background/30 shrink-0">
                     <h3 className="text-xl font-black text-text uppercase italic">
                         {isEdit ? `Editando: ${initialData.nombre}` : 'Ficha de Nuevo Cliente'}
                     </h3>
                     <button onClick={onClose} className="p-2 hover:bg-surfaceHighlight rounded-full text-muted transition-colors"><X size={24}/></button>
                 </div>
                 
-                <form onSubmit={handleSave} className="p-8 space-y-6">
-                    {error && (
-                        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-2xl text-red-600 text-xs font-bold flex items-center gap-3 animate-in shake">
-                            <AlertCircle size={18} /> {error}
-                        </div>
-                    )}
+                <div className="overflow-y-auto p-8">
+                    <form onSubmit={handleSave} className="space-y-6">
+                        {error && (
+                            <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-2xl text-red-600 text-xs font-bold flex items-center gap-3 animate-in shake">
+                                <AlertCircle size={18} /> {error}
+                            </div>
+                        )}
 
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-                        <div className="md:col-span-4 space-y-2">
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+                            <div className="md:col-span-12 flex justify-end">
+                                <label className="flex items-center gap-3 cursor-pointer group select-none">
+                                    <span className={`text-xs font-black uppercase transition-colors ${formData.activo ? 'text-primary' : 'text-muted'}`}>
+                                        {formData.activo ? 'Cliente Activo' : 'Cliente Inactivo'}
+                                    </span>
+                                    <div className="relative w-12 h-7">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={formData.activo} 
+                                            onChange={e => setFormData({...formData, activo: e.target.checked})} 
+                                            className="sr-only" 
+                                        />
+                                        <div className={`absolute inset-0 rounded-full transition-all shadow-inner ${formData.activo ? 'bg-primary' : 'bg-surfaceHighlight'}`}></div>
+                                        <div className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow-md transition-all ${formData.activo ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                                    </div>
+                                </label>
+                            </div>
+
+                            <div className="md:col-span-12 space-y-2">
+                                <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Lista de Precios Predeterminada</label>
+                                <div className="flex gap-4 p-4 bg-surfaceHighlight/30 rounded-2xl border border-surfaceHighlight overflow-x-auto">
+                                    {[1, 2, 3, 4].map((listNum) => (
+                                        <label key={listNum} className={`flex-1 min-w-[80px] flex items-center justify-center gap-2 p-3 rounded-xl border cursor-pointer transition-all ${formData.price_list === listNum ? 'bg-primary/10 border-primary text-primary shadow-sm' : 'bg-background border-surfaceHighlight text-muted hover:border-primary/30'}`}>
+                                            <input 
+                                                type="radio" 
+                                                name="price_list" 
+                                                value={listNum} 
+                                                checked={formData.price_list === listNum} 
+                                                onChange={() => setFormData({...formData, price_list: listNum})} 
+                                                className="hidden" 
+                                            />
+                                            <span className="text-xs font-black uppercase">Lista {listNum}</span>
+                                            {formData.price_list === listNum && <CheckCircle2 size={14} />}
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="md:col-span-4 space-y-2">
                             <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Código Único *</label>
                             <div className="relative">
                                 <Hash className={`absolute left-4 top-1/2 -translate-y-1/2 ${isEdit ? 'text-muted/30' : 'text-muted'}`} size={16} />
@@ -535,6 +613,14 @@ const ClientModal: React.FC<{ initialData: ClientMaster | null, onClose: () => v
                             <div className="relative">
                                 <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={16} />
                                 <input required type="text" value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} className="w-full bg-background border border-surfaceHighlight rounded-2xl py-3.5 pl-11 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase" placeholder="NOMBRE COMPLETO" />
+                            </div>
+                        </div>
+
+                        <div className="md:col-span-12 space-y-2">
+                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Contacto Principal</label>
+                            <div className="relative">
+                                <Contact2 className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={16} />
+                                <input type="text" value={formData.contacto} onChange={e => setFormData({...formData, contacto: e.target.value})} className="w-full bg-background border border-surfaceHighlight rounded-2xl py-3.5 pl-11 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase" placeholder="NOMBRE DEL ENCARGADO" />
                             </div>
                         </div>
 
@@ -585,5 +671,6 @@ const ClientModal: React.FC<{ initialData: ClientMaster | null, onClose: () => v
                 </form>
             </div>
         </div>
-    );
+    </div>
+);
 };

@@ -34,12 +34,24 @@ export const SYSTEM_NAV_STRUCTURE = [
     module: 'General'
   },
   { 
+    id: View.CASH_COUNT,
+    label: 'Caja y Bancos',
+    module: 'Caja y Bancos',
+    subItems: [
+        { id: View.CASH_COUNT, label: 'Arqueo de Caja', permission: 'cash.count' },
+        { id: View.DAILY_CASH_SHEET, label: 'Planilla de Caja Diaria', permission: 'cash.movements' },
+        { id: View.CASH_MOVEMENTS, label: 'Movimientos de Caja', permission: 'cash.movements' },
+        { id: View.BANK_MOVEMENTS, label: 'Movimientos de Bancos', permission: 'bank.movements' },
+        { id: View.CASH_CONCEPTS, label: 'Conceptos de Ingreso/Egreso', permission: 'cash.concepts' }
+    ]
+  },
+  { 
     id: View.ORDERS, 
     label: 'Pedidos', 
     module: 'Pedidos',
     subItems: [
         { id: View.ORDERS, label: 'Gestión de pedidos', permission: 'orders.view' },
-        { id: View.CREATE_BUDGET, label: 'Crear nuevo pedido', permission: 'orders.create' },
+        { id: View.CREATE_BUDGET, label: 'Crear pedido', permission: 'orders.create' },
         { id: View.ORDER_SHEET, label: 'Planilla de Viajes', permission: 'orders.sheet' },
     ]
   },
@@ -59,6 +71,7 @@ export const SYSTEM_NAV_STRUCTURE = [
     module: 'Proveedores',
     subItems: [
         { id: View.SUPPLIERS_MASTER, label: 'Gestión de Proveedores', permission: 'catalog.suppliers' },
+        { id: View.INV_SUPPLIER_ORDERS, label: 'Pedidos Proveedores', permission: 'inventory.supplier_orders' },
         { id: View.PROVIDER_STATEMENTS, label: 'Estados de Cuenta', permission: 'payments.statements' }
     ]
   },
@@ -68,7 +81,6 @@ export const SYSTEM_NAV_STRUCTURE = [
     module: 'Inventario',
     subItems: [
         { id: View.INV_INBOUNDS, label: 'Ingresos', permission: 'inventory.inbounds' },
-        { id: View.INV_SUPPLIER_ORDERS, label: 'Pedidos Proveedores', permission: 'inventory.supplier_orders' },
         { id: View.INV_ADJUSTMENTS, label: 'Ajustes', permission: 'inventory.adjustments' },
         { id: View.INV_TRANSFERS, label: 'Transferencias', permission: 'inventory.transfers' },
         { id: View.INV_HISTORY, label: 'Seguimiento', permission: 'inventory.history' },
@@ -105,6 +117,12 @@ export const SYSTEM_NAV_STRUCTURE = [
         { id: View.EXPIRATIONS, label: 'Vencimientos', permission: 'tools.expirations' },
         { id: View.LISTA_CHINA, label: 'Lista china', permission: 'tools.lista_china' },
     ]
+  },
+  { 
+    id: View.ANOTACIONES, 
+    label: 'Notas', 
+    module: 'General',
+    // No permission needed, accessible to all logged users
   }
 ];
 

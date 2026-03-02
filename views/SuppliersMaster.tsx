@@ -30,16 +30,25 @@ export const SuppliersMaster: React.FC<SuppliersMasterProps> = ({ currentUser })
     const [suppliers, setSuppliers] = useState<SupplierMaster[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
+    const [showInactive, setShowInactive] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingSupplier, setEditingSupplier] = useState<SupplierMaster | null>(null);
 
     const fetchSuppliers = async () => {
         setIsLoading(true);
         try {
-            const { data, error } = await supabase
+            let query = supabase
                 .from('providers_master')
                 .select('*')
                 .order('razon_social', { ascending: true });
+
+            if (showInactive) {
+                query = query.eq('activo', false);
+            } else {
+                query = query.neq('activo', false);
+            }
+
+            const { data, error } = await query;
             if (error) throw error;
             setSuppliers(data || []);
         } catch (err) {
@@ -51,7 +60,7 @@ export const SuppliersMaster: React.FC<SuppliersMasterProps> = ({ currentUser })
 
     useEffect(() => {
         fetchSuppliers();
-    }, []);
+    }, [showInactive]);
 
     const filteredSuppliers = useMemo(() => {
         const lower = searchTerm.toLowerCase();
@@ -128,12 +137,26 @@ export const SuppliersMaster: React.FC<SuppliersMasterProps> = ({ currentUser })
                 </button>
             </div>
 
-            <div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 shadow-sm">
-                <div className="relative">
+            <div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 shadow-sm flex flex-col md:flex-row items-center gap-4">
+                <div className="flex items-center gap-2 w-full md:w-auto">
+                    <button 
+                        onClick={() => setShowInactive(false)}
+                        className={`px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${!showInactive ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-background text-muted border border-surfaceHighlight hover:bg-surfaceHighlight'}`}
+                    >
+                        Activos
+                    </button>
+                    <button 
+                        onClick={() => setShowInactive(true)}
+                        className={`px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${showInactive ? 'bg-red-500 text-white shadow-lg shadow-red-500/20' : 'bg-background text-muted border border-surfaceHighlight hover:bg-surfaceHighlight'}`}
+                    >
+                        Inactivos
+                    </button>
+                </div>
+                <div className="relative flex-1 w-full">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={20} />
                     <input 
                         type="text" 
-                        placeholder="Buscar por código, razón social o nombre comercial..." 
+                        placeholder={`Buscar en ${showInactive ? 'Inactivos' : 'Activos'}...`} 
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         className="w-full bg-background border border-surfaceHighlight rounded-2xl py-4 pl-12 pr-4 text-sm font-bold text-text outline-none focus:border-primary transition-all shadow-inner"

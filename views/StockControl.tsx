@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
     Plus, 
     Search, 
@@ -10,7 +10,7 @@ import {
     ChevronRight, 
     Package, 
     Filter, 
-    User as UserIcon,
+    User as UserIcon, 
     ClipboardCheck, 
     Warehouse,
     Save,
@@ -29,7 +29,11 @@ import {
     Edit3,
     ArrowUpRight,
     ArrowDownLeft,
-    XCircle
+    XCircle,
+    Layers,
+    BoxSelect,
+    ArrowDown,
+    Database
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { User, StockControlSession, StockControlItem, MasterProduct } from '../types';
@@ -50,9 +54,28 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
     const [newName, setNewName] = useState('');
     const [warehouseId, setWarehouseId] = useState('');
     const [warehouses, setWarehouses] = useState<{id: string, name: string}[]>([]);
+    
+    // Productos y Filtros
     const [products, setProducts] = useState<MasterProduct[]>([]);
+    const [isProductsLoading, setIsProductsLoading] = useState(false);
     const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
-    const [filters, setFilters] = useState({ family: 'TODAS', subfamily: 'TODAS', provider: 'TODOS', search: '' });
+    const [filters, setFilters] = useState({ 
+        family: 'TODAS', 
+        subfamily: 'TODAS', 
+        provider: 'TODOS', 
+        search: '' 
+    });
+    const [onlyWithStock, setOnlyWithStock] = useState(false);
+
+    // --- PAGINATION STATE ---
+    const PAGE_SIZE = 100;
+    const [page, setPage] = useState(0);
+    const [hasMore, setHasMore] = useState(true);
+
+    // --- METADATA FOR FILTERS ---
+    const [metaFamilies, setMetaFamilies] = useState<string[]>([]);
+    const [metaSubfamilies, setMetaSubfamilies] = useState<string[]>([]);
+    const [metaProviders, setMetaProviders] = useState<string[]>([]);
 
     // --- EXECUTION / REVIEW STATES ---
     const [controlItems, setControlItems] = useState<any[]>([]);
@@ -88,11 +111,150 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
         } catch (e) { console.error(e); } finally { setIsLoading(false); }
     };
 
+    // Cargar metadatos para los filtros (solo una vez)
+    const fetchFilterMetadata = async () => {
+        try {
+            const { data } = await supabase.from('master_products').select('familia, nsubf, nomprov');
+            if (data) {
+                const f = new Set<string>();
+                const s = new Set<string>();
+                const p = new Set<string>();
+                data.forEach((item: any) => {
+                    if (item.familia) f.add(item.familia);
+                    if (item.nsubf) s.add(item.nsubf);
+                    if (item.nomprov) p.add(item.nomprov);
+                });
+                setMetaFamilies(Array.from(f).sort());
+                setMetaSubfamilies(Array.from(s).sort());
+                setMetaProviders(Array.from(p).sort());
+            }
+        } catch (e) { console.error("Error loading metadata", e); }
+    };
+
+    // Función de carga paginada con filtros en servidor
+    const fetchProducts = useCallback(async (isLoadMore = false) => {
+        setIsProductsLoading(true);
+        try {
+            const currentOffset = isLoadMore ? (page + 1) * PAGE_SIZE : 0;
+            const rangeEnd = currentOffset + PAGE_SIZE - 1;
+
+            let query = supabase.from('master_products').select('*');
+
+            // Filtros de Texto
+            if (filters.search.trim()) {
+                const term = filters.search.trim();
+                query = query.or(`desart.ilike.%${term}%,codart.ilike.%${term}%`);
+            }
+
+            // Filtros de Categoría
+            if (filters.family !== 'TODAS') query = query.eq('familia', filters.family);
+            if (filters.subfamily !== 'TODAS') query = query.eq('nsubf', filters.subfamily);
+            if (filters.provider !== 'TODOS') query = query.eq('nomprov', filters.provider);
+
+            // Filtro de Stock (Depende del almacén seleccionado)
+            if (onlyWithStock && warehouseId) {
+                const selectedWh = warehouses.find(w => w.id === warehouseId);
+                if (selectedWh?.name === 'LLERENA') {
+                    query = query.gt('stock_llerena', 0);
+                } else if (selectedWh?.name === 'BETBEDER') {
+                    query = query.gt('stock_betbeder', 0);
+                }
+            }
+
+            // Orden y Paginación
+            query = query.order('desart', { ascending: true }).range(currentOffset, rangeEnd);
+
+            const { data, error } = await query;
+            
+            if (error) throw error;
+
+            if (data) {
+                if (isLoadMore) {
+                    setProducts(prev => [...prev, ...data]);
+                    setPage(prev => prev + 1);
+                } else {
+                    setProducts(data);
+                    setPage(0);
+                }
+                // Si trajimos menos de una página completa, no hay más
+                setHasMore(data.length === PAGE_SIZE);
+            }
+        } catch (e: any) {
+            console.error("Error fetching products:", e);
+            alert("Error: " + e.message);
+        } finally {
+            setIsProductsLoading(false);
+        }
+    }, [filters, onlyWithStock, warehouseId, warehouses, page]);
+
+    // Función para cargar TODO el resultado de los filtros (Sin paginación visual, bucle interno)
+    const handleLoadAll = async () => {
+        setIsProductsLoading(true);
+        try {
+            const BATCH_SIZE = 1000;
+            let from = 0;
+            let allFetched: MasterProduct[] = [];
+            let keepFetching = true;
+
+            while (keepFetching) {
+                let query = supabase.from('master_products').select('*');
+
+                // Aplicar mismos filtros
+                if (filters.search.trim()) {
+                    const term = filters.search.trim();
+                    query = query.or(`desart.ilike.%${term}%,codart.ilike.%${term}%`);
+                }
+                if (filters.family !== 'TODAS') query = query.eq('familia', filters.family);
+                if (filters.subfamily !== 'TODAS') query = query.eq('nsubf', filters.subfamily);
+                if (filters.provider !== 'TODOS') query = query.eq('nomprov', filters.provider);
+
+                if (onlyWithStock && warehouseId) {
+                    const selectedWh = warehouses.find(w => w.id === warehouseId);
+                    if (selectedWh?.name === 'LLERENA') query = query.gt('stock_llerena', 0);
+                    else if (selectedWh?.name === 'BETBEDER') query = query.gt('stock_betbeder', 0);
+                }
+
+                query = query.order('desart', { ascending: true }).range(from, from + BATCH_SIZE - 1);
+                
+                const { data, error } = await query;
+                if (error) throw error;
+
+                if (data && data.length > 0) {
+                    allFetched = [...allFetched, ...data];
+                    if (data.length < BATCH_SIZE) keepFetching = false;
+                    else from += BATCH_SIZE;
+                } else {
+                    keepFetching = false;
+                }
+            }
+
+            setProducts(allFetched);
+            setHasMore(false); // Ya trajimos todo
+            setPage(0); // Reset page logic though it won't be used
+        } catch (e: any) {
+            alert("Error al cargar todo: " + e.message);
+        } finally {
+            setIsProductsLoading(false);
+        }
+    };
+
+    // Efecto para recargar cuando cambian los filtros (reset)
+    useEffect(() => {
+        if (mode === 'create' && isVale) {
+            // Debounce para la búsqueda de texto
+            const timeoutId = setTimeout(() => {
+                fetchProducts(false);
+            }, 400);
+            return () => clearTimeout(timeoutId);
+        }
+    }, [filters, onlyWithStock, warehouseId]);
+
+    // Carga inicial
     useEffect(() => {
         fetchSessions();
         if (isVale) {
             supabase.from('warehouses').select('*').then(res => res.data && setWarehouses(res.data));
-            supabase.from('master_products').select('*').order('desart').then(res => res.data && setProducts(res.data));
+            fetchFilterMetadata();
         }
     }, [isVale]);
 
@@ -116,6 +278,10 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
             const warehouseObj = warehouses.find(w => w.id === warehouseId);
             const itemsToInsert = Array.from(selectedProducts).map(cod => {
                 const p = products.find(prod => prod.codart === cod);
+                // Si el producto no está en la lista actual (paginación), habría que buscarlo, 
+                // pero asumimos que el usuario selecciona de lo que ve.
+                // Para robustez, si p es undefined, usamos 0 como stock sistema (o podríamos hacer fetch individual).
+                // Aquí usamos lo que tenemos en memoria o 0.
                 const stock = warehouseObj?.name === 'LLERENA' ? p?.stock_llerena : p?.stock_betbeder;
                 return { session_id: session.id, codart: cod, system_qty: stock || 0 };
             });
@@ -192,19 +358,6 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
         XLSX.writeFile(wb, `Auditoria_${activeSession.name}_${new Date().toISOString().split('T')[0]}.xlsx`);
     };
 
-    const filteredProducts = useMemo(() => {
-        const keywords = filters.search.toLowerCase().split(/\s+/).filter(k => k.length > 0);
-        
-        return products.filter(p => {
-            const textToSearch = `${p.desart} ${p.codart}`.toLowerCase();
-            const matchesSearch = keywords.every(k => textToSearch.includes(k));
-            
-            const matchesFamily = filters.family === 'TODAS' || p.familia === filters.family;
-            const matchesProv = filters.provider === 'TODOS' || p.nomprov === filters.provider;
-            return matchesFamily && matchesProv && matchesSearch;
-        }).slice(0, 200);
-    }, [products, filters]);
-
     const filteredExecutionItems = useMemo(() => {
         const keywords = executionSearch.toLowerCase().split(/\s+/).filter(k => k.length > 0);
         if (keywords.length === 0) return controlItems;
@@ -223,14 +376,181 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
         });
     }, [controlItems, reviewSearch]);
 
-    const families = useMemo(() => Array.from(new Set(products.map(p => p.familia).filter(Boolean))), [products]);
-    const providers = useMemo(() => Array.from(new Set(products.map(p => p.nomprov).filter(Boolean))), [products]);
+    // Función para seleccionar/deseleccionar todo lo visible en la página actual
+    const toggleSelectAllVisible = () => {
+        const next = new Set(selectedProducts);
+        const allVisibleSelected = products.every(p => selectedProducts.has(p.codart));
+        
+        if (allVisibleSelected) {
+            products.forEach(p => next.delete(p.codart));
+        } else {
+            products.forEach(p => next.add(p.codart));
+        }
+        setSelectedProducts(next);
+    };
 
     if (mode === 'create') {
         return (
             <div className="flex flex-col gap-6 pb-20 animate-in slide-in-from-right duration-300">
-                <div className="flex items-center gap-4"><button onClick={() => setMode('list')} className="p-2 rounded-full hover:bg-surfaceHighlight text-muted transition-colors"><ChevronRight className="rotate-180" size={24}/></button><h2 className="text-2xl font-black text-text uppercase italic">Crear Auditoría</h2></div>
-                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6"><div className="lg:col-span-1 space-y-4"><div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 shadow-sm space-y-4 sticky top-24"><h4 className="text-[10px] font-black uppercase text-muted tracking-widest ml-1">Configuración</h4><input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nombre del Control..." className="w-full bg-background border border-surfaceHighlight rounded-xl p-3.5 text-sm font-bold outline-none focus:border-primary uppercase shadow-inner" /><select value={warehouseId} onChange={e => setWarehouseId(e.target.value)} className="w-full bg-background border border-surfaceHighlight rounded-xl p-3.5 text-sm font-bold outline-none cursor-pointer appearance-none uppercase"><option value="">Depósito...</option>{warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}</select><div className="pt-4 border-t border-surfaceHighlight"><div className="flex justify-between items-center mb-4 px-1"><span className="text-[10px] font-black text-muted uppercase">Seleccionados</span><span className="text-sm font-black text-primary bg-primary/10 px-3 py-1 rounded-full">{selectedProducts.size}</span></div><button onClick={handleCreateSession} disabled={selectedProducts.size === 0 || !newName || !warehouseId} className="w-full py-4 bg-primary text-white rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-primaryHover transition-all active:scale-95 disabled:opacity-30">Generar Auditoría</button></div></div></div><div className="lg:col-span-3 space-y-6"><div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 shadow-sm grid grid-cols-1 md:grid-cols-3 gap-4"><div className="relative"><Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={14}/><select value={filters.family} onChange={e => setFilters({...filters, family: e.target.value})} className="w-full bg-background border border-surfaceHighlight rounded-xl p-2.5 pl-10 text-xs font-bold uppercase outline-none appearance-none"><option value="TODAS">FAMILIAS</option>{families.map(f => <option key={f} value={f}>{f}</option>)}</select></div><div className="relative"><Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={14}/><select value={filters.provider} onChange={e => setFilters({...filters, provider: e.target.value})} className="w-full bg-background border border-surfaceHighlight rounded-xl p-2.5 pl-10 text-xs font-bold uppercase outline-none appearance-none"><option value="TODOS">PROVEEDORES</option>{providers.map(p => <option key={p} value={p}>{p}</option>)}</select></div><div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={14}/><input value={filters.search} onChange={e => setFilters({...filters, search: e.target.value})} placeholder="BUSCAR ARTÍCULO..." className="w-full bg-background border border-surfaceHighlight rounded-xl py-2.5 pl-10 pr-4 text-xs font-bold outline-none focus:border-primary uppercase shadow-inner"/></div></div><div className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm"><table className="w-full text-left border-collapse"><thead className="bg-background/50 border-b border-surfaceHighlight text-[10px] text-muted font-black uppercase tracking-widest"><tr><th className="p-4 w-12 text-center"><button onClick={() => { const next = new Set(selectedProducts); const allVisibleIn = filteredProducts.every(p => selectedProducts.has(p.codart)); if (allVisibleIn) filteredProducts.forEach(p => next.delete(p.codart)); else filteredProducts.forEach(p => next.add(p.codart)); setSelectedProducts(next); }}>{filteredProducts.every(p => selectedProducts.has(p.codart)) ? <CheckSquare className="text-primary"/> : <Square/>}</button></th><th className="p-4">Artículo</th><th className="p-4">Familia</th><th className="p-4 text-right pr-6">Acción</th></tr></thead><tbody className="divide-y divide-surfaceHighlight">{filteredProducts.map(p => (<tr key={p.codart} className={`hover:bg-primary/5 transition-colors cursor-pointer group ${selectedProducts.has(p.codart) ? 'bg-primary/5' : ''}`} onClick={() => { const next = new Set(selectedProducts); if (next.has(p.codart)) next.delete(p.codart); else next.add(p.codart); setSelectedProducts(next); }}><td className="p-4 text-center">{selectedProducts.has(p.codart) ? <CheckSquare className="text-primary" size={20}/> : <Square size={20}/>}</td><td className="p-4"><p className="text-xs font-black text-text uppercase truncate max-w-[350px]">{p.desart}</p><p className="text-[10px] font-mono text-muted">#{p.codart}</p></td><td className="p-4"><span className="text-[10px] font-bold text-muted uppercase bg-background px-2 py-0.5 rounded border border-surfaceHighlight">{p.familia || 'S/D'}</span></td><td className="p-4 text-right pr-6"><ChevronRight className="ml-auto text-muted opacity-30" size={16}/></td></tr>))}</tbody></table></div></div></div>
+                <div className="flex items-center gap-4">
+                    <button onClick={() => setMode('list')} className="p-2 rounded-full hover:bg-surfaceHighlight text-muted transition-colors"><ChevronRight className="rotate-180" size={24}/></button>
+                    <h2 className="text-2xl font-black text-text uppercase italic">Crear Auditoría</h2>
+                </div>
+                
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                    <div className="lg:col-span-1 space-y-4">
+                        <div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 shadow-sm space-y-4 sticky top-24">
+                            <h4 className="text-[10px] font-black uppercase text-muted tracking-widest ml-1">Configuración</h4>
+                            
+                            <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nombre del Control..." className="w-full bg-background border border-surfaceHighlight rounded-xl p-3.5 text-sm font-bold outline-none focus:border-primary uppercase shadow-inner" />
+                            
+                            <select value={warehouseId} onChange={e => setWarehouseId(e.target.value)} className="w-full bg-background border border-surfaceHighlight rounded-xl p-3.5 text-sm font-bold outline-none cursor-pointer appearance-none uppercase">
+                                <option value="">Depósito...</option>
+                                {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                            </select>
+
+                            <button 
+                                onClick={() => setOnlyWithStock(!onlyWithStock)}
+                                className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 border transition-all ${onlyWithStock ? 'bg-blue-500/10 border-blue-500 text-blue-600' : 'bg-background border-surfaceHighlight text-muted hover:bg-surfaceHighlight'}`}
+                            >
+                                {onlyWithStock ? <CheckSquare size={16}/> : <Square size={16}/>}
+                                <span className="text-[10px] font-black uppercase">Sólo Artículos con Stock</span>
+                            </button>
+
+                            <div className="pt-4 border-t border-surfaceHighlight">
+                                <div className="flex justify-between items-center mb-4 px-1">
+                                    <span className="text-[10px] font-black text-muted uppercase">Seleccionados</span>
+                                    <span className="text-sm font-black text-primary bg-primary/10 px-3 py-1 rounded-full">{selectedProducts.size}</span>
+                                </div>
+                                <button onClick={handleCreateSession} disabled={selectedProducts.size === 0 || !newName || !warehouseId} className="w-full py-4 bg-primary text-white rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-primaryHover transition-all active:scale-95 disabled:opacity-30">Generar Auditoría</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="lg:col-span-3 space-y-6">
+                        <div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 shadow-sm flex flex-col gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={14}/>
+                                    <input value={filters.search} onChange={e => setFilters({...filters, search: e.target.value})} placeholder="BUSCAR ARTÍCULO..." className="w-full bg-background border border-surfaceHighlight rounded-xl py-2.5 pl-10 pr-4 text-xs font-bold outline-none focus:border-primary uppercase shadow-inner"/>
+                                </div>
+                                <div className="relative">
+                                    <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={14}/>
+                                    <select value={filters.family} onChange={e => setFilters({...filters, family: e.target.value})} className="w-full bg-background border border-surfaceHighlight rounded-xl p-2.5 pl-10 text-xs font-bold uppercase outline-none appearance-none cursor-pointer">
+                                        <option value="TODAS">FAMILIAS</option>
+                                        {metaFamilies.map(f => <option key={f} value={f}>{f}</option>)}
+                                    </select>
+                                </div>
+                                <div className="relative">
+                                    <Layers className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={14}/>
+                                    <select value={filters.subfamily} onChange={e => setFilters({...filters, subfamily: e.target.value})} className="w-full bg-background border border-surfaceHighlight rounded-xl p-2.5 pl-10 text-xs font-bold uppercase outline-none appearance-none cursor-pointer">
+                                        <option value="TODAS">SUBFAMILIAS</option>
+                                        {metaSubfamilies.map(f => <option key={f} value={f}>{f}</option>)}
+                                    </select>
+                                </div>
+                                <div className="relative">
+                                    <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={14}/>
+                                    <select value={filters.provider} onChange={e => setFilters({...filters, provider: e.target.value})} className="w-full bg-background border border-surfaceHighlight rounded-xl p-2.5 pl-10 text-xs font-bold uppercase outline-none appearance-none cursor-pointer">
+                                        <option value="TODOS">PROVEEDORES</option>
+                                        {metaProviders.map(p => <option key={p} value={p}>{p}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm flex flex-col min-h-[400px]">
+                            {/* TABLA DE PRODUCTOS PAGINADA */}
+                            <div className="overflow-x-auto flex-1">
+                                <table className="w-full text-left border-collapse">
+                                    <thead className="bg-background/50 border-b border-surfaceHighlight text-[10px] text-muted font-black uppercase tracking-widest sticky top-0 backdrop-blur-md z-10">
+                                        <tr>
+                                            <th className="p-4 w-12 text-center">
+                                                <button onClick={toggleSelectAllVisible}>
+                                                    {products.length > 0 && products.every(p => selectedProducts.has(p.codart)) ? <CheckSquare className="text-primary"/> : <Square/>}
+                                                </button>
+                                            </th>
+                                            <th className="p-4">Artículo</th>
+                                            <th className="p-4">Familia / Sub</th>
+                                            <th className="p-4 text-center">Stock</th>
+                                            <th className="p-4 text-right pr-6"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-surfaceHighlight">
+                                        {products.length === 0 && !isProductsLoading ? (
+                                            <tr>
+                                                <td colSpan={5} className="p-10 text-center text-muted uppercase font-bold text-xs italic">
+                                                    No se encontraron productos con los filtros actuales.
+                                                </td>
+                                            </tr>
+                                        ) : (
+                                            products.map(p => {
+                                                const stockVal = warehouses.find(w => w.id === warehouseId)?.name === 'LLERENA' ? p.stock_llerena : p.stock_betbeder;
+                                                return (
+                                                    <tr 
+                                                        key={p.codart} 
+                                                        className={`hover:bg-primary/5 transition-colors cursor-pointer group ${selectedProducts.has(p.codart) ? 'bg-primary/5' : ''}`} 
+                                                        onClick={() => { const next = new Set(selectedProducts); if (next.has(p.codart)) next.delete(p.codart); else next.add(p.codart); setSelectedProducts(next); }}
+                                                    >
+                                                        <td className="p-4 text-center">
+                                                            {selectedProducts.has(p.codart) ? <CheckSquare className="text-primary" size={20}/> : <Square size={20} className="text-muted"/>}
+                                                        </td>
+                                                        <td className="p-4">
+                                                            <p className="text-xs font-black text-text uppercase truncate max-w-[350px]">{p.desart}</p>
+                                                            <p className="text-[10px] font-mono text-muted">#{p.codart}</p>
+                                                        </td>
+                                                        <td className="p-4">
+                                                            <div className="flex flex-col gap-1">
+                                                                <span className="text-[9px] font-bold text-muted uppercase bg-background px-2 py-0.5 rounded border border-surfaceHighlight w-fit">{p.familia || 'S/D'}</span>
+                                                                {p.nsubf && <span className="text-[9px] font-bold text-primary uppercase bg-primary/5 px-2 py-0.5 rounded border border-primary/10 w-fit">{p.nsubf}</span>}
+                                                            </div>
+                                                        </td>
+                                                        <td className="p-4 text-center">
+                                                            <span className={`text-xs font-black ${!stockVal || stockVal <= 0 ? 'text-red-500' : 'text-text'}`}>
+                                                                {stockVal || 0}
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-4 text-right pr-6">
+                                                            <ChevronRight className="ml-auto text-muted opacity-30" size={16}/>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            {/* FOOTER CON BOTONES DE CARGA */}
+                            <div className="p-4 border-t border-surfaceHighlight bg-background/30 flex flex-col gap-3">
+                                <p className="text-[10px] text-muted font-bold uppercase text-center">
+                                    Viendo {products.length} artículos cargados.
+                                </p>
+                                <div className="flex gap-3">
+                                    {hasMore && (
+                                        <button 
+                                            onClick={() => fetchProducts(true)} 
+                                            disabled={isProductsLoading}
+                                            className="flex-1 py-3 bg-surface border border-surfaceHighlight hover:bg-surfaceHighlight text-text rounded-xl font-black uppercase text-xs transition-all shadow-sm flex items-center justify-center gap-2"
+                                        >
+                                            {isProductsLoading ? <Loader2 className="animate-spin" size={16}/> : <ArrowDown size={16}/>}
+                                            {isProductsLoading ? 'Cargando...' : 'Cargar más resultados'}
+                                        </button>
+                                    )}
+                                    
+                                    <button 
+                                        onClick={handleLoadAll} 
+                                        disabled={isProductsLoading}
+                                        className="flex-1 py-3 bg-primary/10 border border-primary/20 hover:bg-primary hover:text-white text-primary rounded-xl font-black uppercase text-xs transition-all shadow-sm flex items-center justify-center gap-2"
+                                        title="Cargar todos los resultados coincidentes sin paginación"
+                                    >
+                                        {isProductsLoading ? <Loader2 className="animate-spin" size={16}/> : <Database size={16}/>}
+                                        {isProductsLoading ? 'Procesando...' : 'Cargar TODO'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         );
     }

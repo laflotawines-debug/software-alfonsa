@@ -40,7 +40,6 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
             const { data: suppData } = await supabase
                 .from('providers_master')
                 .select('*')
-                .eq('activo', true)
                 .order('razon_social', { ascending: true });
             
             if (suppData) setMasterSuppliers(suppData);

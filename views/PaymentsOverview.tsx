@@ -55,6 +55,7 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
     const [preSelectedAccountId, setPreSelectedAccountId] = useState<string | null>(null);
     
     const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+    const [transferToDelete, setTransferToDelete] = useState<Transfer | null>(null);
 
     const handleCopy = (id: string, text: string) => {
         if (!text) return;
@@ -77,9 +78,7 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
     };
 
     const handleCancelTransfer = (t: Transfer) => {
-        if (window.confirm(`¿Realmente desea ELIMINAR el registro de pago de ${t.clientName} por $${t.amount.toLocaleString('es-AR')}? Esta acción es definitiva.`)) {
-            onDeleteTransfer(t.id);
-        }
+        setTransferToDelete(t);
     };
 
     const openModal = (providerId?: string, accountId?: string) => {
@@ -118,7 +117,10 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
                             <div className="flex items-center gap-2 shrink-0">
                                 {/* BOTÓN CANCELAR (X) DIRECTO */}
                                 <button 
-                                    onClick={() => handleCancelTransfer(t)}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleCancelTransfer(t);
+                                    }}
                                     className="h-10 w-10 flex items-center justify-center bg-red-600 hover:bg-red-700 text-white rounded-full transition-all shadow-md active:scale-90 cursor-pointer"
                                     title="Eliminar registro (Error)"
                                 >
@@ -324,6 +326,40 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
                             </button>
                             <button 
                                 onClick={() => setConfirmingDeleteId(null)}
+                                className="w-full py-4 bg-surfaceHighlight text-text font-black rounded-2xl transition-all hover:bg-surfaceHighlight/80 uppercase text-xs tracking-widest"
+                            >
+                                Cancelar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {transferToDelete && (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-in zoom-in-95 duration-200">
+                    <div className="bg-surface w-full max-w-sm rounded-3xl border border-red-500/30 shadow-2xl p-8 flex flex-col items-center text-center gap-6">
+                        <div className="p-4 bg-red-500/10 rounded-full text-red-500">
+                            <AlertTriangle size={48} />
+                        </div>
+                        <div>
+                            <h3 className="text-xl font-black text-text uppercase italic tracking-tight">¿Eliminar Pago?</h3>
+                            <p className="text-sm text-muted mt-2 font-medium">
+                                Se eliminará el pago de <br/><span className="text-text font-black uppercase">"{transferToDelete.clientName}"</span><br/> por <span className="text-text font-black">$ {transferToDelete.amount.toLocaleString('es-AR')}</span>.
+                            </p>
+                        </div>
+                        <div className="flex flex-col w-full gap-3">
+                            <button 
+                                onClick={() => {
+                                    onDeleteTransfer(transferToDelete.id);
+                                    setTransferToDelete(null);
+                                }}
+                                className="w-full py-4 bg-red-600 hover:bg-red-700 text-white font-black rounded-2xl shadow-lg transition-all active:scale-95 uppercase text-xs tracking-widest flex items-center justify-center gap-2"
+                            >
+                                <Trash2 size={18} />
+                                Sí, Eliminar
+                            </button>
+                            <button 
+                                onClick={() => setTransferToDelete(null)}
                                 className="w-full py-4 bg-surfaceHighlight text-text font-black rounded-2xl transition-all hover:bg-surfaceHighlight/80 uppercase text-xs tracking-widest"
                             >
                                 Cancelar

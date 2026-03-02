@@ -32,11 +32,14 @@ import {
     MoreHorizontal,
     Users,
     Info,
-    Edit2
+    Edit2,
+    FileDown
 } from 'lucide-react';
 import { Trip, TripClient, User as UserType, TripExpense, PaymentStatus, DetailedOrder, OrderStatus, DeliveryZone, ExpenseType } from '../types';
 import { hasPermission } from '../logic';
 import { supabase } from '../supabase';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 interface OrderSheetProps {
     currentUser: UserType;
@@ -47,6 +50,157 @@ interface OrderSheetProps {
     selectedTripId: string | null;
     onSelectTrip: (id: string | null) => void;
 }
+
+const generateDeliverySheetPDF = (trip: Trip) => {
+    const doc = new jsPDF({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a4'
+    });
+
+    // --- CONFIGURACIÓN ---
+    const marginLeft = 15;
+    const marginTop = 15;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(18);
+    doc.text('PLANILLA DE REPARTO', marginLeft, marginTop);
+
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'normal');
+    
+    // --- ENCABEZADO ---
+    const headerY = marginTop + 10;
+    const col2X = 150;
+
+    doc.text(`Viaje: ${trip.name || trip.displayId}`, marginLeft, headerY);
+    doc.text(`Chofer: ${trip.driverName}`, marginLeft, headerY + 6);
+    doc.text(`Fecha: ${trip.date}`, marginLeft, headerY + 12);
+    
+    doc.text(`Zona / Ruta: ${trip.route || 'General'}`, col2X, headerY);
+    doc.text(`Total Clientes: ${trip.clients.length}`, col2X, headerY + 6);
+
+    // --- TABLA PRINCIPAL ---
+    const tableStartY = headerY + 20;
+
+    const tableBody = trip.clients.map(client => {
+        const totalDebt = (client.previousBalance || 0) + (client.currentInvoiceAmount || 0);
+        return [
+            client.name.substring(0, 35), // Limitar largo nombre
+            `$ ${(client.previousBalance || 0).toLocaleString('es-AR')}`,
+            `$ ${(client.currentInvoiceAmount || 0).toLocaleString('es-AR')}`,
+            `$ ${totalDebt.toLocaleString('es-AR')}`,
+            '', // Entrega efectivo (Vacío)
+            '', // Transferencia (Vacío)
+            ''  // Saldo actual (Vacío)
+        ];
+    });
+
+    autoTable(doc, {
+        startY: tableStartY,
+        head: [['CLIENTE', 'SALDO ANT.', 'FACTURA', 'TOTAL', 'EFECTIVO', 'TRANSF.', 'SALDO FINAL']],
+        body: tableBody,
+        theme: 'grid', // Bordes visibles
+        styles: {
+            fontSize: 11,
+            cellPadding: 3,
+            textColor: [0, 0, 0], // Negro
+            lineColor: [0, 0, 0], // Bordes negros
+            lineWidth: 0.1,
+            valign: 'middle'
+        },
+        headStyles: {
+            fillColor: [220, 220, 220], // Gris claro para encabezado
+            textColor: [0, 0, 0],
+            fontStyle: 'bold',
+            lineWidth: 0.1,
+            lineColor: [0, 0, 0]
+        },
+        columnStyles: {
+            0: { cellWidth: 70 }, // Cliente
+            1: { cellWidth: 30, halign: 'right' }, // Saldo Ant
+            2: { cellWidth: 30, halign: 'right' }, // Factura
+            3: { cellWidth: 30, halign: 'right', fontStyle: 'bold' }, // Total
+            4: { cellWidth: 35 }, // Efectivo (Espacio manual)
+            5: { cellWidth: 35 }, // Transf (Espacio manual)
+            6: { cellWidth: 35 }  // Saldo Final (Espacio manual)
+        },
+        margin: { left: marginLeft, right: marginLeft }
+    });
+
+    // --- SECCIÓN FINAL (RENDICIÓN DE CAJA) ---
+    // Usamos autoTable para generar la estructura de rendición al final
+    const finalY = (doc as any).lastAutoTable.finalY + 15;
+    
+    // Verificar si hay espacio, sino nueva página
+    if (finalY > 150) {
+        doc.addPage();
+        doc.text('GASTOS', marginLeft, 20);
+        // Reset Y for new page
+    } else {
+        doc.setFont('helvetica', 'bold');
+        doc.text('GASTOS', marginLeft, finalY);
+    }
+
+    const gastosStartY = finalY > 150 ? 25 : finalY + 5;
+
+    // TABLA GASTOS (HORIZONTAL)
+    autoTable(doc, {
+        startY: gastosStartY,
+        head: [['VIÁTICOS', 'COMBUSTIBLE', 'PEAJE', 'OTROS', 'TOTAL']],
+        body: [['', '', '', '', '']], // Fila vacía para completar
+        theme: 'grid',
+        styles: {
+            fontSize: 11,
+            textColor: [0, 0, 0],
+            lineColor: [0, 0, 0],
+            lineWidth: 0.1,
+            cellPadding: 3, // Reducido para igualar tabla principal
+            halign: 'center',
+            valign: 'middle'
+        },
+        headStyles: {
+            fillColor: [220, 220, 220],
+            textColor: [0, 0, 0],
+            fontStyle: 'bold',
+            lineWidth: 0.1,
+            lineColor: [0, 0, 0]
+        },
+        margin: { left: marginLeft, right: marginLeft }
+    });
+
+    const rendicionTitleY = (doc as any).lastAutoTable.finalY + 10;
+    doc.text('RENDICIÓN DE CAJA', marginLeft, rendicionTitleY);
+
+    const rendicionStartY = rendicionTitleY + 5;
+
+    // TABLA RENDICIÓN (HORIZONTAL)
+    autoTable(doc, {
+        startY: rendicionStartY,
+        head: [['TOTAL EFECTIVO', 'TOTAL GASTOS', 'TOTAL CAJA REPARTO']],
+        body: [['', '', '']], // Fila vacía para completar
+        theme: 'grid',
+        styles: {
+            fontSize: 11, // Reducido para igualar tabla principal
+            textColor: [0, 0, 0],
+            lineColor: [0, 0, 0],
+            lineWidth: 0.1,
+            cellPadding: 3, // Reducido para igualar tabla principal
+            halign: 'center',
+            valign: 'middle',
+            fontStyle: 'bold'
+        },
+        headStyles: {
+            fillColor: [220, 220, 220],
+            textColor: [0, 0, 0],
+            fontStyle: 'bold',
+            lineWidth: 0.1,
+            lineColor: [0, 0, 0]
+        },
+        margin: { left: marginLeft, right: marginLeft }
+    });
+
+    doc.save(`Planilla_Reparto_${trip.driverName.replace(/\s+/g, '_')}_${trip.date}.pdf`);
+};
 
 export const OrderSheet: React.FC<OrderSheetProps> = ({ 
     currentUser, 
@@ -178,6 +332,14 @@ const TripListView: React.FC<{
                                 <span className="flex items-center gap-2 font-medium"><Truck size={14}/> {trip.driverName}</span>
                                 <span className="flex items-center gap-2 font-medium"><Calendar size={14}/> {trip.date}</span>
                             </div>
+                            
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); generateDeliverySheetPDF(trip); }}
+                                className="mt-2 w-full py-2.5 rounded-xl bg-surfaceHighlight/50 hover:bg-surfaceHighlight text-text font-bold text-xs uppercase flex items-center justify-center gap-2 transition-all border border-surfaceHighlight group-hover:border-primary/20"
+                            >
+                                <FileDown size={14} /> Planilla de Reparto (PDF)
+                            </button>
+
                             <div className="mt-auto pt-4 border-t border-surfaceHighlight flex justify-between items-center">
                                 <span className="text-xs font-bold text-muted uppercase">{trip.clients.length} Clientes</span>
                                 <span className="font-black text-text">$ {trip.clients.reduce((acc, c) => acc + (c.previousBalance || 0) + (c.currentInvoiceAmount || 0), 0).toLocaleString()}</span>

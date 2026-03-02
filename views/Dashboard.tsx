@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from 'react';
+
+import React, { useMemo, useState, useEffect } from 'react';
 import { 
   ShoppingBag, 
   TrendingUp, 
@@ -10,15 +11,18 @@ import {
   MoreVertical,
   CalendarDays,
   RotateCcw,
-  ArrowDownLeft
+  ArrowDownLeft,
+  Loader2
 } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Order, DetailedOrder, OrderStatus, View, ExpirationItem, ProductExpiration } from '../types';
+import { Order, DetailedOrder, OrderStatus, View, ExpirationItem, ProductExpiration, ExpirationStatus } from '../types';
 import { getOrderOriginalTotal, getOrderRefundTotal, getOrderShippedTotal } from '../logic';
+import { supabase } from '../supabase';
 
 interface DashboardProps {
-  orders: DetailedOrder[];
-  expirations: ProductExpiration[];
+  // Props are kept for compatibility but data is fetched internally for full history
+  orders?: DetailedOrder[]; 
+  expirations?: ProductExpiration[];
   onNavigate: (view: View) => void;
 }
 
@@ -27,33 +31,160 @@ const MONTHS = [
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
 ];
 
-const YEARS = [2023, 2024, 2025];
+const YEARS = [2023, 2024, 2025, 2026];
 
-export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNavigate }) => {
-  const [filterMonth, setFilterMonth] = useState<number | 'all'>('all');
-  const [filterYear, setFilterYear] = useState<number | 'all'>('all');
+export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
+  // Default to current month and year
+  const [filterMonth, setFilterMonth] = useState<number | 'all'>(new Date().getMonth());
+  const [filterYear, setFilterYear] = useState<number | 'all'>(new Date().getFullYear());
+  
+  const [dashboardOrders, setDashboardOrders] = useState<DetailedOrder[]>([]);
+  const [dashboardExpirations, setDashboardExpirations] = useState<ExpirationItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const filteredOrders = useMemo(() => {
-    return (orders || []).filter(order => {
-      if (filterMonth === 'all' && filterYear === 'all') return true;
-      
-      const parts = order.createdDate.split('/');
-      if (parts.length !== 3) return false;
-      const m = parseInt(parts[1]) - 1; 
-      const y = parseInt(parts[2]);
-      
-      const matchMonth = filterMonth === 'all' || m === filterMonth;
-      const matchYear = filterYear === 'all' || y === filterYear;
-      
-      return matchMonth && matchYear;
-    });
-  }, [orders, filterMonth, filterYear]);
+  // --- FETCH DATA ---
+  useEffect(() => {
+    const fetchData = async () => {
+      setIsLoading(true);
+      try {
+        // 1. CONSTRUCT DATE RANGE FOR ORDERS
+        // Use string construction to avoid timezone shifts causing missing data at edges
+        let startDateStr = '2000-01-01T00:00:00';
+        let endDateStr = '2100-12-31T23:59:59';
+
+        if (filterYear !== 'all') {
+            const y = filterYear;
+            if (filterMonth !== 'all') {
+                const m = (filterMonth + 1).toString().padStart(2, '0');
+                // Get last day of month
+                const lastDay = new Date(y, filterMonth + 1, 0).getDate();
+                startDateStr = `${y}-${m}-01T00:00:00`;
+                endDateStr = `${y}-${m}-${lastDay}T23:59:59`;
+            } else {
+                startDateStr = `${y}-01-01T00:00:00`;
+                endDateStr = `${y}-12-31T23:59:59`;
+            }
+        }
+
+        // 2. FETCH ORDERS (ALL STATUSES)
+        const { data: ordersData, error: ordersError } = await supabase
+            .from('orders')
+            .select('*, order_items(*)')
+            .gte('created_at', startDateStr)
+            .lte('created_at', endDateStr)
+            .order('created_at', { ascending: false });
+
+        if (ordersError) throw ordersError;
+
+        if (ordersData) {
+            const mappedOrders: DetailedOrder[] = ordersData.map((o: any) => ({
+                id: o.id,
+                displayId: o.display_id,
+                clientName: o.client_name,
+                zone: o.zone,
+                status: o.status,
+                createdDate: new Date(o.created_at).toLocaleDateString('es-AR'),
+                // ISO date for correct sorting locally
+                isoDate: o.created_at, 
+                lastUpdated: o.updated_at || o.created_at,
+                paymentMethod: o.payment_method,
+                total: o.total,
+                productCount: (o.order_items || []).length,
+                products: (o.order_items || []).map((i: any) => ({
+                    code: i.code,
+                    quantity: i.quantity,
+                    originalQuantity: i.original_quantity,
+                    shippedQuantity: i.shipped_quantity,
+                    unitPrice: i.unit_price,
+                    subtotal: i.subtotal,
+                    isChecked: i.is_checked
+                })),
+                history: []
+            }));
+            setDashboardOrders(mappedOrders);
+        }
+
+        // 3. FETCH EXPIRATIONS (MANUAL + SYSTEM)
+        const [manualRes, systemRes] = await Promise.all([
+            supabase.from('product_expirations').select('*'),
+            supabase.from('stock_inbound_items').select('*, master_products(desart)').not('expiry_date', 'is', null)
+        ]);
+
+        let allExpirations: ProductExpiration[] = [];
+
+        // Process Manual
+        if (manualRes.data) {
+            manualRes.data.forEach((item: any) => {
+                allExpirations.push(mapToExpiration(item.id, item.product_name, item.total_quantity, item.expiry_date));
+            });
+        }
+
+        // Process System
+        if (systemRes.data) {
+            systemRes.data.forEach((item: any) => {
+                const name = item.master_products?.desart || 'Producto Sistema';
+                allExpirations.push(mapToExpiration(item.id, name, item.quantity, item.expiry_date));
+            });
+        }
+
+        // Filter valid, sort by nearest, take top 5
+        const validExpirations = allExpirations
+            .filter(e => e.status !== 'NORMAL') // Only show moderate/critical on dashboard
+            .sort((a, b) => a.daysRemaining - b.daysRemaining)
+            .slice(0, 5)
+            .map(e => ({
+                id: e.id,
+                title: e.productName,
+                subtitle: e.daysRemaining < 0 ? 'Vencido' : `${e.daysRemaining} días restantes`,
+                dateDay: e.expiryDate.getDate().toString().padStart(2, '0'),
+                dateMonth: e.expiryDate.toLocaleString('es-AR', { month: 'short' }).toUpperCase().replace('.', ''),
+                isUrgent: e.status === 'CRÍTICO'
+            }));
+
+        setDashboardExpirations(validExpirations);
+
+      } catch (e) {
+        console.error("Error loading dashboard:", e);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [filterMonth, filterYear]);
+
+  // Helper for Expirations
+  const mapToExpiration = (id: string, name: string, qty: any, dateStr: string): ProductExpiration => {
+        const expiryDate = new Date(dateStr + 'T12:00:00');
+        const today = new Date();
+        today.setHours(0,0,0,0);
+        const diffTime = expiryDate.getTime() - today.getTime();
+        const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        let status: ExpirationStatus = 'NORMAL';
+        if (daysRemaining < 0) status = 'CRÍTICO';
+        else if (daysRemaining < 30) status = 'CRÍTICO';
+        else if (daysRemaining < 90) status = 'PRÓXIMO';
+        else if (daysRemaining < 180) status = 'MODERADO';
+
+        return {
+            id,
+            productName: name,
+            quantity: qty.toString(),
+            expiryDate,
+            daysRemaining,
+            status
+        };
+  };
 
   const dynamicChartData = useMemo(() => {
+    // Sort by date first to ensure correct distribution
+    const sorted = [...dashboardOrders].sort((a: any, b: any) => new Date(a.isoDate).getTime() - new Date(b.isoDate).getTime());
     const counts = [0, 0, 0, 0];
-    filteredOrders.forEach(order => {
-      const parts = order.createdDate.split('/');
-      const day = parseInt(parts[0]);
+    
+    sorted.forEach((order: any) => {
+      const date = new Date(order.isoDate);
+      const day = date.getDate();
       if (day <= 7) counts[0]++;
       else if (day <= 14) counts[1]++;
       else if (day <= 21) counts[2]++;
@@ -65,50 +196,50 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
       { name: 'Sem 3', value: counts[2] },
       { name: 'Sem 4', value: counts[3] },
     ];
-  }, [filteredOrders]);
+  }, [dashboardOrders]);
 
   const financialSummary = useMemo(() => {
-      // Consideramos pedidos que ya pasaron por el proceso de facturación/reparto
-      const completedOrders = filteredOrders.filter(o => 
+      // SOLO consideramos pedidos CERRADOS (Entregado o Pagado) para las métricas financieras reales.
+      // Los pedidos en tránsito aún no son un ingreso confirmado ni tienen devoluciones finales procesadas.
+      const completedOrders = dashboardOrders.filter(o => 
         o.status === OrderStatus.ENTREGADO || 
-        o.status === OrderStatus.PAGADO || 
-        o.status === OrderStatus.EN_TRANSITO
+        o.status === OrderStatus.PAGADO
       );
 
+      // Ingresos Netos: Suma del total final de la orden (lo que el cliente paga/debe)
       const net = completedOrders.reduce((acc, o) => acc + (o.total || 0), 0);
+      
+      // Devoluciones: Suma de las notas de crédito calculadas
       const refunds = completedOrders.reduce((acc, o) => acc + getOrderRefundTotal(o), 0);
-      const gross = completedOrders.reduce((acc, o) => acc + getOrderShippedTotal(o), 0);
+      
+      // Enviado (Gross): Suma de lo que realmente salió (Neto + Devoluciones)
+      const gross = net + refunds;
       
       return { gross, net, refunds };
-  }, [filteredOrders]);
+  }, [dashboardOrders]);
 
-  const totalOrdersCount = filteredOrders.length;
-  const pendingPaymentsCount = filteredOrders.filter(o => o.status === OrderStatus.ENTREGADO).length;
-  const criticalExpirationsCount = (expirations || []).filter(e => e.status === 'CRÍTICO').length;
-
-  const dashboardExpirationsList: ExpirationItem[] = useMemo(() => {
-    return (expirations || [])
-      .filter(e => e.status === 'CRÍTICO' || e.status === 'PRÓXIMO')
-      .sort((a, b) => a.daysRemaining - b.daysRemaining)
-      .slice(0, 5)
-      .map(e => ({
-        id: e.id,
-        title: e.productName,
-        subtitle: e.daysRemaining < 0 ? 'Vencido' : `${e.daysRemaining} días restantes`,
-        dateDay: e.expiryDate.getDate().toString().padStart(2, '0'),
-        dateMonth: e.expiryDate.toLocaleString('es-AR', { month: 'short' }).toUpperCase().replace('.', ''),
-        isUrgent: e.status === 'CRÍTICO'
-      }));
-  }, [expirations]);
+  const totalOrdersCount = dashboardOrders.length;
+  
+  // Pagos Pendientes: Cantidad de pedidos ENTREGADOS pero no PAGADOS
+  const pendingPaymentsCount = dashboardOrders.filter(o => o.status === OrderStatus.ENTREGADO).length;
 
   const recentOrdersReal = useMemo(() => {
-    return [...filteredOrders].slice(0, 5);
-  }, [filteredOrders]);
+    return [...dashboardOrders].slice(0, 5);
+  }, [dashboardOrders]);
 
   const periodLabel = filterMonth === 'all' && filterYear === 'all' ? 'Todo el tiempo' : 
                      filterMonth === 'all' ? `Año ${filterYear}` : 
                      filterYear === 'all' ? `${MONTHS[filterMonth as number]}` :
                      `${MONTHS[filterMonth as number]} ${filterYear}`;
+
+  if (isLoading) {
+      return (
+          <div className="flex flex-col items-center justify-center h-[50vh] text-muted">
+              <Loader2 size={48} className="animate-spin mb-4 text-primary" />
+              <p className="font-black uppercase tracking-widest text-xs">Calculando Estadísticas...</p>
+          </div>
+      );
+  }
 
   return (
     <div className="flex flex-col gap-8 pb-10">
@@ -151,7 +282,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
           icon={<ShoppingBag size={24} />}
           label="Pedidos Totales"
           value={(totalOrdersCount || 0).toLocaleString()}
-          pill={filterMonth === 'all' ? "Consolidado" : MONTHS[filterMonth as number]}
+          pill={filterMonth === 'all' ? "Consolidado" : (typeof filterMonth === 'number' ? MONTHS[filterMonth] : '')}
           pillColor="text-primary"
           pillBg="bg-primary/10"
         />
@@ -187,7 +318,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
           <div className="flex items-center justify-between mb-2">
             <div>
               <h3 className="text-text text-lg font-bold">Tendencia de Pedidos</h3>
-              <p className="text-muted text-sm">Volumen relativo por semana</p>
+              <p className="text-muted text-sm">Volumen relativo por semana ({periodLabel})</p>
             </div>
           </div>
           
@@ -226,13 +357,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
             <button onClick={() => onNavigate(View.EXPIRATIONS)} className="text-primary text-sm font-bold hover:underline">Ver todo</button>
           </div>
           <div className="flex flex-col gap-3 mt-2">
-            {dashboardExpirationsList.map((item) => (
+            {dashboardExpirations.map((item) => (
               <ExpirationRow key={item.id} item={item} onClick={() => onNavigate(View.EXPIRATIONS)} />
             ))}
-            {dashboardExpirationsList.length === 0 && (
+            {dashboardExpirations.length === 0 && (
               <div className="flex flex-col items-center justify-center py-10 opacity-40">
                 <AlertOctagon size={32} className="text-muted mb-2" />
-                <p className="text-xs text-muted font-bold italic text-center">Sin alertas próximas.</p>
+                <p className="text-xs text-muted font-bold italic text-center">Sin alertas críticas próximas.</p>
               </div>
             )}
           </div>
@@ -252,7 +383,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ orders, expirations, onNav
               </tr>
             </thead>
             <tbody className="divide-y divide-surfaceHighlight text-sm">
-              {recentOrdersReal.map((order) => {
+              {recentOrdersReal.length === 0 ? (
+                  <tr><td colSpan={4} className="p-8 text-center text-muted font-bold uppercase text-xs">No hay pedidos en este período</td></tr>
+              ) : recentOrdersReal.map((order) => {
                 const refund = getOrderRefundTotal(order);
                 return (
                   <tr key={order.id} className="group hover:bg-surfaceHighlight/50 transition-colors cursor-pointer" onClick={() => onNavigate(View.ORDERS)}>
@@ -309,7 +442,7 @@ const KPICard: React.FC<{
     </div>
     <div>
       <p className="text-muted text-xs font-bold uppercase tracking-widest">{label}</p>
-      <p className="text-text text-3xl font-black mt-1 tracking-tighter">{value}</p>
+      <p className="text-text text-2xl font-black mt-1 tracking-tighter">{value}</p>
       {subText && <p className="text-[10px] text-muted font-bold uppercase mt-1 opacity-70">{subText}</p>}
     </div>
   </div>

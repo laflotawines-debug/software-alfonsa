@@ -45,6 +45,17 @@ interface PaymentsProvidersProps {
 export const PaymentsProviders: React.FC<PaymentsProvidersProps> = ({ providers, onUpdateProviders, onDeleteProvider, onResetProvider }) => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
+    const [showInactive, setShowInactive] = useState(false);
+
+    const filteredProviders = useMemo(() => {
+        return providers.filter(p => {
+            if (showInactive) {
+                return p.status === 'Desactivado';
+            } else {
+                return p.status !== 'Desactivado';
+            }
+        });
+    }, [providers, showInactive]);
 
     const handleOpenModal = (provider?: Provider) => {
         setEditingProvider(provider || null);
@@ -87,6 +98,21 @@ export const PaymentsProviders: React.FC<PaymentsProvidersProps> = ({ providers,
                 </button>
             </div>
 
+            <div className="flex items-center gap-2">
+                <button 
+                    onClick={() => setShowInactive(false)}
+                    className={`px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${!showInactive ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-surface text-muted border border-surfaceHighlight hover:bg-surfaceHighlight'}`}
+                >
+                    Activos
+                </button>
+                <button 
+                    onClick={() => setShowInactive(true)}
+                    className={`px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${showInactive ? 'bg-red-500 text-white shadow-lg shadow-red-500/20' : 'bg-surface text-muted border border-surfaceHighlight hover:bg-surfaceHighlight'}`}
+                >
+                    Inactivos
+                </button>
+            </div>
+
             <div className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm">
                 <table className="w-full text-left">
                     <thead>
@@ -99,7 +125,7 @@ export const PaymentsProviders: React.FC<PaymentsProvidersProps> = ({ providers,
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-surfaceHighlight">
-                        {providers.map(p => (
+                        {filteredProviders.map(p => (
                             <tr key={p.id} className="hover:bg-primary/5 transition-colors group">
                                 <td className="p-4 pl-6">
                                     <div className="flex items-center gap-3">
@@ -127,8 +153,8 @@ export const PaymentsProviders: React.FC<PaymentsProvidersProps> = ({ providers,
                                 </td>
                             </tr>
                         ))}
-                        {providers.length === 0 && (
-                            <tr><td colSpan={5} className="p-20 text-center text-muted italic font-bold">No hay proveedores configurados para pagos.</td></tr>
+                        {filteredProviders.length === 0 && (
+                            <tr><td colSpan={5} className="p-20 text-center text-muted italic font-bold">No hay proveedores {showInactive ? 'inactivos' : 'activos'} configurados.</td></tr>
                         )}
                     </tbody>
                 </table>
