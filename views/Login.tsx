@@ -108,7 +108,7 @@ export const Login: React.FC<LoginProps> = ({ isDarkMode, onToggleTheme }) => {
 
                 <div className="mt-8 text-center text-muted">
                     <p className="text-[9px] font-black uppercase tracking-[0.3em]">Alfonsa Distribuidora &copy; 2025</p>
-                    <p className="text-[8px] font-bold uppercase tracking-widest mt-1 opacity-60">Versión 3.2</p>
+                    <p className="text-[8px] font-bold uppercase tracking-widest mt-1 opacity-60">Versión 3.2.1</p>
                 </div>
             </div>
         </div>

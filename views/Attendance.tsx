@@ -455,7 +455,7 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                     hours = ((exitMins! - entryMins!) / 60) * 2;
                     status = "FERIADO TRABAJADO";
                 } else { 
-                    hours = scheduledDailyHours;
+                    hours = 7;
                     status = "FERIADO"; 
                 }
             } else if (day.entry && day.exit) {
@@ -488,7 +488,7 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
             } else {
                 if (isWorkDay) {
                     if (day.isJustified) { 
-                        hours = scheduledDailyHours / 2;
+                        hours = 3.5;
                         status = "FALTA JUSTIFICADA"; 
                     } else { 
                         status = "FALTA"; 

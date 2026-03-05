@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Menu, LogOut, Sun, Moon, Users, DownloadCloud, User as UserIcon, Bell, Check, Trash2, X } from 'lucide-react';
+import { Menu, LogOut, Sun, Moon, Users, DownloadCloud, User as UserIcon, Bell, Check, Trash2, X, VolumeX } from 'lucide-react';
 import { User, AppNotification } from '../types';
 
 interface HeaderProps {
@@ -18,6 +18,10 @@ interface HeaderProps {
   onMarkAllRead?: () => void;
   onClearNotifications?: () => void;
   onNotificationClick?: (notification: AppNotification) => void;
+  isMuted?: boolean;
+  onToggleMute?: () => void;
+  isAudioEnabled?: boolean;
+  onEnableSound?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({ 
@@ -34,7 +38,11 @@ export const Header: React.FC<HeaderProps> = ({
     notifications = [],
     onMarkAllRead,
     onClearNotifications,
-    onNotificationClick
+    onNotificationClick,
+    isMuted,
+    onToggleMute,
+    isAudioEnabled = true,
+    onEnableSound
 }) => {
   const [showNotifications, setShowNotifications] = useState(false);
   const notificationRef = useRef<HTMLDivElement>(null);
@@ -52,6 +60,9 @@ export const Header: React.FC<HeaderProps> = ({
   }, []);
 
   const toggleNotifications = () => {
+      if (!showNotifications && onMarkAllRead && unreadCount > 0) {
+          onMarkAllRead();
+      }
       setShowNotifications(!showNotifications);
   };
 
@@ -101,6 +112,17 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
         )}
 
+        {/* Sound Toggle (if disabled) */}
+        {!isAudioEnabled && onEnableSound && (
+            <button 
+                onClick={onEnableSound}
+                className="p-2 rounded-full text-red-500 hover:bg-red-500/10 transition-all animate-pulse"
+                title="Sonido desactivado - Click para activar"
+            >
+                <VolumeX size={20} />
+            </button>
+        )}
+
         {/* Notifications */}
         <div className="relative" ref={notificationRef}>
             <button 
@@ -117,7 +139,19 @@ export const Header: React.FC<HeaderProps> = ({
             {showNotifications && (
                 <div className="fixed left-4 right-4 top-20 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-80 bg-surface border border-surfaceHighlight rounded-2xl shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-2">
                     <div className="p-4 border-b border-surfaceHighlight bg-background/50 flex justify-between items-center">
-                        <h4 className="text-xs font-black uppercase text-muted tracking-widest">Notificaciones</h4>
+                        <div className="flex items-center gap-2">
+                            <h4 className="text-xs font-black uppercase text-muted tracking-widest">Notificaciones</h4>
+                            {onToggleMute && (
+                                <button 
+                                    onClick={onToggleMute} 
+                                    className={`text-[10px] font-bold flex items-center gap-1 uppercase border rounded px-1 ${isMuted ? 'text-red-500 border-red-500/20' : 'text-primary border-primary/20'}`} 
+                                    title={isMuted ? "Activar sonido" : "Silenciar"}
+                                >
+                                    {isMuted ? <VolumeX size={10} /> : <Bell size={10} />}
+                                    {isMuted ? "Unmute" : "Mute"}
+                                </button>
+                            )}
+                        </div>
                         <div className="flex gap-2">
                             {unreadCount > 0 && onMarkAllRead && (
                                 <button onClick={onMarkAllRead} className="text-[10px] text-primary hover:text-primaryHover font-bold flex items-center gap-1 uppercase">

@@ -219,16 +219,167 @@ export default function App() {
         // Pagination logic
     };
 
+    // Audio Context Management
+    const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
+    const [isAudioEnabled, setIsAudioEnabled] = useState(false);
+    const [isMuted, setIsMuted] = useState(() => {
+        return localStorage.getItem('alfonsa_is_muted') === 'true';
+    });
+
+    const toggleMute = () => {
+        const newState = !isMuted;
+        setIsMuted(newState);
+        localStorage.setItem('alfonsa_is_muted', String(newState));
+    };
+
+    const requestNotificationPermission = () => {
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+    };
+
+    const initAudio = useCallback(() => {
+        requestNotificationPermission();
+        if (!audioContext) {
+            const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+            if (AudioContextClass) {
+                const ctx = new AudioContextClass();
+                setAudioContext(ctx);
+                setIsAudioEnabled(true);
+            }
+        } else if (audioContext.state === 'suspended') {
+            audioContext.resume().then(() => setIsAudioEnabled(true));
+        } else {
+            setIsAudioEnabled(true);
+        }
+    }, [audioContext]);
+
+    useEffect(() => {
+        document.addEventListener('click', initAudio);
+        document.addEventListener('touchstart', initAudio); // Add touch support for mobile
+        return () => {
+            document.removeEventListener('click', initAudio);
+            document.removeEventListener('touchstart', initAudio);
+        };
+    }, [initAudio]);
+
+    const playNotificationSound = useCallback((currentNotifications?: AppNotification[], force = false) => {
+        if (!audioContext || isMuted) return;
+        
+        const targetNotifications = currentNotifications || notifications;
+        const unread = targetNotifications.filter(n => !n.is_read);
+        
+        if (unread.length === 0 && !force) return;
+
+        // Logic to limit plays (Max 2 times per notification batch)
+        if (!force) {
+            const latestId = unread[0]?.id || 'unknown';
+            const storedId = localStorage.getItem('last_sound_notification_id');
+            const storedCount = parseInt(localStorage.getItem('last_sound_notification_count') || '0');
+
+            if (storedId === latestId) {
+                if (storedCount >= 2) return; // Max 2 times
+                localStorage.setItem('last_sound_notification_count', (storedCount + 1).toString());
+            } else {
+                localStorage.setItem('last_sound_notification_id', latestId);
+                localStorage.setItem('last_sound_notification_count', '1');
+            }
+        }
+
+        try {
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+
+            const now = audioContext.currentTime;
+            
+            // Single subtle beep
+            const osc1 = audioContext.createOscillator();
+            const gain1 = audioContext.createGain();
+            osc1.type = 'sine';
+            osc1.frequency.setValueAtTime(880, now);
+            osc1.frequency.exponentialRampToValueAtTime(440, now + 0.15);
+            gain1.gain.setValueAtTime(0.1, now); // Lower volume for subtlety
+            gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+            osc1.connect(gain1);
+            gain1.connect(audioContext.destination);
+            osc1.start(now);
+            osc1.stop(now + 0.15);
+
+        } catch (e) {
+            console.error("Audio play failed", e);
+        }
+    }, [audioContext, notifications, isMuted]);
+
     const fetchNotifications = async () => {
         if (!currentUser) return;
         const { data } = await supabase
             .from('notifications')
             .select('*')
             .eq('user_id', currentUser.id)
-            .eq('is_read', false)
-            .order('created_at', { ascending: false });
-        if (data) setNotifications(data);
+            .order('created_at', { ascending: false })
+            .limit(50);
+        
+        if (data) {
+            setNotifications(data);
+            // Check for unread notifications and play sound if any exist
+            const hasUnread = data.some(n => !n.is_read);
+            if (hasUnread) {
+                playNotificationSound(data);
+            }
+        }
     };
+
+    // Play sound on first user interaction if there are unread notifications
+    useEffect(() => {
+        if (isAudioEnabled && notifications.some(n => !n.is_read)) {
+            // Use a small timeout to ensure context is fully ready
+            setTimeout(() => {
+                playNotificationSound(notifications);
+            }, 100);
+        }
+    }, [isAudioEnabled]); // Removed notifications from dependency to avoid loop
+
+    useEffect(() => {
+        if (!currentUser) return;
+
+        console.log("Subscribing to notifications for user:", currentUser.id);
+        const channel = supabase
+            .channel('public:notifications')
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'notifications',
+                    filter: `user_id=eq.${currentUser.id}`
+                },
+                (payload) => {
+                    console.log("New notification received:", payload);
+                    const newNotification = payload.new as AppNotification;
+                    setNotifications(prev => {
+                        const updated = [newNotification, ...prev];
+                        playNotificationSound(updated);
+                        return updated;
+                    });
+                    
+                    // System Notification (Background)
+                    if ('Notification' in window && Notification.permission === 'granted') {
+                        new Notification('Alfonsa Management', {
+                            body: newNotification.message,
+                            icon: '/vite.svg' // Fallback icon
+                        });
+                    }
+                }
+            )
+            .subscribe((status) => {
+                console.log("Notification subscription status:", status);
+            });
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [currentUser, playNotificationSound]);
 
     // --- FETCHERS FOR MODULES ---
     const fetchProviders = async () => {
@@ -298,7 +449,7 @@ export default function App() {
     const markAllNotificationsRead = async () => { 
         if(!currentUser) return;
         await supabase.from('notifications').update({ is_read: true }).eq('user_id', currentUser.id);
-        setNotifications([]); 
+        setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
     };
     const clearNotifications = async () => { 
         if(!currentUser) return;
@@ -307,6 +458,29 @@ export default function App() {
     };
     const handleNotificationClick = (n: AppNotification) => { console.log(n); };
     
+    const sendNotificationToRole = async (role: 'vale' | 'armador', message: string, linkId?: string) => {
+        try {
+            const { data: users } = await supabase
+                .from('profiles')
+                .select('id')
+                .eq('role', role);
+            
+            if (!users || users.length === 0) return;
+
+            const notifications = users.map(u => ({
+                user_id: u.id,
+                message,
+                type: 'info',
+                link_id: linkId,
+                is_read: false
+            }));
+
+            await supabase.from('notifications').insert(notifications);
+        } catch (error) {
+            console.error("Error sending notifications:", error);
+        }
+    };
+
     const handleClaimOrder = async (o: DetailedOrder) => {
         if (!currentUser) return;
         const updates: any = { updated_by: currentUser.id };
@@ -406,14 +580,34 @@ export default function App() {
             await supabase.from('providers').update(payload).eq('id', providerId);
         }
 
-        await supabase.from('provider_accounts').delete().eq('provider_id', providerId);
-        if (p.accounts.length > 0) {
-            const accounts = p.accounts.map(a => ({
-                provider_id: providerId, condition: a.condition, holder: a.holder, identifier_alias: a.identifierAlias, identifier_cbu: a.identifierCBU,
-                meta_amount: a.metaAmount, current_amount: a.currentAmount, pending_amount: a.pendingAmount, status: a.status
-            }));
-            await supabase.from('provider_accounts').insert(accounts);
+        const { data: existingAccounts } = await supabase.from('provider_accounts').select('id').eq('provider_id', providerId);
+        const existingIds = existingAccounts?.map(a => a.id) || [];
+        
+        const accountsToKeep = p.accounts.filter(a => !a.id.startsWith('acc-'));
+        const accountIdsToKeep = accountsToKeep.map(a => a.id);
+        
+        const accountsToDelete = existingIds.filter(id => !accountIdsToKeep.includes(id));
+        
+        if (accountsToDelete.length > 0) {
+            await supabase.from('provider_accounts').delete().in('id', accountsToDelete);
         }
+
+        const newAccounts = p.accounts.filter(a => a.id.startsWith('acc-')).map(a => ({
+            provider_id: providerId, condition: a.condition, holder: a.holder, identifier_alias: a.identifierAlias, identifier_cbu: a.identifierCBU,
+            meta_amount: a.metaAmount, current_amount: a.currentAmount, pending_amount: a.pendingAmount, status: a.status
+        }));
+
+        if (newAccounts.length > 0) {
+            await supabase.from('provider_accounts').insert(newAccounts);
+        }
+
+        for (const account of accountsToKeep) {
+            await supabase.from('provider_accounts').update({
+                condition: account.condition, holder: account.holder, identifier_alias: account.identifierAlias, identifier_cbu: account.identifierCBU,
+                meta_amount: account.metaAmount, current_amount: account.currentAmount, pending_amount: account.pendingAmount, status: account.status
+            }).eq('id', account.id);
+        }
+
         fetchProviders();
         return true;
     };
@@ -526,6 +720,12 @@ export default function App() {
             }
 
             await supabase.from('orders').update(orderUpdates).eq('id', updatedOrder.id);
+            
+            // Notify Admin Vale when order is Controlled
+            if (shouldAdvance && nextStatus === OrderStatus.ARMADO_CONTROLADO) {
+                await sendNotificationToRole('vale', `Pedido ${updatedOrder.displayId} controlado y listo para facturar (${updatedOrder.clientName})`, updatedOrder.id);
+            }
+
             setActiveOrder(null); 
             fetchActiveOrders(); 
         } catch (err: any) { alert("Error al guardar cambios: " + err.message); }
@@ -558,6 +758,10 @@ export default function App() {
                     onMarkAllRead={markAllNotificationsRead}
                     onClearNotifications={clearNotifications}
                     onNotificationClick={handleNotificationClick}
+                    isMuted={isMuted}
+                    onToggleMute={toggleMute}
+                    isAudioEnabled={isAudioEnabled}
+                    onEnableSound={initAudio}
                 />
 
                 <main className="flex-1 overflow-y-auto p-4 md:p-8 relative">
@@ -578,7 +782,10 @@ export default function App() {
                             onDeleteOrders={handleDeleteOrders}
                             onAdvanceOrder={handleAdvanceOrder}
                             onToggleLock={handleToggleLock}
-                            onRefresh={fetchActiveOrders}
+                            onRefresh={async () => {
+                                await fetchActiveOrders();
+                                await fetchNotifications();
+                            }}
                         />
                     )}
                     {currentView === View.CREATE_BUDGET && (
@@ -598,6 +805,10 @@ export default function App() {
                                             order_id: data.id, code: p.code, name: p.name, quantity: p.quantity, original_quantity: p.originalQuantity, unit_price: p.unitPrice, subtotal: p.subtotal, is_checked: false
                                         }));
                                         await supabase.from('order_items').insert(items);
+                                        
+                                        // Notify Armadores about new order
+                                        await sendNotificationToRole('armador', `Nuevo pedido disponible: ${order.displayId} - ${order.clientName}`, data.id);
+                                        
                                         await fetchActiveOrders();
                                         setCurrentView(View.ORDERS);
                                     }
@@ -606,7 +817,7 @@ export default function App() {
                         />
                     )}
                     {currentView === View.ORDER_SHEET && <OrderSheet currentUser={currentUser} orders={orders} trips={trips} onSaveTrip={handleSaveTrip} onDeleteTrip={handleDeleteTrip} selectedTripId={selectedTripId} onSelectTrip={setSelectedTripId} />}
-                    {currentView === View.PAYMENTS_OVERVIEW && <PaymentsOverview providers={providers} onDeleteProvider={handleDeleteProvider} onUpdateProviders={handleUpdateProvider} transfers={transfers} onUpdateTransfers={handleUpdateTransfer} onConfirmTransfer={handleConfirmTransfer} onDeleteTransfer={handleDeleteTransfer} />}
+                    {currentView === View.PAYMENTS_OVERVIEW && <PaymentsOverview providers={providers} onDeleteProvider={handleDeleteProvider} onUpdateProviders={handleUpdateProvider} transfers={transfers} onUpdateTransfers={handleUpdateTransfer} onConfirmTransfer={handleConfirmTransfer} onDeleteTransfer={handleDeleteTransfer} onRefresh={async () => { await fetchProviders(); await fetchTransfers(); }} />}
                     {currentView === View.PAYMENTS_PROVIDERS && <PaymentsProviders providers={providers} onUpdateProviders={handleUpdateProvider} onDeleteProvider={handleDeleteProvider} onResetProvider={handleResetProvider} />}
                     {currentView === View.PAYMENTS_HISTORY && <PaymentsHistory transfers={transfers} onDeleteTransfer={handleDeleteTransfer} onClearHistory={handleClearHistory} onUpdateTransfers={handleUpdateTransfer} onUpdateStatus={handleUpdateTransferStatus} providers={providers} />}
                     {currentView === View.PROVIDER_STATEMENTS && <ProviderStatements currentUser={currentUser} />}
