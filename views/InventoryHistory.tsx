@@ -16,6 +16,8 @@ interface MovementExtended extends StockMovement {
     user_name?: string;
     warehouse_name?: string;
     inbound_info?: StockInbound & { supplier_name?: string };
+    order_info?: { display_id: string, client_name: string };
+    transfer_info?: { reference_code: string };
 }
 
 interface ProviderGroupData {
@@ -42,7 +44,7 @@ export const InventoryHistory: React.FC<{ currentUser: UserType }> = ({ currentU
 
     // Control de grupos y modales
     const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
-    const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+    const [selectedGroup, setSelectedGroup] = useState<{ id: string, title: string, movements: MovementExtended[] } | null>(null);
 
     const fetchData = async () => {
         setIsLoading(true);
@@ -91,12 +93,58 @@ export const InventoryHistory: React.FC<{ currentUser: UserType }> = ({ currentU
                 });
             }
 
+            // 3. Obtener IDs únicos de pedidos (ventas y NC)
+            const orderIds = Array.from(new Set(
+                movementsRaw
+                    .filter(m => (m.type === 'venta' || m.type === 'nota de crédito') && m.reference_id)
+                    .map(m => m.reference_id)
+            ));
+            
+            let ordersMap: Record<string, any> = {};
+            if (orderIds.length > 0) {
+                const { data: ords, error: ordErr } = await supabase
+                    .from('orders')
+                    .select('id, display_id, client_name')
+                    .in('id', orderIds);
+                
+                if (ordErr) throw ordErr;
+                
+                const ordersRaw = (ords as any[]) || [];
+                ordersRaw.forEach(o => {
+                    ordersMap[o.id] = o;
+                });
+            }
+
+            // 4. Obtener IDs únicos de transferencias
+            const transferIds = Array.from(new Set(
+                movementsRaw
+                    .filter(m => m.type === 'transferencia' && m.reference_id)
+                    .map(m => m.reference_id)
+            ));
+            
+            let transfersMap: Record<string, any> = {};
+            if (transferIds.length > 0) {
+                const { data: trfs, error: trfErr } = await supabase
+                    .from('stock_transfers')
+                    .select('id, reference_code')
+                    .in('id', transferIds);
+                
+                if (trfErr) throw trfErr;
+                
+                const transfersRaw = (trfs as any[]) || [];
+                transfersRaw.forEach(t => {
+                    transfersMap[t.id] = t;
+                });
+            }
+
             const mapped: MovementExtended[] = movementsRaw.map((m: any) => ({
                 ...m,
                 desart: m.master_products?.desart,
                 user_name: m.profiles?.name || 'Sistema',
                 warehouse_name: m.warehouses?.name || 'N/A',
-                inbound_info: m.type === 'ingreso' ? inboundsMap[m.reference_id] : undefined
+                inbound_info: m.type === 'ingreso' ? inboundsMap[m.reference_id] : undefined,
+                order_info: (m.type === 'venta' || m.type === 'nota de crédito') ? ordersMap[m.reference_id] : undefined,
+                transfer_info: m.type === 'transferencia' ? transfersMap[m.reference_id] : undefined
             }));
             
             setMovements(mapped);
@@ -146,9 +194,68 @@ export const InventoryHistory: React.FC<{ currentUser: UserType }> = ({ currentU
         return (Object.entries(groups) as GroupEntry[]).sort((a,b) => a[1].name.localeCompare(b[1].name));
     }, [filteredMovements]);
 
-    const otherMovements = useMemo<MovementExtended[]>(() => 
-        filteredMovements.filter(m => m.type !== 'ingreso'), 
-    [filteredMovements]);
+    interface OtherGroupData {
+        id: string;
+        type: string;
+        date: string;
+        reference: string;
+        user_name: string;
+        warehouse_name: string;
+        movements: MovementExtended[];
+    }
+
+    const otherGroups = useMemo(() => {
+        const groups: Record<string, OtherGroupData> = {};
+        const individual: MovementExtended[] = [];
+
+        filteredMovements.filter(m => m.type !== 'ingreso').forEach(m => {
+            let groupId = null;
+            let groupRef = '';
+
+            if (m.type === 'venta' || m.type === 'nota de crédito') {
+                groupId = m.reference_id;
+                groupRef = m.order_info ? `Pedido #${m.order_info.display_id} - ${m.order_info.client_name}` : (m.transfer_group_code || m.reference_id || 'S/REF');
+            } else if (m.type === 'transferencia') {
+                groupId = m.transfer_group_code || m.reference_id;
+                groupRef = m.transfer_info ? `Transferencia ${m.transfer_info.reference_code}` : (m.transfer_group_code || m.reference_id || 'S/REF');
+            } else if (m.type === 'ajuste') {
+                if (m.transfer_group_code) {
+                    groupId = m.transfer_group_code;
+                    groupRef = m.transfer_group_code;
+                } else if (m.reference_id) {
+                    groupId = m.reference_id;
+                    groupRef = m.reference_id;
+                }
+            }
+
+            if (groupId) {
+                if (!groups[groupId]) {
+                    groups[groupId] = {
+                        id: groupId,
+                        type: m.type,
+                        date: m.created_at,
+                        reference: groupRef,
+                        user_name: m.user_name || 'Sistema',
+                        warehouse_name: m.warehouse_name || 'Varios',
+                        movements: []
+                    };
+                }
+                groups[groupId].movements.push(m);
+                if (groups[groupId].type !== m.type && groups[groupId].type !== 'mixto') {
+                    groups[groupId].type = 'mixto';
+                }
+                if (groups[groupId].warehouse_name !== m.warehouse_name && groups[groupId].warehouse_name !== 'Varios') {
+                    groups[groupId].warehouse_name = 'Varios';
+                }
+            } else {
+                individual.push(m);
+            }
+        });
+
+        const groupedArray = Object.values(groups).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        
+        return { grouped: groupedArray, individual: individual.sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()) };
+    }, [filteredMovements]);
 
     return (
         <div className="flex flex-col gap-6 pb-20 animate-in fade-in">
@@ -258,7 +365,7 @@ export const InventoryHistory: React.FC<{ currentUser: UserType }> = ({ currentU
                                                                         </div>
                                                                     </div>
                                                                     <button 
-                                                                        onClick={() => setSelectedEventId(evId)}
+                                                                        onClick={() => setSelectedGroup({ id: evId, title: 'Ingreso', movements: movs })}
                                                                         className="flex items-center gap-2 px-4 py-2 bg-surfaceHighlight text-text hover:bg-primary/10 hover:text-primary rounded-xl transition-all text-[10px] font-black uppercase"
                                                                     >
                                                                         <Eye size={14}/> Detalle
@@ -275,12 +382,60 @@ export const InventoryHistory: React.FC<{ currentUser: UserType }> = ({ currentU
                             </div>
                         )}
 
-                        {/* SECCIÓN 2: OTROS MOVIMIENTOS */}
-                        {otherMovements.length > 0 && (
+                        {/* SECCIÓN 2: OTROS MOVIMIENTOS AGRUPADOS */}
+                        {otherGroups.grouped.length > 0 && (
                             <div className="space-y-3 pt-6">
                                 <div className="flex items-center gap-3 ml-2 mb-4">
                                     <History size={18} className="text-primary"/>
-                                    <h3 className="text-xs font-black text-muted uppercase tracking-widest">Ajustes, Ventas e Internos</h3>
+                                    <h3 className="text-xs font-black text-muted uppercase tracking-widest">Ajustes, Ventas e Internos (Agrupados)</h3>
+                                </div>
+                                <div className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm">
+                                    <div className="divide-y divide-surfaceHighlight">
+                                        {otherGroups.grouped.map(group => {
+                                            const totalItems = group.movements.length;
+                                            const date = new Date(group.date).toLocaleDateString();
+                                            return (
+                                                <div key={group.id} className="p-4 pl-6 flex items-center justify-between hover:bg-primary/5 transition-colors">
+                                                    <div className="flex items-center gap-6">
+                                                        <div className="flex flex-col">
+                                                            <span className="text-[10px] font-black text-text">{date}</span>
+                                                            <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded border self-start mt-1 ${
+                                                                group.type === 'ajuste' ? 'bg-orange-500/10 text-orange-600 border-orange-200' : 
+                                                                group.type === 'venta' ? 'bg-green-500/10 text-green-600 border-green-200' :
+                                                                group.type === 'nota de crédito' ? 'bg-purple-500/10 text-purple-600 border-purple-200' :
+                                                                group.type === 'mixto' ? 'bg-gray-500/10 text-gray-600 border-gray-200' :
+                                                                'bg-blue-500/10 text-blue-600 border-blue-200'
+                                                            }`}>{group.type}</span>
+                                                        </div>
+                                                        <div className="flex flex-col">
+                                                            <span className="text-xs font-bold text-text uppercase italic">{group.reference}</span>
+                                                            <span className="text-[9px] text-muted font-bold uppercase">{totalItems} Artículos procesados</span>
+                                                        </div>
+                                                        <div className="flex flex-col hidden md:flex">
+                                                            <span className="text-[10px] font-bold text-muted uppercase">Responsable: {group.user_name}</span>
+                                                            <span className="text-[10px] font-bold text-muted uppercase">Depósito: {group.warehouse_name}</span>
+                                                        </div>
+                                                    </div>
+                                                    <button 
+                                                        onClick={() => setSelectedGroup({ id: group.id, title: group.type, movements: group.movements })}
+                                                        className="flex items-center gap-2 px-4 py-2 bg-surfaceHighlight text-text hover:bg-primary/10 hover:text-primary rounded-xl transition-all text-[10px] font-black uppercase"
+                                                    >
+                                                        <Eye size={14}/> Detalle
+                                                    </button>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* SECCIÓN 3: OTROS MOVIMIENTOS INDIVIDUALES */}
+                        {otherGroups.individual.length > 0 && (
+                            <div className="space-y-3 pt-6">
+                                <div className="flex items-center gap-3 ml-2 mb-4">
+                                    <History size={18} className="text-primary"/>
+                                    <h3 className="text-xs font-black text-muted uppercase tracking-widest">Movimientos Individuales</h3>
                                 </div>
                                 <div className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm">
                                     <table className="w-full text-left">
@@ -294,7 +449,7 @@ export const InventoryHistory: React.FC<{ currentUser: UserType }> = ({ currentU
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-surfaceHighlight">
-                                            {otherMovements.map((m: MovementExtended) => (
+                                            {otherGroups.individual.map((m: MovementExtended) => (
                                                 <tr key={m.id} className="hover:bg-primary/5 transition-colors">
                                                     <td className="p-4 pl-6">
                                                         <div className="flex flex-col">
@@ -332,11 +487,12 @@ export const InventoryHistory: React.FC<{ currentUser: UserType }> = ({ currentU
                 )}
             </div>
 
-            {selectedEventId && (
+            {selectedGroup && (
                 <HistoryDetailModal 
-                    eventId={selectedEventId}
-                    movements={movements.filter(m => m.reference_id === selectedEventId)}
-                    onClose={() => setSelectedEventId(null)}
+                    eventId={selectedGroup.id}
+                    title={selectedGroup.title}
+                    movements={selectedGroup.movements}
+                    onClose={() => setSelectedGroup(null)}
                 />
             )}
         </div>
@@ -346,21 +502,54 @@ export const InventoryHistory: React.FC<{ currentUser: UserType }> = ({ currentU
 // --- MODAL DE DETALLE DE EVENTO ---
 const HistoryDetailModal: React.FC<{ 
     eventId: string, 
+    title: string,
     movements: MovementExtended[], 
     onClose: () => void 
-}> = ({ eventId, movements, onClose }) => {
+}> = ({ eventId, title, movements, onClose }) => {
     const first = movements[0];
     const isInbound = first?.type === 'ingreso';
     const inboundInfo = first?.inbound_info;
+    const orderInfo = first?.order_info;
+
+    let subtitle = `Movimiento ID: ${eventId.substring(0,8)}`;
+    if (isInbound) {
+        subtitle = `Ingreso #${inboundInfo?.display_number || '-'} | ${inboundInfo?.supplier_name}`;
+    } else if (first?.type === 'venta' || first?.type === 'nota de crédito') {
+        subtitle = orderInfo ? `Pedido #${orderInfo.display_id} | ${orderInfo.client_name}` : (first?.transfer_group_code || 'S/REF');
+    } else if (first?.type === 'transferencia') {
+        subtitle = first?.transfer_info ? `Transferencia | ${first.transfer_info.reference_code}` : `Transferencia | ${first?.transfer_group_code || first?.reference_id || 'S/REF'}`;
+    } else if (first?.type === 'ajuste') {
+        subtitle = `Ajuste | ${first?.transfer_group_code || first?.reference_id || 'S/REF'}`;
+    }
+
+    const isTransfer = first?.type === 'transferencia' || title.toLowerCase().includes('transferencia') || (
+        movements.some(m => m.quantity < 0) && movements.some(m => m.quantity > 0) &&
+        new Set(movements.map(m => m.codart)).size < movements.length
+    );
+    let transferRows: any[] = [];
+    if (isTransfer) {
+        const groupedByCodart: Record<string, { codart: string, desart: string, origin?: MovementExtended, dest?: MovementExtended }> = {};
+        movements.forEach(m => {
+            if (!groupedByCodart[m.codart]) {
+                groupedByCodart[m.codart] = { codart: m.codart, desart: m.desart || '' };
+            }
+            if (m.quantity < 0) {
+                groupedByCodart[m.codart].origin = m;
+            } else {
+                groupedByCodart[m.codart].dest = m;
+            }
+        });
+        transferRows = Object.values(groupedByCodart);
+    }
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-background w-full max-w-2xl rounded-3xl border border-surfaceHighlight shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
+            <div className="bg-background w-full max-w-3xl rounded-3xl border border-surfaceHighlight shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
                 <div className="p-6 border-b border-surfaceHighlight bg-surface flex justify-between items-center">
                     <div>
                         <h3 className="text-xl font-black text-text uppercase italic tracking-tight">Detalle de Operación</h3>
                         <p className="text-[10px] text-muted font-bold uppercase">
-                            {isInbound ? `Ingreso #${inboundInfo?.display_number || '-'} | ${inboundInfo?.supplier_name}` : `Movimiento ID: ${eventId.substring(0,8)}`}
+                            {subtitle}
                         </p>
                     </div>
                     <button onClick={onClose} className="p-2 rounded-full hover:bg-surfaceHighlight transition-all"><X size={24}/></button>
@@ -387,32 +576,65 @@ const HistoryDetailModal: React.FC<{
                     <div className="border border-surfaceHighlight rounded-2xl overflow-hidden bg-surface shadow-sm">
                         <table className="w-full text-left">
                             <thead className="bg-background/50 text-[9px] text-muted uppercase font-black border-b border-surfaceHighlight tracking-widest">
-                                <tr>
-                                    <th className="p-4">Artículo</th>
-                                    <th className="p-4 text-center">Depósito</th>
-                                    <th className="p-4 text-center">Cantidad</th>
-                                </tr>
+                                {isTransfer ? (
+                                    <tr>
+                                        <th className="p-4">Artículo</th>
+                                        <th className="p-4 text-center">Origen</th>
+                                        <th className="p-4 text-center">Cant.</th>
+                                        <th className="p-4 text-center">Destino</th>
+                                        <th className="p-4 text-center">Cant.</th>
+                                    </tr>
+                                ) : (
+                                    <tr>
+                                        <th className="p-4">Artículo</th>
+                                        <th className="p-4 text-center">Depósito</th>
+                                        <th className="p-4 text-center">Cantidad</th>
+                                    </tr>
+                                )}
                             </thead>
                             <tbody className="divide-y divide-surfaceHighlight">
-                                {movements.map((m: MovementExtended) => (
-                                    <tr key={m.id} className="hover:bg-background/20 transition-colors">
-                                        <td className="p-4">
-                                            <p className="text-xs font-black uppercase text-text">{m.desart}</p>
-                                            <p className="text-[9px] font-mono text-muted">#{m.codart}</p>
-                                        </td>
-                                        <td className="p-4 text-center">
-                                            <span className="text-[10px] font-bold text-muted uppercase">{m.warehouse_name}</span>
-                                        </td>
-                                        <td className="p-4 text-center">
-                                            <div className="flex items-center justify-center gap-1.5">
-                                                <span className={`text-xs font-black ${m.quantity > 0 ? 'text-green-600' : 'text-red-500'}`}>
-                                                    {m.quantity > 0 ? '+' : ''}{m.quantity}
-                                                </span>
-                                                <ArrowUpRight size={12} className={m.quantity > 0 ? 'text-green-500 rotate-0' : 'text-red-500 rotate-90'} />
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
+                                {isTransfer ? (
+                                    transferRows.map((row, idx) => (
+                                        <tr key={idx} className="hover:bg-background/20 transition-colors">
+                                            <td className="p-4">
+                                                <p className="text-xs font-black uppercase text-text">{row.desart}</p>
+                                                <p className="text-[9px] font-mono text-muted">#{row.codart}</p>
+                                            </td>
+                                            <td className="p-4 text-center">
+                                                <span className="text-[10px] font-bold text-muted uppercase">{row.origin?.warehouse_name || '-'}</span>
+                                            </td>
+                                            <td className="p-4 text-center">
+                                                <span className="text-xs font-black text-red-500">{row.origin?.quantity || 0}</span>
+                                            </td>
+                                            <td className="p-4 text-center">
+                                                <span className="text-[10px] font-bold text-muted uppercase">{row.dest?.warehouse_name || '-'}</span>
+                                            </td>
+                                            <td className="p-4 text-center">
+                                                <span className="text-xs font-black text-green-600">+{row.dest?.quantity || 0}</span>
+                                            </td>
+                                        </tr>
+                                    ))
+                                ) : (
+                                    movements.map((m: MovementExtended) => (
+                                        <tr key={m.id} className="hover:bg-background/20 transition-colors">
+                                            <td className="p-4">
+                                                <p className="text-xs font-black uppercase text-text">{m.desart}</p>
+                                                <p className="text-[9px] font-mono text-muted">#{m.codart}</p>
+                                            </td>
+                                            <td className="p-4 text-center">
+                                                <span className="text-[10px] font-bold text-muted uppercase">{m.warehouse_name}</span>
+                                            </td>
+                                            <td className="p-4 text-center">
+                                                <div className="flex items-center justify-center gap-1.5">
+                                                    <span className={`text-xs font-black ${m.quantity > 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                                        {m.quantity > 0 ? '+' : ''}{m.quantity}
+                                                    </span>
+                                                    <ArrowUpRight size={12} className={m.quantity > 0 ? 'text-green-500 rotate-0' : 'text-red-500 rotate-90'} />
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
                             </tbody>
                         </table>
                     </div>

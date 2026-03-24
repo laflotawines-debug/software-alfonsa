@@ -30,13 +30,11 @@ import { jsPDF } from 'jspdf';
 import * as XLSX from 'xlsx';
 
 export const AccountStatements: React.FC<{ currentUser: User }> = ({ currentUser }) => {
-    // --- ESTADOS DE BÚSQUEDA ---
-    const [clientSearch, setClientSearch] = useState('');
-    const [searchResults, setSearchResults] = useState<ClientMaster[]>([]);
+    // --- ESTADOS DE BÚSQUEDA Y LISTA ---
+    const [clientsList, setClientsList] = useState<(ClientMaster & { balance: number })[]>([]);
+    const [isLoadingClients, setIsLoadingClients] = useState(true);
+    const [listSearchTerm, setListSearchTerm] = useState('');
     const [selectedClient, setSelectedClient] = useState<ClientMaster | null>(null);
-    const [showDropdown, setShowDropdown] = useState(false);
-    const [isSearching, setIsSearching] = useState(false);
-    const dropdownRef = useRef<HTMLDivElement>(null);
 
     // --- ESTADOS DE DATOS ---
     const [movements, setMovements] = useState<AccountMovement[]>([]);
@@ -61,45 +59,42 @@ export const AccountStatements: React.FC<{ currentUser: User }> = ({ currentUser
         return concept;
     };
 
-    useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-                setShowDropdown(false);
-            }
-        };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, []);
-
-    const handleSearch = async (val: string) => {
-        setClientSearch(val);
-        const trimmed = val.trim();
-        if (trimmed.length < 2) {
-            setSearchResults([]);
-            setShowDropdown(false);
-            return;
-        }
-
-        setIsSearching(true);
-        setShowDropdown(true);
+    const fetchAllClientsAndBalances = async () => {
+        setIsLoadingClients(true);
         try {
-            const words = trimmed.split(/\s+/).filter(w => w.length > 0);
-            let query = supabase.from('clients_master').select('*');
-            
-            words.forEach(word => {
-                query = query.or(`nombre.ilike.%${word}%,codigo.ilike.%${word}%`);
-            });
+            const { data: clientsData, error: clientsErr } = await supabase.from('clients_master').select('*').order('nombre', { ascending: true });
+            if (clientsErr) throw clientsErr;
 
-            const { data, error } = await query.limit(6);
+            const { data: movementsData, error: movErr } = await supabase.from('client_account_movements').select('client_code, debit, credit').neq('is_annulled', true);
+            if (movErr) throw movErr;
 
-            if (error) throw error;
-            setSearchResults(data || []);
-        } catch (e) {
-            console.error(e);
+            const balances: Record<string, number> = {};
+            if (movementsData) {
+                movementsData.forEach(m => {
+                    const code = m.client_code;
+                    if (!balances[code]) balances[code] = 0;
+                    balances[code] += (Number(m.debit) || 0) - (Number(m.credit) || 0);
+                });
+            }
+
+            const clientsWithBalances = (clientsData || []).map(c => ({
+                ...c,
+                balance: balances[c.codigo] || 0
+            }));
+
+            setClientsList(clientsWithBalances);
+        } catch (err) {
+            console.error("Error fetching clients and balances:", err);
         } finally {
-            setIsSearching(false);
+            setIsLoadingClients(false);
         }
     };
+
+    useEffect(() => {
+        if (!selectedClient) {
+            fetchAllClientsAndBalances();
+        }
+    }, [selectedClient]);
 
     const fetchMovements = async (clientCode: string) => {
         setIsLoadingData(true);
@@ -138,8 +133,6 @@ export const AccountStatements: React.FC<{ currentUser: User }> = ({ currentUser
 
     const selectClient = (client: ClientMaster) => {
         setSelectedClient(client);
-        setClientSearch(client.nombre);
-        setShowDropdown(false);
         fetchMovements(client.codigo);
     };
 
@@ -283,6 +276,14 @@ export const AccountStatements: React.FC<{ currentUser: User }> = ({ currentUser
         if (selectedClient) fetchMovements(selectedClient.codigo);
     };
 
+    const filteredClients = useMemo(() => {
+        const keywords = listSearchTerm.toLowerCase().split(/\s+/).filter(k => k.length > 0);
+        return clientsList.filter(c => {
+            const textToSearch = `${c.nombre} ${c.codigo} ${c.localidad || ''}`.toLowerCase();
+            return keywords.every(k => textToSearch.includes(k));
+        }).sort((a, b) => b.balance - a.balance);
+    }, [clientsList, listSearchTerm]);
+
     return (
         <div className="flex flex-col gap-6 pb-20 animate-in fade-in duration-500 max-w-7xl mx-auto w-full">
             <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
@@ -337,47 +338,62 @@ export const AccountStatements: React.FC<{ currentUser: User }> = ({ currentUser
             </div>
 
             {!selectedClient ? (
-                <div className="bg-surface border border-surfaceHighlight rounded-3xl p-10 shadow-sm flex flex-col items-center justify-center gap-6 text-center animate-in fade-in">
-                    <div className="p-5 bg-background rounded-full text-muted mb-2">
-                        <UserIcon size={48} />
+                <div className="flex flex-col gap-6 animate-in fade-in">
+                    <div className="bg-surface border border-surfaceHighlight rounded-3xl p-5 shadow-sm flex flex-col md:flex-row items-center gap-4">
+                        <div className="relative flex-1 w-full">
+                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                            <input 
+                                type="text" 
+                                placeholder="Buscar cliente por nombre o código..." 
+                                value={listSearchTerm}
+                                onChange={(e) => setListSearchTerm(e.target.value)}
+                                className="w-full bg-background border border-surfaceHighlight rounded-xl py-3.5 pl-12 pr-4 text-sm font-bold text-text outline-none focus:border-primary transition-all shadow-inner uppercase"
+                            />
+                        </div>
                     </div>
-                    <div>
-                        <h3 className="text-xl font-black text-text uppercase">Seleccionar Cliente</h3>
-                        <p className="text-muted text-sm mt-1">Busque el cliente por nombre o código para ver sus movimientos.</p>
-                    </div>
-                    <div className="w-full max-w-lg relative" ref={dropdownRef}>
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={20} />
-                        <input 
-                            type="text" 
-                            placeholder="Nombre o Código..." 
-                            value={clientSearch}
-                            onChange={(e) => handleSearch(e.target.value)}
-                            onFocus={() => clientSearch.length >= 2 && setShowDropdown(true)}
-                            className="w-full bg-background border border-surfaceHighlight rounded-2xl py-4 pl-12 pr-4 text-sm font-bold outline-none focus:border-primary transition-all shadow-inner uppercase"
-                        />
-                        {isSearching && <div className="absolute right-4 top-1/2 -translate-y-1/2"><Loader2 size={18} className="animate-spin text-primary"/></div>}
-                        
-                        {showDropdown && (
-                            <div className="absolute top-full left-0 w-full bg-surface border border-primary/30 rounded-2xl shadow-2xl mt-2 z-50 overflow-hidden animate-in slide-in-from-top-2">
-                                {searchResults.length > 0 ? (
-                                    <div className="flex flex-col">
-                                        {searchResults.map((c) => (
-                                            <button 
-                                                key={c.codigo} 
-                                                onClick={() => selectClient(c)}
-                                                className="w-full p-4 hover:bg-primary/5 text-left border-b border-surfaceHighlight last:border-none flex justify-between items-center group transition-colors"
-                                            >
+
+                    <div className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm">
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left">
+                                <thead className="bg-background/50 text-[10px] text-muted uppercase font-black tracking-widest border-b border-surfaceHighlight">
+                                    <tr>
+                                        <th className="p-4 w-24 pl-6">Código</th>
+                                        <th className="p-4">Cliente / Razón Social</th>
+                                        <th className="p-4 text-right pr-6">Saldo</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-surfaceHighlight">
+                                    {isLoadingClients ? (
+                                        <tr><td colSpan={3} className="p-24 text-center"><Loader2 size={48} className="animate-spin text-primary mx-auto" /></td></tr>
+                                    ) : filteredClients.length === 0 ? (
+                                        <tr><td colSpan={3} className="p-20 text-center text-muted font-bold italic uppercase opacity-50">Sin registros</td></tr>
+                                    ) : filteredClients.map((c) => (
+                                        <tr key={c.codigo} onClick={() => selectClient(c)} className="group hover:bg-primary/5 transition-colors cursor-pointer">
+                                            <td className="p-4 pl-6">
+                                                <span className="font-mono font-black text-primary bg-primary/10 px-2 py-1 rounded text-[11px] border border-primary/20">
+                                                    #{c.codigo}
+                                                </span>
+                                            </td>
+                                            <td className="p-4">
                                                 <div className="flex flex-col">
-                                                    <span className="text-xs font-black text-text group-hover:text-primary transition-colors">{c.nombre}</span>
-                                                    <span className="text-[9px] font-mono text-muted bg-surfaceHighlight px-1.5 rounded w-fit mt-0.5">#{c.codigo}</span>
+                                                    <span className="text-sm font-black text-text uppercase leading-tight truncate max-w-[300px] group-hover:text-primary transition-colors">
+                                                        {c.nombre || 'SIN NOMBRE'}
+                                                    </span>
+                                                    <span className="text-[10px] font-bold text-muted mt-0.5 uppercase">
+                                                        {c.localidad || '-'}
+                                                    </span>
                                                 </div>
-                                                <Check size={16} className="text-primary opacity-0 group-hover:opacity-100" />
-                                            </button>
-                                        ))}
-                                    </div>
-                                ) : <div className="p-6 text-center text-[10px] font-bold text-muted uppercase tracking-widest">Sin coincidencias</div>}
-                            </div>
-                        )}
+                                            </td>
+                                            <td className="p-4 pr-6 text-right">
+                                                <span className={`text-sm font-black ${c.balance > 0 ? 'text-red-500' : c.balance < 0 ? 'text-green-600' : 'text-text'}`}>
+                                                    $ {c.balance.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             ) : (

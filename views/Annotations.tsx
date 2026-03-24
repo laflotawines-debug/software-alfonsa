@@ -557,7 +557,10 @@ export const Annotations: React.FC<AnnotationsProps> = ({ currentUser }) => {
                                                     {selectedProducts.map(p => (
                                                         <div key={p.codart} className="p-3 flex items-center justify-between gap-4">
                                                             <div className="flex-1 min-w-0">
-                                                                <p className="text-xs font-black text-text uppercase truncate">{p.desart}</p>
+                                                                <div className="flex items-center gap-2">
+                                                                    <p className="text-xs font-black text-text uppercase truncate">{p.desart}</p>
+                                                                    <span className="text-[9px] font-mono text-muted bg-surfaceHighlight/50 px-1.5 rounded">#{p.codart}</span>
+                                                                </div>
                                                                 <p className="text-[9px] text-muted font-mono">STOCK ACTUAL: {p.stock_llerena}</p>
                                                             </div>
                                                             <div className="flex items-center gap-2">
@@ -724,7 +727,10 @@ const AnnotationCard: React.FC<{
                                     <Package size={16} />
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <p className="text-[10px] font-black text-text uppercase truncate">{p.desart}</p>
+                                    <div className="flex items-center gap-2">
+                                        <p className="text-[10px] font-black text-text uppercase truncate">{p.desart}</p>
+                                        <span className="text-[8px] font-mono text-muted bg-surfaceHighlight/30 px-1 rounded">#{p.codart}</span>
+                                    </div>
                                     <p className="text-[9px] text-muted font-bold">CANTIDAD: {p.quantity}</p>
                                 </div>
                             </div>

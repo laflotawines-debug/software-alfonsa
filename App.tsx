@@ -479,7 +479,38 @@ export default function App() {
         await supabase.from('notifications').delete().eq('user_id', currentUser.id);
         setNotifications([]); 
     };
-    const handleNotificationClick = (n: AppNotification) => { console.log(n); };
+    const handleNotificationClick = async (n: AppNotification) => { 
+        // 1. Marcar como leída en la DB
+        if (!n.is_read) {
+            await supabase.from('notifications').update({ is_read: true }).eq('id', n.id);
+            setNotifications(prev => prev.map(item => item.id === n.id ? { ...item, is_read: true } : item));
+        }
+
+        const msg = n.message.toLowerCase();
+
+        // 2. Navegación según contenido
+        if (msg.includes('ingreso')) {
+            setCurrentView(View.INV_INBOUNDS);
+        } else if (msg.includes('comentario')) {
+            setCurrentView(View.ANOTACIONES);
+        } else if (msg.includes('pedido') || msg.includes('facturar') || msg.includes('controlado')) {
+            setCurrentView(View.ORDERS);
+            
+            // Si tiene link_id, intentamos abrir ese pedido
+            if (n.link_id) {
+                // Buscamos el pedido en el estado actual
+                const order = orders.find(o => o.id === n.link_id);
+                if (order) {
+                    setActiveOrder(order);
+                } else {
+                    // Si no está en el estado (quizás no es "activo"), 
+                    // podríamos intentar buscarlo en la DB pero por ahora 
+                    // al menos llevamos a la vista de pedidos.
+                    console.log("Pedido no encontrado en estado local:", n.link_id);
+                }
+            }
+        }
+    };
     
     const sendNotificationToRole = async (role: 'vale' | 'armador', message: string, linkId?: string) => {
         try {
@@ -553,9 +584,9 @@ export default function App() {
             
             // Check for negative stock
             const itemsJson = o.products.map(p => ({ codart: p.code, qty: p.shippedQuantity ?? p.quantity }));
-            const warehouseToCheck = o.isInterdeposito 
-                ? (o.interdepositoOrigin || 'LLERENA')
-                : (o.zone?.toLowerCase().includes('llerena') ? 'LLERENA' : 'BETBEDER');
+            
+            // SIEMPRE se descuenta de LLERENA, tanto para pedidos normales como para el origen de interdepósito
+            const warehouseToCheck = 'LLERENA';
 
             const { data: products, error: prodErr } = await supabase
                 .from('master_products')
@@ -582,8 +613,8 @@ export default function App() {
                 if (o.isInterdeposito) {
                     // For inter-depot movements, we call transferir_stock instead of facturar_pedido
                     const { error: transferErr } = await supabase.rpc('transferir_stock', {
-                        p_origin: o.interdepositoOrigin || 'LLERENA',
-                        p_destination: o.interdepositoDestination || 'BETBEDER',
+                        p_origin: 'LLERENA',
+                        p_destination: 'BETBEDER',
                         p_items: itemsJson,
                         p_reference_code: o.displayId,
                         p_user_id: currentUser?.id

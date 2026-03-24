@@ -259,19 +259,14 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
           isChecked: false
       };
 
-      // Verificar si ya existe para sumar cantidad o agregar nuevo
-      setProducts(prev => {
-          const exists = prev.find(p => p.code === newProduct.code);
-          if (exists) {
-              return prev.map(p => p.code === newProduct.code ? { 
-                  ...p, 
-                  quantity: p.quantity + 1,
-                  originalQuantity: p.originalQuantity + 1, 
-                  subtotal: (p.quantity + 1) * p.unitPrice 
-              } : p);
-          }
-          return [...prev, newProduct];
-      });
+      // Verificar si ya existe para bloquear duplicados
+      const exists = products.find(p => p.code === masterProd.codart);
+      if (exists) {
+          alert("No se puede agregar un producto que ya fue agregado");
+          return;
+      }
+
+      setProducts(prev => [...prev, newProduct]);
 
       setProductSearchTerm('');
       setShowProductDropdown(false);
@@ -381,9 +376,28 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
             if (parsedProducts.length === 0) {
                 alert("No se detectaron productos. Verifique que el texto tenga el formato correcto.");
             } else {
-                // Combinar con productos existentes si los hay
-                setProducts(prev => [...prev, ...parsedProducts]);
-                setRawText(''); // Limpiar texto tras procesar
+                // Verificar duplicados contra los ya existentes y dentro del nuevo lote
+                const existingCodes = new Set(products.map(p => p.code));
+                const uniqueNewProducts: Product[] = [];
+                let hasDuplicates = false;
+
+                for (const p of parsedProducts) {
+                    if (existingCodes.has(p.code)) {
+                        hasDuplicates = true;
+                    } else {
+                        uniqueNewProducts.push(p);
+                        existingCodes.add(p.code);
+                    }
+                }
+
+                if (hasDuplicates) {
+                    alert("No se puede agregar un producto que ya fue agregado");
+                }
+
+                if (uniqueNewProducts.length > 0) {
+                    setProducts(prev => [...prev, ...uniqueNewProducts]);
+                    setRawText(''); // Limpiar texto tras procesar
+                }
             }
         } catch (err: any) {
             console.error("Error parsing text:", err);
@@ -554,9 +568,8 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
                         <label className="text-xs font-bold text-blue-600 uppercase tracking-wider">Depósito Origen *</label>
                         <div className="relative">
                             <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-500" size={18} />
-                            <select value={interdepositoOrigin} onChange={(e) => { setInterdepositoOrigin(e.target.value); if (clientName.startsWith('TRF:')) setClientName(`TRF: ${e.target.value} -> ${interdepositoDestination}`); }} className="w-full bg-blue-500/5 border border-blue-500/20 rounded-xl py-3.5 pl-10 pr-4 text-sm text-blue-700 focus:border-blue-500 outline-none transition-colors appearance-none cursor-pointer shadow-sm font-bold uppercase">
+                            <select value="LLERENA" disabled className="w-full bg-blue-500/5 border border-blue-500/20 rounded-xl py-3.5 pl-10 pr-4 text-sm text-blue-700 focus:border-blue-500 outline-none transition-colors appearance-none cursor-not-allowed shadow-sm font-bold uppercase opacity-70">
                                 <option value="LLERENA">LLERENA</option>
-                                <option value="BETBEDER">BETBEDER</option>
                             </select>
                         </div>
                     </div>
@@ -564,9 +577,8 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
                         <label className="text-xs font-bold text-blue-600 uppercase tracking-wider">Depósito Destino *</label>
                         <div className="relative">
                             <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-500" size={18} />
-                            <select value={interdepositoDestination} onChange={(e) => { setInterdepositoDestination(e.target.value); if (clientName.startsWith('TRF:')) setClientName(`TRF: ${interdepositoOrigin} -> ${e.target.value}`); }} className="w-full bg-blue-500/5 border border-blue-500/20 rounded-xl py-3.5 pl-10 pr-4 text-sm text-blue-700 focus:border-blue-500 outline-none transition-colors appearance-none cursor-pointer shadow-sm font-bold uppercase">
+                            <select value="BETBEDER" disabled className="w-full bg-blue-500/5 border border-blue-500/20 rounded-xl py-3.5 pl-10 pr-4 text-sm text-blue-700 focus:border-blue-500 outline-none transition-colors appearance-none cursor-not-allowed shadow-sm font-bold uppercase opacity-70">
                                 <option value="BETBEDER">BETBEDER</option>
-                                <option value="LLERENA">LLERENA</option>
                             </select>
                         </div>
                     </div>

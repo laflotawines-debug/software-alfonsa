@@ -114,50 +114,52 @@ export const PaymentsProviders: React.FC<PaymentsProvidersProps> = ({ providers,
             </div>
 
             <div className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm">
-                <table className="w-full text-left">
-                    <thead>
-                        <tr className="bg-background/50 border-b border-surfaceHighlight text-[10px] text-muted uppercase font-black tracking-widest">
-                            <th className="p-4 pl-6">Proveedor Vinculado</th>
-                            <th className="p-4 text-center">Prioridad</th>
-                            <th className="p-4 text-center">Cuentas Activas</th>
-                            <th className="p-4 text-center">Estado</th>
-                            <th className="p-4 pr-6 text-right">Acción</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-surfaceHighlight">
-                        {filteredProviders.map(p => (
-                            <tr key={p.id} className="hover:bg-primary/5 transition-colors group">
-                                <td className="p-4 pl-6">
-                                    <div className="flex items-center gap-3">
-                                        <div className="h-8 w-8 rounded-full bg-primary/10 text-primary flex items-center justify-center font-black text-xs uppercase">{p.name.substring(0,2)}</div>
-                                        <span className="font-bold text-sm text-text uppercase">{p.name}</span>
-                                        {p.status === 'Frenado' && <PauseCircle size={14} className="text-red-500 animate-pulse" />}
-                                    </div>
-                                </td>
-                                <td className="p-4 text-center"><span className="text-xs font-black text-muted bg-background px-3 py-1 rounded-full border border-surfaceHighlight">#{p.priority}</span></td>
-                                <td className="p-4 text-center"><span className="text-xs text-text font-black">{p.accounts.filter(a => a.status === 'Activa').length}</span></td>
-                                <td className="p-4 text-center">
-                                    <span className={`text-[10px] font-black uppercase px-3 py-1 rounded-full border ${p.status === 'Activado' ? 'bg-blue-500/10 text-blue-500 border-blue-500/20' : p.status === 'Frenado' ? 'bg-red-500/10 text-red-500 border-red-500/20' : 'bg-muted/10 text-muted border-muted/20'}`}>
-                                        {p.status}
-                                    </span>
-                                </td>
-                                <td className="p-4 pr-6 text-right">
-                                    <div className="flex justify-end gap-2">
-                                        <button type="button" onClick={() => handleOpenModal(p)} className="p-3 text-muted hover:text-primary rounded-xl hover:bg-primary/10 transition-all cursor-pointer" title="Editar">
-                                            <Edit2 size={18} />
-                                        </button>
-                                        <button type="button" onClick={(e) => handleDelete(e, p.id)} className="p-3 text-muted hover:text-red-500 rounded-xl hover:bg-red-50/10 transition-all cursor-pointer" title="Eliminar">
-                                            <Trash2 size={18} />
-                                        </button>
-                                    </div>
-                                </td>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                        <thead>
+                            <tr className="bg-background/50 border-b border-surfaceHighlight text-[10px] text-muted uppercase font-black tracking-widest">
+                                <th className="p-4 pl-6">Proveedor Vinculado</th>
+                                <th className="p-4 text-center">Prioridad</th>
+                                <th className="p-4 text-center">Cuentas Activas</th>
+                                <th className="p-4 text-center">Estado</th>
+                                <th className="p-4 pr-6 text-right">Acción</th>
                             </tr>
-                        ))}
-                        {filteredProviders.length === 0 && (
-                            <tr><td colSpan={5} className="p-20 text-center text-muted italic font-bold">No hay proveedores {showInactive ? 'inactivos' : 'activos'} configurados.</td></tr>
-                        )}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody className="divide-y divide-surfaceHighlight">
+                            {filteredProviders.map(p => (
+                                <tr key={p.id} className="hover:bg-primary/5 transition-colors group">
+                                    <td className="p-4 pl-6">
+                                        <div className="flex items-center gap-3">
+                                            <div className="h-8 w-8 rounded-full bg-primary/10 text-primary flex items-center justify-center font-black text-xs uppercase">{p.name.substring(0,2)}</div>
+                                            <span className="font-bold text-sm text-text uppercase whitespace-nowrap">{p.name}</span>
+                                            {p.status === 'Frenado' && <PauseCircle size={14} className="text-red-500 animate-pulse" />}
+                                        </div>
+                                    </td>
+                                    <td className="p-4 text-center"><span className="text-xs font-black text-muted bg-background px-3 py-1 rounded-full border border-surfaceHighlight">#{p.priority}</span></td>
+                                    <td className="p-4 text-center"><span className="text-xs text-text font-black">{p.accounts.filter(a => a.status === 'Activa').length}</span></td>
+                                    <td className="p-4 text-center">
+                                        <span className={`text-[10px] font-black uppercase px-3 py-1 rounded-full border ${p.status === 'Activado' ? 'bg-blue-500/10 text-blue-500 border-blue-500/20' : p.status === 'Frenado' ? 'bg-red-500/10 text-red-500 border-red-500/20' : 'bg-muted/10 text-muted border-muted/20'}`}>
+                                            {p.status}
+                                        </span>
+                                    </td>
+                                    <td className="p-4 pr-6 text-right">
+                                        <div className="flex justify-end gap-2">
+                                            <button type="button" onClick={() => handleOpenModal(p)} className="p-3 text-muted hover:text-primary rounded-xl hover:bg-primary/10 transition-all cursor-pointer" title="Editar">
+                                                <Edit2 size={18} />
+                                            </button>
+                                            <button type="button" onClick={(e) => handleDelete(e, p.id)} className="p-3 text-muted hover:text-red-500 rounded-xl hover:bg-red-50/10 transition-all cursor-pointer" title="Eliminar">
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                            {filteredProviders.length === 0 && (
+                                <tr><td colSpan={5} className="p-20 text-center text-muted italic font-bold">No hay proveedores {showInactive ? 'inactivos' : 'activos'} configurados.</td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             {isModalOpen && (
@@ -214,7 +216,8 @@ const NewProviderModal: React.FC<{
                         .from('providers_master')
                         .select('*')
                         .eq('activo', true)
-                        .order('razon_social');
+                        .order('razon_social')
+                        .limit(5000); // Aumentar límite para asegurar que se carguen todos los activos
                     if (data) setMasterSuppliers(data);
                 } catch (e) {
                     console.error("Error cargando maestro:", e);
@@ -254,15 +257,17 @@ const NewProviderModal: React.FC<{
         const keywords = name.toLowerCase().split(/\s+/).filter(k => k.length > 0);
         
         return masterSuppliers
-            .filter(s => !existingProviderNames.includes(s.razon_social)) // Excluir ya vinculados
             .filter(s => {
                 const text = `${s.razon_social} ${s.codigo} ${s.nombre_comercial || ''}`.toLowerCase();
                 return keywords.every(k => text.includes(k));
-            })
-            .slice(0, 10); // Limitar resultados
-    }, [masterSuppliers, name, existingProviderNames]);
+            }); // Mostrar todos los resultados que coincidan con la búsqueda
+    }, [masterSuppliers, name]); // Eliminamos existingProviderNames de la dependencia y del filtro inicial
 
     const handleSelectMaster = (supplier: SupplierMaster) => {
+        if (existingProviderNames.includes(supplier.razon_social)) {
+            alert("Este proveedor ya se encuentra vinculado.");
+            return;
+        }
         setName(supplier.razon_social);
         setShowDropdown(false);
     };
@@ -341,7 +346,13 @@ const NewProviderModal: React.FC<{
                                                 className="w-full text-left px-4 py-3 hover:bg-primary/5 border-b border-surfaceHighlight last:border-none flex justify-between items-center group transition-colors"
                                             >
                                                 <div className="flex flex-col">
-                                                    <span className="text-xs font-bold text-text uppercase group-hover:text-primary">{s.razon_social}</span>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-xs font-bold text-text uppercase group-hover:text-primary">{s.razon_social}</span>
+                                                        {existingProviderNames.includes(s.razon_social) && (
+                                                            <span className="text-[8px] font-black bg-orange-500/10 text-orange-500 px-1.5 py-0.5 rounded border border-orange-500/20 uppercase">Ya Vinculado</span>
+                                                        )}
+                                                    </div>
+                                                    {s.nombre_comercial && <span className="text-[9px] font-bold text-muted uppercase tracking-wider">{s.nombre_comercial}</span>}
                                                     <span className="text-[9px] font-mono text-muted">#{s.codigo}</span>
                                                 </div>
                                                 <Check size={14} className="text-primary opacity-0 group-hover:opacity-100 transition-opacity" />

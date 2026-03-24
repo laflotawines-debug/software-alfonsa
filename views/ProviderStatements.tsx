@@ -29,13 +29,11 @@ import { jsPDF } from 'jspdf';
 import * as XLSX from 'xlsx';
 
 export const ProviderStatements: React.FC<{ currentUser: User }> = ({ currentUser }) => {
-    // --- ESTADOS DE BÚSQUEDA ---
-    const [providerSearch, setProviderSearch] = useState('');
-    const [searchResults, setSearchResults] = useState<SupplierMaster[]>([]);
+    // --- ESTADOS DE BÚSQUEDA Y LISTA ---
+    const [providersList, setProvidersList] = useState<(SupplierMaster & { balance: number })[]>([]);
+    const [isLoadingProviders, setIsLoadingProviders] = useState(true);
+    const [listSearchTerm, setListSearchTerm] = useState('');
     const [selectedProvider, setSelectedProvider] = useState<SupplierMaster | null>(null);
-    const [showDropdown, setShowDropdown] = useState(false);
-    const [isSearching, setIsSearching] = useState(false);
-    const dropdownRef = useRef<HTMLDivElement>(null);
 
     // --- ESTADOS DE DATOS ---
     const [movements, setMovements] = useState<ProviderAccountMovement[]>([]);
@@ -57,45 +55,42 @@ export const ProviderStatements: React.FC<{ currentUser: User }> = ({ currentUse
         return concept;
     };
 
-    useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-                setShowDropdown(false);
-            }
-        };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, []);
-
-    const handleSearch = async (val: string) => {
-        setProviderSearch(val);
-        const trimmed = val.trim();
-        if (trimmed.length < 2) {
-            setSearchResults([]);
-            setShowDropdown(false);
-            return;
-        }
-
-        setIsSearching(true);
-        setShowDropdown(true);
+    const fetchAllProvidersAndBalances = async () => {
+        setIsLoadingProviders(true);
         try {
-            const words = trimmed.split(/\s+/).filter(w => w.length > 0);
-            let query = supabase.from('providers_master').select('*');
-            
-            words.forEach(word => {
-                query = query.or(`razon_social.ilike.%${word}%,codigo.ilike.%${word}%`);
-            });
+            const { data: providersData, error: providersErr } = await supabase.from('providers_master').select('*').order('razon_social', { ascending: true });
+            if (providersErr) throw providersErr;
 
-            const { data, error } = await query.limit(6);
+            const { data: movementsData, error: movErr } = await supabase.from('provider_account_movements').select('provider_code, debit, credit').neq('is_annulled', true);
+            if (movErr) throw movErr;
 
-            if (error) throw error;
-            setSearchResults(data || []);
-        } catch (e) {
-            console.error(e);
+            const balances: Record<string, number> = {};
+            if (movementsData) {
+                movementsData.forEach(m => {
+                    const code = m.provider_code;
+                    if (!balances[code]) balances[code] = 0;
+                    balances[code] += (Number(m.debit) || 0) - (Number(m.credit) || 0);
+                });
+            }
+
+            const providersWithBalances = (providersData || []).map(p => ({
+                ...p,
+                balance: balances[p.codigo] || 0
+            }));
+
+            setProvidersList(providersWithBalances);
+        } catch (err) {
+            console.error("Error fetching providers and balances:", err);
         } finally {
-            setIsSearching(false);
+            setIsLoadingProviders(false);
         }
     };
+
+    useEffect(() => {
+        if (!selectedProvider) {
+            fetchAllProvidersAndBalances();
+        }
+    }, [selectedProvider]);
 
     const fetchMovements = async (providerCode: string) => {
         setIsLoadingData(true);
@@ -138,8 +133,6 @@ export const ProviderStatements: React.FC<{ currentUser: User }> = ({ currentUse
 
     const selectProvider = (provider: SupplierMaster) => {
         setSelectedProvider(provider);
-        setProviderSearch(provider.razon_social);
-        setShowDropdown(false);
         fetchMovements(provider.codigo);
     };
 
@@ -251,6 +244,14 @@ export const ProviderStatements: React.FC<{ currentUser: User }> = ({ currentUse
         if (selectedProvider) fetchMovements(selectedProvider.codigo);
     };
 
+    const filteredProviders = useMemo(() => {
+        const keywords = listSearchTerm.toLowerCase().split(/\s+/).filter(k => k.length > 0);
+        return providersList.filter(p => {
+            const textToSearch = `${p.razon_social} ${p.codigo}`.toLowerCase();
+            return keywords.every(k => textToSearch.includes(k));
+        }).sort((a, b) => b.balance - a.balance);
+    }, [providersList, listSearchTerm]);
+
     return (
         <div className="flex flex-col gap-6 pb-20 animate-in fade-in duration-500 max-w-7xl mx-auto w-full">
             <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
@@ -308,47 +309,59 @@ export const ProviderStatements: React.FC<{ currentUser: User }> = ({ currentUse
             </div>
 
             {!selectedProvider ? (
-                <div className="bg-surface border border-surfaceHighlight rounded-3xl p-10 shadow-sm flex flex-col items-center justify-center gap-6 text-center animate-in fade-in">
-                    <div className="p-5 bg-background rounded-full text-muted mb-2">
-                        <Truck size={48} />
+                <div className="flex flex-col gap-6 animate-in fade-in">
+                    <div className="bg-surface border border-surfaceHighlight rounded-3xl p-5 shadow-sm flex flex-col md:flex-row items-center gap-4">
+                        <div className="relative flex-1 w-full">
+                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                            <input 
+                                type="text" 
+                                placeholder="Buscar proveedor por razón social o código..." 
+                                value={listSearchTerm}
+                                onChange={(e) => setListSearchTerm(e.target.value)}
+                                className="w-full bg-background border border-surfaceHighlight rounded-xl py-3.5 pl-12 pr-4 text-sm font-bold text-text outline-none focus:border-primary transition-all shadow-inner uppercase"
+                            />
+                        </div>
                     </div>
-                    <div>
-                        <h3 className="text-xl font-black text-text uppercase">Seleccionar Proveedor</h3>
-                        <p className="text-muted text-sm mt-1">Busque el proveedor por razón social o código.</p>
-                    </div>
-                    <div className="w-full max-w-lg relative" ref={dropdownRef}>
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={20} />
-                        <input 
-                            type="text" 
-                            placeholder="Razón Social o Código..." 
-                            value={providerSearch}
-                            onChange={(e) => handleSearch(e.target.value)}
-                            onFocus={() => providerSearch.length >= 2 && setShowDropdown(true)}
-                            className="w-full bg-background border border-surfaceHighlight rounded-2xl py-4 pl-12 pr-4 text-sm font-bold outline-none focus:border-primary transition-all shadow-inner uppercase"
-                        />
-                        {isSearching && <div className="absolute right-4 top-1/2 -translate-y-1/2"><Loader2 size={18} className="animate-spin text-primary"/></div>}
-                        
-                        {showDropdown && (
-                            <div className="absolute top-full left-0 w-full bg-surface border border-primary/30 rounded-2xl shadow-2xl mt-2 z-50 overflow-hidden animate-in slide-in-from-top-2">
-                                {searchResults.length > 0 ? (
-                                    <div className="flex flex-col">
-                                        {searchResults.map((p) => (
-                                            <button 
-                                                key={p.codigo} 
-                                                onClick={() => selectProvider(p)}
-                                                className="w-full p-4 hover:bg-primary/5 text-left border-b border-surfaceHighlight last:border-none flex justify-between items-center group transition-colors"
-                                            >
+
+                    <div className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm">
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left">
+                                <thead className="bg-background/50 text-[10px] text-muted uppercase font-black tracking-widest border-b border-surfaceHighlight">
+                                    <tr>
+                                        <th className="p-4 w-24 pl-6">Código</th>
+                                        <th className="p-4">Proveedor / Razón Social</th>
+                                        <th className="p-4 text-right pr-6">Deuda</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-surfaceHighlight">
+                                    {isLoadingProviders ? (
+                                        <tr><td colSpan={3} className="p-24 text-center"><Loader2 size={48} className="animate-spin text-primary mx-auto" /></td></tr>
+                                    ) : filteredProviders.length === 0 ? (
+                                        <tr><td colSpan={3} className="p-20 text-center text-muted font-bold italic uppercase opacity-50">Sin registros</td></tr>
+                                    ) : filteredProviders.map((p) => (
+                                        <tr key={p.codigo} onClick={() => selectProvider(p)} className="group hover:bg-primary/5 transition-colors cursor-pointer">
+                                            <td className="p-4 pl-6">
+                                                <span className="font-mono font-black text-primary bg-primary/10 px-2 py-1 rounded text-[11px] border border-primary/20">
+                                                    #{p.codigo}
+                                                </span>
+                                            </td>
+                                            <td className="p-4">
                                                 <div className="flex flex-col">
-                                                    <span className="text-xs font-black text-text group-hover:text-primary transition-colors uppercase">{p.razon_social}</span>
-                                                    <span className="text-[9px] font-mono text-muted bg-surfaceHighlight px-1.5 rounded w-fit mt-0.5">#{p.codigo}</span>
+                                                    <span className="text-sm font-black text-text uppercase leading-tight truncate max-w-[300px] group-hover:text-primary transition-colors">
+                                                        {p.razon_social || 'SIN NOMBRE'}
+                                                    </span>
                                                 </div>
-                                                <Check size={16} className="text-primary opacity-0 group-hover:opacity-100" />
-                                            </button>
-                                        ))}
-                                    </div>
-                                ) : <div className="p-6 text-center text-[10px] font-bold text-muted uppercase tracking-widest">Sin coincidencias</div>}
-                            </div>
-                        )}
+                                            </td>
+                                            <td className="p-4 pr-6 text-right">
+                                                <span className={`text-sm font-black ${p.balance > 0 ? 'text-red-500' : p.balance < 0 ? 'text-green-600' : 'text-text'}`}>
+                                                    $ {p.balance.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             ) : (
@@ -373,22 +386,22 @@ export const ProviderStatements: React.FC<{ currentUser: User }> = ({ currentUse
                                         <tr><td colSpan={6} className="p-20 text-center text-muted italic font-bold">No hay movimientos registrados.</td></tr>
                                     ) : movements.map((m) => (
                                         <tr key={m.id} className={`hover:bg-background/40 transition-colors group ${m.is_annulled ? 'opacity-50 grayscale bg-background/20' : ''}`}>
-                                            <td className={`p-4 pl-8 text-xs font-bold ${m.is_annulled ? 'text-muted line-through' : 'text-muted group-hover:text-text'}`}>
+                                            <td className={`p-4 pl-8 text-xs font-bold whitespace-nowrap ${m.is_annulled ? 'text-muted line-through' : 'text-muted group-hover:text-text'}`}>
                                                 {new Date(m.date).toLocaleDateString()}
                                             </td>
-                                            <td className={`p-4 text-sm font-bold ${m.is_annulled ? 'text-muted line-through italic' : 'text-text uppercase'}`}>
+                                            <td className={`p-4 text-sm font-bold whitespace-nowrap ${m.is_annulled ? 'text-muted line-through italic' : 'text-text uppercase'}`}>
                                                 {formatConcept(m.concept)} {m.is_annulled && "(ANULADO)"}
                                             </td>
-                                            <td className={`p-4 text-right text-sm font-black ${m.is_annulled ? 'text-muted line-through' : 'text-red-500/80'}`}>
+                                            <td className={`p-4 text-right text-sm font-black whitespace-nowrap ${m.is_annulled ? 'text-muted line-through' : 'text-red-500/80'}`}>
                                                 {m.debit > 0 ? `$ ${m.debit.toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : '-'}
                                             </td>
-                                            <td className={`p-4 text-right text-sm font-black ${m.is_annulled ? 'text-muted line-through' : 'text-green-600'}`}>
+                                            <td className={`p-4 text-right text-sm font-black whitespace-nowrap ${m.is_annulled ? 'text-muted line-through' : 'text-green-600'}`}>
                                                 {m.credit > 0 ? `$ ${m.credit.toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : '-'}
                                             </td>
-                                            <td className="p-4 text-right text-sm font-black text-text">
+                                            <td className="p-4 text-right text-sm font-black text-text whitespace-nowrap">
                                                 $ {m.balance.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
                                             </td>
-                                            <td className="p-4 pr-8 text-center">
+                                            <td className="p-4 pr-8 text-center whitespace-nowrap">
                                                 <div className="flex justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                                     {!m.is_annulled && (
                                                         <button 
