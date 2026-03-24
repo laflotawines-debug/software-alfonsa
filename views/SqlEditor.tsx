@@ -5,32 +5,66 @@ import { User } from '../types';
 
 export const SqlEditor: React.FC<{ currentUser: User }> = ({ currentUser }) => {
     const [query, setQuery] = useState(`-- ========================================================
--- SCRIPT: CREACIÓN DE TABLA CONCEPTOS DE CAJA
+-- SCRIPT: FUNCIÓN PARA REVERTIR STOCK DE NOTA DE CRÉDITO (CORREGIDA)
 -- ========================================================
 
-CREATE TABLE IF NOT EXISTS public.cash_concepts (
-    id uuid NOT NULL DEFAULT gen_random_uuid(),
-    name text NOT NULL,
-    type text NOT NULL CHECK (type IN ('ingreso', 'egreso')),
-    category text NOT NULL CHECK (category IN ('caja', 'banco')),
-    active boolean DEFAULT true,
-    created_at timestamp with time zone DEFAULT now(),
-    CONSTRAINT cash_concepts_pkey PRIMARY KEY (id)
-);
+CREATE OR REPLACE FUNCTION revertir_nota_credito(
+    p_order_id UUID,
+    p_user_id UUID,
+    p_reason TEXT DEFAULT 'Anulación de nota de crédito'
+) RETURNS JSONB AS $$
+DECLARE
+    v_movement RECORD;
+    v_movements_found BOOLEAN := false;
+BEGIN
+    -- Verificar si ya se revirtió
+    IF EXISTS (
+        SELECT 1 FROM stock_movements 
+        WHERE reference_id = p_order_id AND type::text = 'nota de crédito' AND quantity < 0
+    ) THEN
+        RETURN jsonb_build_object('success', false, 'message', 'La nota de crédito ya fue revertida anteriormente');
+    END IF;
 
--- Habilitar seguridad (RLS)
-ALTER TABLE public.cash_concepts ENABLE ROW LEVEL SECURITY;
+    -- Revertir exactamente los movimientos de stock que se crearon para esta nota de crédito
+    FOR v_movement IN 
+        SELECT * FROM stock_movements 
+        WHERE reference_id = p_order_id AND type::text = 'nota de crédito' AND quantity > 0
+    LOOP
+        v_movements_found := true;
+        
+        -- Insertar movimiento de stock inverso (negativo)
+        INSERT INTO stock_movements (
+            codart,
+            warehouse_id,
+            quantity,
+            type,
+            reference_id,
+            transfer_group_code,
+            created_by
+        ) VALUES (
+            v_movement.codart,
+            v_movement.warehouse_id,
+            -v_movement.quantity, -- Negativo porque es una salida (reversión)
+            'nota de crédito',
+            p_order_id,
+            p_reason,
+            p_user_id
+        );
+    END LOOP;
 
--- Políticas de seguridad
-CREATE POLICY "Enable read access for all users" ON public.cash_concepts FOR SELECT USING (true);
-CREATE POLICY "Enable insert for authenticated users only" ON public.cash_concepts FOR INSERT WITH CHECK (auth.role() = 'authenticated');
-CREATE POLICY "Enable update for authenticated users only" ON public.cash_concepts FOR UPDATE USING (auth.role() = 'authenticated');
-CREATE POLICY "Enable delete for authenticated users only" ON public.cash_concepts FOR DELETE USING (auth.role() = 'authenticated');
+    IF NOT v_movements_found THEN
+        RETURN jsonb_build_object('success', false, 'message', 'No se encontraron movimientos de stock para revertir');
+    END IF;
 
--- Insertar permiso
-INSERT INTO public.app_permissions (key, module, label) 
-VALUES ('cash.concepts', 'Caja', 'Conceptos de Ingreso/Egreso') 
-ON CONFLICT (key) DO NOTHING;
+    RETURN jsonb_build_object(
+        'success', true,
+        'message', 'Stock revertido correctamente'
+    );
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE EXCEPTION 'Error al revertir stock: %', SQLERRM;
+END;
+$$ LANGUAGE plpgsql;
 `);
 
     const copyToClipboard = () => {

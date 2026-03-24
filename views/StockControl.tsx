@@ -33,7 +33,8 @@ import {
     Layers,
     BoxSelect,
     ArrowDown,
-    Database
+    Database,
+    Globe
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { User, StockControlSession, StockControlItem, MasterProduct } from '../types';
@@ -65,7 +66,9 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
         provider: 'TODOS', 
         search: '' 
     });
-    const [onlyWithStock, setOnlyWithStock] = useState(false);
+    const [showWithStock, setShowWithStock] = useState(true);
+    const [showWithoutStock, setShowWithoutStock] = useState(true);
+    const [showNegativeStock, setShowNegativeStock] = useState(true);
 
     // --- PAGINATION STATE ---
     const PAGE_SIZE = 100;
@@ -82,24 +85,57 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
     const [isSavingCount, setIsSavingCount] = useState(false);
     const [executionSearch, setExecutionSearch] = useState('');
     const [reviewSearch, setReviewSearch] = useState('');
+    const [executionSort, setExecutionSort] = useState<'none' | 'diff' | 'pending'>('none');
+    const [reviewSort, setReviewSort] = useState<'none' | 'diff' | 'pending'>('none');
+    const [showGlobalDifferences, setShowGlobalDifferences] = useState(false);
+    const [globalDifferences, setGlobalDifferences] = useState<any[]>([]);
+    const [isGlobalLoading, setIsGlobalLoading] = useState(false);
 
     const isVale = currentUser.role === 'vale';
 
     const fetchSessions = async () => {
         setIsLoading(true);
         try {
-            const { data } = await supabase
+            const { data: sessionsData } = await supabase
                 .from('stock_control_sessions')
-                .select(`*, warehouses(name), stock_control_items(id, stock_control_counts(user_id))`)
+                .select(`*, warehouses(name)`)
                 .order('created_at', { ascending: false });
             
-            if (data) {
-                const mapped = data.map(s => {
-                    const items = s.stock_control_items || [];
+            if (sessionsData) {
+                const sessionIds = sessionsData.map(s => s.id);
+                let allItems: any[] = [];
+                
+                if (sessionIds.length > 0) {
+                    let keepFetching = true;
+                    let from = 0;
+                    const BATCH_SIZE = 1000;
+                    while (keepFetching) {
+                        const { data: itemsChunk, error } = await supabase
+                            .from('stock_control_items')
+                            .select('id, session_id, stock_control_counts(user_id)')
+                            .in('session_id', sessionIds)
+                            .range(from, from + BATCH_SIZE - 1);
+                        
+                        if (error) throw error;
+                        if (itemsChunk && itemsChunk.length > 0) {
+                            allItems = [...allItems, ...itemsChunk];
+                            if (itemsChunk.length < BATCH_SIZE) keepFetching = false;
+                            else from += BATCH_SIZE;
+                        } else {
+                            keepFetching = false;
+                        }
+                    }
+                }
+
+                const mapped = sessionsData.map(s => {
+                    const items = allItems.filter(i => i.session_id === s.id);
                     const allUserIds = items.flatMap((i: any) => i.stock_control_counts.map((c: any) => c.user_id));
                     const uniqueUsers = Array.from(new Set(allUserIds));
                     return {
-                        ...s, warehouse_name: s.warehouses?.name, item_count: items.length, assigned_users: uniqueUsers,
+                        ...s, 
+                        warehouse_name: s.warehouses?.name, 
+                        item_count: items.length, 
+                        assigned_users: uniqueUsers,
                         user_progress: uniqueUsers.map(uid => {
                             const countedByThisUser = items.filter((i: any) => i.stock_control_counts.some((c: any) => c.user_id === uid)).length;
                             return { userId: uid, count: countedByThisUser };
@@ -114,20 +150,27 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
     // Cargar metadatos para los filtros (solo una vez)
     const fetchFilterMetadata = async () => {
         try {
-            const { data } = await supabase.from('master_products').select('familia, nsubf, nomprov');
-            if (data) {
-                const f = new Set<string>();
-                const s = new Set<string>();
-                const p = new Set<string>();
-                data.forEach((item: any) => {
-                    if (item.familia) f.add(item.familia);
-                    if (item.nsubf) s.add(item.nsubf);
-                    if (item.nomprov) p.add(item.nomprov);
-                });
-                setMetaFamilies(Array.from(f).sort());
-                setMetaSubfamilies(Array.from(s).sort());
-                setMetaProviders(Array.from(p).sort());
+            let page = 0;
+            const f = new Set<string>();
+            const s = new Set<string>();
+            const p = new Set<string>();
+            
+            while (true) {
+                const { data } = await supabase.from('master_products').select('familia, nsubf, nomprov').neq('familia', 'ELIMINADOS').range(page * 1000, (page + 1) * 1000 - 1);
+                if (data) {
+                    data.forEach((item: any) => {
+                        if (item.familia) f.add(item.familia);
+                        if (item.nsubf) s.add(item.nsubf);
+                        if (item.nomprov) p.add(item.nomprov);
+                    });
+                }
+                if (!data || data.length < 1000) break;
+                page++;
             }
+            
+            setMetaFamilies(Array.from(f).sort());
+            setMetaSubfamilies(Array.from(s).sort());
+            setMetaProviders(Array.from(p).sort());
         } catch (e) { console.error("Error loading metadata", e); }
     };
 
@@ -138,7 +181,7 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
             const currentOffset = isLoadMore ? (page + 1) * PAGE_SIZE : 0;
             const rangeEnd = currentOffset + PAGE_SIZE - 1;
 
-            let query = supabase.from('master_products').select('*');
+            let query = supabase.from('master_products').select('*').neq('familia', 'ELIMINADOS');
 
             // Filtros de Texto
             if (filters.search.trim()) {
@@ -152,12 +195,19 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
             if (filters.provider !== 'TODOS') query = query.eq('nomprov', filters.provider);
 
             // Filtro de Stock (Depende del almacén seleccionado)
-            if (onlyWithStock && warehouseId) {
+            if (warehouseId) {
                 const selectedWh = warehouses.find(w => w.id === warehouseId);
-                if (selectedWh?.name === 'LLERENA') {
-                    query = query.gt('stock_llerena', 0);
-                } else if (selectedWh?.name === 'BETBEDER') {
-                    query = query.gt('stock_betbeder', 0);
+                const stockField = (selectedWh?.name || '').toUpperCase() === 'LLERENA' ? 'stock_llerena' : 'stock_betbeder';
+                
+                const conditions = [];
+                if (showWithStock) conditions.push(`${stockField}.gt.0`);
+                if (showWithoutStock) conditions.push(`${stockField}.eq.0`);
+                if (showNegativeStock) conditions.push(`${stockField}.lt.0`);
+
+                if (conditions.length === 0) {
+                    query = query.eq('codart', 'NONE_SELECTED');
+                } else if (conditions.length < 3) {
+                    query = query.or(conditions.join(','));
                 }
             }
 
@@ -185,7 +235,7 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
         } finally {
             setIsProductsLoading(false);
         }
-    }, [filters, onlyWithStock, warehouseId, warehouses, page]);
+    }, [filters, showWithStock, showWithoutStock, warehouseId, warehouses, page]);
 
     // Función para cargar TODO el resultado de los filtros (Sin paginación visual, bucle interno)
     const handleLoadAll = async () => {
@@ -197,7 +247,7 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
             let keepFetching = true;
 
             while (keepFetching) {
-                let query = supabase.from('master_products').select('*');
+                let query = supabase.from('master_products').select('*').neq('familia', 'ELIMINADOS');
 
                 // Aplicar mismos filtros
                 if (filters.search.trim()) {
@@ -208,10 +258,20 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
                 if (filters.subfamily !== 'TODAS') query = query.eq('nsubf', filters.subfamily);
                 if (filters.provider !== 'TODOS') query = query.eq('nomprov', filters.provider);
 
-                if (onlyWithStock && warehouseId) {
+                if (warehouseId) {
                     const selectedWh = warehouses.find(w => w.id === warehouseId);
-                    if (selectedWh?.name === 'LLERENA') query = query.gt('stock_llerena', 0);
-                    else if (selectedWh?.name === 'BETBEDER') query = query.gt('stock_betbeder', 0);
+                    const stockField = (selectedWh?.name || '').toUpperCase() === 'LLERENA' ? 'stock_llerena' : 'stock_betbeder';
+                    
+                    const conditions = [];
+                    if (showWithStock) conditions.push(`${stockField}.gt.0`);
+                    if (showWithoutStock) conditions.push(`${stockField}.eq.0`);
+                    if (showNegativeStock) conditions.push(`${stockField}.lt.0`);
+
+                    if (conditions.length === 0) {
+                        query = query.eq('codart', 'NONE_SELECTED');
+                    } else if (conditions.length < 3) {
+                        query = query.or(conditions.join(','));
+                    }
                 }
 
                 query = query.order('desart', { ascending: true }).range(from, from + BATCH_SIZE - 1);
@@ -247,7 +307,64 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
             }, 400);
             return () => clearTimeout(timeoutId);
         }
-    }, [filters, onlyWithStock, warehouseId]);
+    }, [filters, showWithStock, showWithoutStock, showNegativeStock, warehouseId]);
+
+    const fetchGlobalDifferences = async () => {
+        setIsGlobalLoading(true);
+        try {
+            const { data, error } = await supabase
+                .from('stock_control_items')
+                .select('id, codart, system_qty, corrected_qty, session_id, master_products(desart), stock_control_sessions(name, warehouse_id, warehouses(name))')
+                .not('corrected_qty', 'is', null);
+            
+            if (error) throw error;
+            
+            if (data) {
+                const diffs = data.filter((item: any) => item.corrected_qty !== item.system_qty).map((item: any) => ({
+                    id: item.id,
+                    codart: item.codart,
+                    desart: item.master_products?.desart,
+                    system_qty: item.system_qty,
+                    corrected_qty: item.corrected_qty,
+                    session_id: item.session_id,
+                    session_name: item.stock_control_sessions?.name,
+                    warehouse_id: item.stock_control_sessions?.warehouse_id,
+                    warehouse_name: item.stock_control_sessions?.warehouses?.name || 'S/D',
+                    ajuste: item.corrected_qty - item.system_qty
+                }));
+                diffs.sort((a, b) => {
+                    if (a.warehouse_name < b.warehouse_name) return -1;
+                    if (a.warehouse_name > b.warehouse_name) return 1;
+                    if (a.session_name < b.session_name) return -1;
+                    if (a.session_name > b.session_name) return 1;
+                    if (a.desart < b.desart) return -1;
+                    if (a.desart > b.desart) return 1;
+                    return 0;
+                });
+                setGlobalDifferences(diffs);
+            }
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsGlobalLoading(false);
+        }
+    };
+
+    const globalDiffsByWarehouse = useMemo(() => {
+        const groups: Record<string, any[]> = {};
+        globalDifferences.forEach(diff => {
+            const wh = diff.warehouse_name;
+            if (!groups[wh]) groups[wh] = [];
+            groups[wh].push(diff);
+        });
+        return groups;
+    }, [globalDifferences]);
+
+    useEffect(() => {
+        if (showGlobalDifferences) {
+            fetchGlobalDifferences();
+        }
+    }, [showGlobalDifferences]);
 
     // Carga inicial
     useEffect(() => {
@@ -276,16 +393,41 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
             }).select().single();
             if (error) throw error;
             const warehouseObj = warehouses.find(w => w.id === warehouseId);
+            
+            // We need to fetch stock for products that might not be in the current paginated view
+            const missingProducts = Array.from(selectedProducts).filter(cod => !products.find(p => p.codart === cod));
+            let additionalProducts: MasterProduct[] = [];
+            
+            if (missingProducts.length > 0) {
+                // Fetch missing products in batches to avoid URL length limits
+                const fetchBatchSize = 200;
+                for (let i = 0; i < missingProducts.length; i += fetchBatchSize) {
+                    const batch = missingProducts.slice(i, i + fetchBatchSize);
+                    const { data, error: fetchError } = await supabase
+                        .from('master_products')
+                        .select('codart, stock_llerena, stock_betbeder')
+                        .in('codart', batch);
+                    
+                    if (fetchError) throw fetchError;
+                    if (data) additionalProducts = [...additionalProducts, ...data as MasterProduct[]];
+                }
+            }
+
+            const allAvailableProducts = [...products, ...additionalProducts];
+
             const itemsToInsert = Array.from(selectedProducts).map(cod => {
-                const p = products.find(prod => prod.codart === cod);
-                // Si el producto no está en la lista actual (paginación), habría que buscarlo, 
-                // pero asumimos que el usuario selecciona de lo que ve.
-                // Para robustez, si p es undefined, usamos 0 como stock sistema (o podríamos hacer fetch individual).
-                // Aquí usamos lo que tenemos en memoria o 0.
+                const p = allAvailableProducts.find(prod => prod.codart === cod);
                 const stock = warehouseObj?.name === 'LLERENA' ? p?.stock_llerena : p?.stock_betbeder;
                 return { session_id: session.id, codart: cod, system_qty: stock || 0 };
             });
-            await supabase.from('stock_control_items').insert(itemsToInsert);
+            
+            const chunkSize = 1000;
+            for (let i = 0; i < itemsToInsert.length; i += chunkSize) {
+                const chunk = itemsToInsert.slice(i, i + chunkSize);
+                const { error: insertError } = await supabase.from('stock_control_items').insert(chunk);
+                if (insertError) throw insertError;
+            }
+            
             setMode('list');
             fetchSessions();
             setSelectedProducts(new Set());
@@ -299,13 +441,32 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
         setReviewSearch('');
         setIsLoading(true);
         try {
-            const { data, error } = await supabase
-                .from('stock_control_items')
-                .select('*, master_products(desart), stock_control_counts(user_id, qty, profiles(name))')
-                .eq('session_id', session.id)
-                .order('id');
-            if (data) {
-                setControlItems(data.map((item: any) => ({
+            let allItems: any[] = [];
+            let keepFetching = true;
+            let from = 0;
+            const BATCH_SIZE = 1000;
+
+            while (keepFetching) {
+                const { data, error } = await supabase
+                    .from('stock_control_items')
+                    .select('*, master_products(desart), stock_control_counts(user_id, qty, profiles(name))')
+                    .eq('session_id', session.id)
+                    .order('id')
+                    .range(from, from + BATCH_SIZE - 1);
+                
+                if (error) throw error;
+                
+                if (data && data.length > 0) {
+                    allItems = [...allItems, ...data];
+                    if (data.length < BATCH_SIZE) keepFetching = false;
+                    else from += BATCH_SIZE;
+                } else {
+                    keepFetching = false;
+                }
+            }
+
+            if (allItems.length > 0) {
+                setControlItems(allItems.map((item: any) => ({
                     id: item.id, session_id: item.session_id, codart: item.codart, desart: item.master_products?.desart, system_qty: item.system_qty, corrected_qty: item.corrected_qty,
                     counts: item.stock_control_counts.map((c: any) => ({ user_id: c.user_id, user_name: c.profiles?.name, qty: c.qty }))
                 })));
@@ -328,6 +489,59 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
             await supabase.from('stock_control_items').update({ corrected_qty: val }).eq('id', itemId);
             setControlItems(prev => prev.map(i => i.id === itemId ? { ...i, corrected_qty: val } : i));
         } catch (e) { alert("Error"); }
+    };
+
+    const handleCreateRecontrol = async (warehouseId: string, warehouseName: string, diffs: any[]) => {
+        if (!warehouseId || diffs.length === 0) return;
+        setIsLoading(true);
+        try {
+            const recontrolName = `RE-CONTROL ${warehouseName} ${new Date().toLocaleDateString()}`;
+            const { data: session, error } = await supabase.from('stock_control_sessions').insert({
+                name: recontrolName, warehouse_id: warehouseId, status: 'active', created_by: currentUser.id
+            }).select().single();
+            
+            if (error) throw error;
+
+            // Use corrected_qty as the new system_qty for the re-control
+            const itemsToInsert = diffs.map(d => ({
+                session_id: session.id,
+                codart: d.codart,
+                system_qty: d.corrected_qty // The "system" for re-control is what we corrected to
+            }));
+
+            const chunkSize = 1000;
+            for (let i = 0; i < itemsToInsert.length; i += chunkSize) {
+                const chunk = itemsToInsert.slice(i, i + chunkSize);
+                const { error: insertError } = await supabase.from('stock_control_items').insert(chunk);
+                if (insertError) throw insertError;
+            }
+
+            setShowGlobalDifferences(false);
+            fetchSessions();
+            alert(`Se ha creado el re-control: ${recontrolName}`);
+        } catch (e: any) {
+            alert("Error al crear re-control: " + e.message);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleExportGlobalDifferences = () => {
+        if (globalDifferences.length === 0) return;
+
+        const data = globalDifferences.map(item => ({
+            'Auditoría': item.session_name,
+            'Código': item.codart,
+            'Producto': item.desart,
+            'Stock Sistema': item.system_qty,
+            'Stock Corregido': item.corrected_qty,
+            'Diferencia (Ajuste)': item.ajuste
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Diferencias Globales");
+        XLSX.writeFile(wb, `Diferencias_Globales_Stock_${new Date().toISOString().split('T')[0]}.xlsx`);
     };
 
     const handleExportExcel = () => {
@@ -359,22 +573,79 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
     };
 
     const filteredExecutionItems = useMemo(() => {
+        let items = [...controlItems];
         const keywords = executionSearch.toLowerCase().split(/\s+/).filter(k => k.length > 0);
-        if (keywords.length === 0) return controlItems;
-        return controlItems.filter(item => {
-            const textToSearch = `${item.desart} ${item.codart}`.toLowerCase();
-            return keywords.every(k => textToSearch.includes(k));
-        });
-    }, [controlItems, executionSearch]);
+        
+        if (keywords.length > 0) {
+            items = items.filter(item => {
+                const textToSearch = `${item.desart} ${item.codart}`.toLowerCase();
+                return keywords.every(k => textToSearch.includes(k));
+            });
+        }
+
+        if (executionSort === 'diff') {
+            items.sort((a, b) => {
+                const aCount = a.counts.find((c: any) => c.user_id === currentUser.id);
+                const bCount = b.counts.find((c: any) => c.user_id === currentUser.id);
+                const aIsDiff = aCount && Math.round(aCount.qty) !== Math.round(a.system_qty);
+                const bIsDiff = bCount && Math.round(bCount.qty) !== Math.round(b.system_qty);
+                if (aIsDiff && !bIsDiff) return -1;
+                if (!aIsDiff && bIsDiff) return 1;
+                return 0;
+            });
+        } else if (executionSort === 'pending') {
+            items.sort((a, b) => {
+                const aPending = !a.counts.some((c: any) => c.user_id === currentUser.id);
+                const bPending = !b.counts.some((c: any) => c.user_id === currentUser.id);
+                if (aPending && !bPending) return -1;
+                if (!aPending && bPending) return 1;
+                return 0;
+            });
+        }
+
+        return items;
+    }, [controlItems, executionSearch, executionSort, currentUser.id]);
 
     const filteredReviewItems = useMemo(() => {
+        let items = [...controlItems];
         const keywords = reviewSearch.toLowerCase().split(/\s+/).filter(k => k.length > 0);
-        if (keywords.length === 0) return controlItems;
-        return controlItems.filter(item => {
-            const textToSearch = `${item.desart} ${item.codart}`.toLowerCase();
-            return keywords.every(k => textToSearch.includes(k));
-        });
-    }, [controlItems, reviewSearch]);
+        
+        if (keywords.length > 0) {
+            items = items.filter(item => {
+                const textToSearch = `${item.desart} ${item.codart}`.toLowerCase();
+                return keywords.every(k => textToSearch.includes(k));
+            });
+        }
+
+        if (reviewSort === 'diff') {
+            items.sort((a, b) => {
+                const getDiffStatus = (item: any) => {
+                    const c1 = item.counts[0];
+                    const c2 = item.counts[1];
+                    const finalVal = (item.corrected_qty !== null && item.corrected_qty !== undefined) ? item.corrected_qty : item.system_qty;
+                    const diff = finalVal - item.system_qty;
+                    const hasConflict = (c1 && c1.qty !== item.system_qty) || (c2 && c2.qty !== item.system_qty) || (c1 && c2 && c1.qty !== c2.qty);
+                    const isAdminSet = item.corrected_qty !== null && item.corrected_qty !== undefined;
+                    return (hasConflict && !isAdminSet) || diff !== 0;
+                };
+                const aIsDiff = getDiffStatus(a);
+                const bIsDiff = getDiffStatus(b);
+                if (aIsDiff && !bIsDiff) return -1;
+                if (!aIsDiff && bIsDiff) return 1;
+                return 0;
+            });
+        } else if (reviewSort === 'pending') {
+            items.sort((a, b) => {
+                const aPending = a.counts.length === 0;
+                const bPending = b.counts.length === 0;
+                if (aPending && !bPending) return -1;
+                if (!aPending && bPending) return 1;
+                return 0;
+            });
+        }
+
+        return items;
+    }, [controlItems, reviewSearch, reviewSort]);
 
     // Función para seleccionar/deseleccionar todo lo visible en la página actual
     const toggleSelectAllVisible = () => {
@@ -409,13 +680,31 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
                                 {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                             </select>
 
-                            <button 
-                                onClick={() => setOnlyWithStock(!onlyWithStock)}
-                                className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 border transition-all ${onlyWithStock ? 'bg-blue-500/10 border-blue-500 text-blue-600' : 'bg-background border-surfaceHighlight text-muted hover:bg-surfaceHighlight'}`}
-                            >
-                                {onlyWithStock ? <CheckSquare size={16}/> : <Square size={16}/>}
-                                <span className="text-[10px] font-black uppercase">Sólo Artículos con Stock</span>
-                            </button>
+                            <div className="flex flex-col gap-2">
+                                <button 
+                                    onClick={() => setShowWithStock(!showWithStock)}
+                                    className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 border transition-all ${showWithStock ? 'bg-blue-500/10 border-blue-500 text-blue-600' : 'bg-background border-surfaceHighlight text-muted hover:bg-surfaceHighlight'}`}
+                                >
+                                    {showWithStock ? <CheckSquare size={16}/> : <Square size={16}/>}
+                                    <span className="text-[10px] font-black uppercase">Artículos con Stock</span>
+                                </button>
+
+                                <button 
+                                    onClick={() => setShowWithoutStock(!showWithoutStock)}
+                                    className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 border transition-all ${showWithoutStock ? 'bg-blue-500/10 border-blue-500 text-blue-600' : 'bg-background border-surfaceHighlight text-muted hover:bg-surfaceHighlight'}`}
+                                >
+                                    {showWithoutStock ? <CheckSquare size={16}/> : <Square size={16}/>}
+                                    <span className="text-[10px] font-black uppercase">Incluir Artículos sin Stock</span>
+                                </button>
+
+                                <button 
+                                    onClick={() => setShowNegativeStock(!showNegativeStock)}
+                                    className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 border transition-all ${showNegativeStock ? 'bg-red-500/10 border-red-500 text-red-600' : 'bg-background border-surfaceHighlight text-muted hover:bg-surfaceHighlight'}`}
+                                >
+                                    {showNegativeStock ? <CheckSquare size={16}/> : <Square size={16}/>}
+                                    <span className="text-[10px] font-black uppercase">Artículos en Negativo</span>
+                                </button>
+                            </div>
 
                             <div className="pt-4 border-t border-surfaceHighlight">
                                 <div className="flex justify-between items-center mb-4 px-1">
@@ -522,9 +811,6 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
                             
                             {/* FOOTER CON BOTONES DE CARGA */}
                             <div className="p-4 border-t border-surfaceHighlight bg-background/30 flex flex-col gap-3">
-                                <p className="text-[10px] text-muted font-bold uppercase text-center">
-                                    Viendo {products.length} artículos cargados.
-                                </p>
                                 <div className="flex gap-3">
                                     {hasMore && (
                                         <button 
@@ -569,20 +855,37 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
                     </p>
                     
                     {/* BUSCADOR INTELIGENTE PARA ARMADOR */}
-                    <div className="relative w-full max-w-md z-10">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/60" size={18} />
-                        <input 
-                            type="text" 
-                            placeholder="Buscar en la lista (ande 1300 ch)..." 
-                            value={executionSearch}
-                            onChange={(e) => setExecutionSearch(e.target.value)}
-                            className="w-full bg-white/10 border border-white/20 rounded-2xl py-3.5 pl-12 pr-4 text-sm font-bold text-white placeholder-white/50 outline-none focus:bg-white/20 focus:border-white/40 transition-all shadow-lg backdrop-blur-md uppercase"
-                        />
-                        {executionSearch && (
-                            <button onClick={() => setExecutionSearch('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/60 hover:text-white">
-                                <X size={16} />
+                    <div className="flex flex-col gap-4 relative z-10">
+                        <div className="relative w-full max-w-md">
+                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/60" size={18} />
+                            <input 
+                                type="text" 
+                                placeholder="Buscar en la lista (ande 1300 ch)..." 
+                                value={executionSearch}
+                                onChange={(e) => setExecutionSearch(e.target.value)}
+                                className="w-full bg-white/10 border border-white/20 rounded-2xl py-3.5 pl-12 pr-4 text-sm font-bold text-white placeholder-white/50 outline-none focus:bg-white/20 focus:border-white/40 transition-all shadow-lg backdrop-blur-md uppercase"
+                            />
+                            {executionSearch && (
+                                <button onClick={() => setExecutionSearch('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/60 hover:text-white">
+                                    <X size={16} />
+                                </button>
+                            )}
+                        </div>
+                        
+                        <div className="flex flex-wrap gap-2">
+                            <button 
+                                onClick={() => setExecutionSort(prev => prev === 'diff' ? 'none' : 'diff')}
+                                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 border ${executionSort === 'diff' ? 'bg-white text-orange-600 border-white shadow-lg' : 'bg-white/10 text-white border-white/20 hover:bg-white/20'}`}
+                            >
+                                <AlertTriangle size={14} /> Diferencias Primero
                             </button>
-                        )}
+                            <button 
+                                onClick={() => setExecutionSort(prev => prev === 'pending' ? 'none' : 'pending')}
+                                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 border ${executionSort === 'pending' ? 'bg-white text-orange-600 border-white shadow-lg' : 'bg-white/10 text-white border-white/20 hover:bg-white/20'}`}
+                            >
+                                <LayoutList size={14} /> No Realizados Primero
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -682,20 +985,37 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
                     </div>
 
                     {/* BUSCADOR INTELIGENTE PARA ADMIN */}
-                    <div className="relative w-full max-w-md">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40" size={18} />
-                        <input 
-                            type="text" 
-                            placeholder="Filtrar conciliación (ande 1300 ch)..." 
-                            value={reviewSearch}
-                            onChange={(e) => setReviewSearch(e.target.value)}
-                            className="w-full bg-white/5 border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-sm font-bold text-white placeholder-white/30 outline-none focus:bg-white/10 focus:border-white/20 transition-all uppercase"
-                        />
-                        {reviewSearch && (
-                            <button onClick={() => setReviewSearch('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/40 hover:text-white">
-                                <X size={16} />
+                    <div className="flex flex-col gap-4">
+                        <div className="relative w-full max-w-md">
+                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40" size={18} />
+                            <input 
+                                type="text" 
+                                placeholder="Filtrar conciliación (ande 1300 ch)..." 
+                                value={reviewSearch}
+                                onChange={(e) => setReviewSearch(e.target.value)}
+                                className="w-full bg-white/5 border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-sm font-bold text-white placeholder-white/30 outline-none focus:bg-white/10 focus:border-white/20 transition-all uppercase"
+                            />
+                            {reviewSearch && (
+                                <button onClick={() => setReviewSearch('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/40 hover:text-white">
+                                    <X size={16} />
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                            <button 
+                                onClick={() => setReviewSort(prev => prev === 'diff' ? 'none' : 'diff')}
+                                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 border ${reviewSort === 'diff' ? 'bg-primary text-white border-primary shadow-lg' : 'bg-white/5 text-white/60 border-white/10 hover:bg-white/10 hover:text-white'}`}
+                            >
+                                <AlertTriangle size={14} /> Diferencias Primero
                             </button>
-                        )}
+                            <button 
+                                onClick={() => setReviewSort(prev => prev === 'pending' ? 'none' : 'pending')}
+                                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all flex items-center gap-2 border ${reviewSort === 'pending' ? 'bg-primary text-white border-primary shadow-lg' : 'bg-white/5 text-white/60 border-white/10 hover:bg-white/10 hover:text-white'}`}
+                            >
+                                <LayoutList size={14} /> No Realizados Primero
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -772,6 +1092,199 @@ export const StockControl: React.FC<StockControlProps> = ({ currentUser }) => {
     }
 
     return (
-        <div className="flex flex-col gap-8 pb-10 animate-in fade-in"><div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6"><div><h2 className="text-3xl font-black text-text tracking-tight uppercase italic flex items-center gap-3"><ClipboardCheck className="text-primary" size={36} />Auditorías de Control de Stock</h2><p className="text-muted text-sm mt-1 font-medium">Controles físicos por depósito.</p></div>{isVale && (<button onClick={() => setMode('create')} className="bg-primary hover:bg-primaryHover text-white px-10 py-4 rounded-2xl font-black text-sm uppercase transition-all shadow-xl shadow-primary/20 active:scale-95 flex items-center gap-3"><Plus size={20} /> Crear Nuevo Control</button>)}</div><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{isLoading ? (<div className="col-span-full py-20 flex justify-center"><Loader2 className="animate-spin text-primary" size={48} /></div>) : sessions.length === 0 ? (<div className="col-span-full py-24 text-center border-2 border-dashed border-surfaceHighlight rounded-3xl bg-surface/30 opacity-50"><Package size={48} className="mx-auto mb-4 text-muted" /><p className="font-black uppercase tracking-widest text-muted italic">No hay controles activos.</p></div>) : sessions.map(session => { const uniqueUsers = session.assigned_users || []; const alreadyIn = uniqueUsers.includes(currentUser.id); const isFull = uniqueUsers.length >= 2; const isConfirming = confirmingDeleteId === session.id; return (<div key={session.id} className="bg-surface border border-surfaceHighlight rounded-3xl p-7 shadow-sm hover:shadow-xl transition-all duration-300 group flex flex-col gap-6 relative overflow-hidden"><div className={`absolute top-0 left-0 w-2 h-full ${session.status === 'active' ? 'bg-primary' : 'bg-green-500'}`}></div><div className="flex justify-between items-start"><div className="min-w-0 flex-1"><h3 className="text-xl font-black text-text uppercase italic leading-tight group-hover:text-primary transition-colors truncate pr-2">{session.name}</h3><div className="flex flex-col gap-1.5 mt-3"><p className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-1.5"><Warehouse size={12} className="text-primary"/> Depósito: {session.warehouse_name}</p><p className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-1.5"><LayoutList size={12} className="text-primary"/> {session.item_count} Artículos</p><p className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-1.5"><Calendar size={12} className="text-primary"/> {new Date(session.created_at).toLocaleDateString()}</p></div></div><div className="flex flex-col items-end gap-2 shrink-0">{isConfirming ? (<div className="flex items-center gap-1 animate-in slide-in-from-right-4 duration-300"><button onClick={(e) => { e.stopPropagation(); handleDeleteSession(session.id); }} className="px-3 py-2 bg-red-600 text-white rounded-xl text-[9px] font-black uppercase shadow-lg shadow-red-500/20 active:scale-90 transition-all">Confirmar</button><button onClick={(e) => { e.stopPropagation(); setConfirmingDeleteId(null); }} className="p-2 bg-surfaceHighlight text-text rounded-xl"><X size={14}/></button></div>) : (<button onClick={(e) => { e.stopPropagation(); setConfirmingDeleteId(session.id); setTimeout(() => setConfirmingDeleteId(null), 4000); }} className="p-2 text-muted hover:text-red-500 transition-colors bg-background rounded-xl border border-surfaceHighlight shadow-sm"><Trash2 size={18}/></button>)}</div></div><div className="space-y-4"><h4 className="text-[9px] font-black text-muted uppercase tracking-[0.2em] border-b border-surfaceHighlight pb-2 mb-3">Progreso</h4><div className="space-y-4">{(session.user_progress || []).map((prog: any, idx: number) => { const percentage = (prog.count / session.item_count) * 100; return (<div key={idx} className="space-y-2"><div className="flex justify-between items-center text-[10px] font-black uppercase"><span className="text-text flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-primary" /> Armador {idx + 1}</span><span className="text-primary bg-primary/10 px-2 py-0.5 rounded">{prog.count} / {session.item_count}</span></div><div className="h-2.5 w-full bg-background border border-surfaceHighlight rounded-full overflow-hidden shadow-inner"><div className="h-full bg-primary transition-all duration-700 ease-out" style={{ width: `${percentage}%` }} /></div></div>); })}{uniqueUsers.length < 2 && (<div className="flex items-center gap-3 p-4 bg-background border border-dashed border-surfaceHighlight rounded-2xl opacity-40"><UserIcon size={16} className="text-muted" /><span className="text-[10px] font-black text-muted uppercase tracking-widest">Esperando segundo...</span></div>)}</div></div><div className="mt-2 pt-4 border-t border-surfaceHighlight/50">{isVale ? (<button onClick={() => startSessionExecution(session)} className="w-full py-4 bg-slate-900 text-white hover:bg-slate-800 rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg flex items-center justify-center gap-3 active:scale-95"><ArrowRightLeft size={18}/> Conciliar</button>) : (<button disabled={isFull && !alreadyIn} onClick={() => startSessionExecution(session)} className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg flex items-center justify-center gap-2 active:scale-95 ${alreadyIn ? 'bg-green-600 text-white shadow-green-600/20' : isFull ? 'bg-surfaceHighlight text-muted opacity-50' : 'bg-primary text-white shadow-primary/20'}`}>{alreadyIn ? <RotateCcw size={18}/> : <ClipboardCheck size={18}/>}{alreadyIn ? 'Continuar' : isFull ? 'Completa' : 'Comenzar'}</button>)}</div></div>); })}</div></div>
+        <div className="flex flex-col gap-8 pb-10 animate-in fade-in">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                <div>
+                    <h2 className="text-3xl font-black text-text tracking-tight uppercase italic flex items-center gap-3">
+                        <ClipboardCheck className="text-primary" size={36} />
+                        Auditorías de Control de Stock
+                    </h2>
+                    <p className="text-muted text-sm mt-1 font-medium">Controles físicos por depósito.</p>
+                </div>
+                <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
+                    <label className="flex items-center gap-3 cursor-pointer group" title="Ver diferencias globales">
+                        <div className="relative">
+                            <input 
+                                type="checkbox" 
+                                className="sr-only" 
+                                checked={showGlobalDifferences}
+                                onChange={(e) => setShowGlobalDifferences(e.target.checked)}
+                            />
+                            <div className={`block w-14 h-8 rounded-full transition-colors ${showGlobalDifferences ? 'bg-primary' : 'bg-surfaceHighlight'}`}></div>
+                            <div className={`absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform flex items-center justify-center ${showGlobalDifferences ? 'transform translate-x-6' : ''}`}>
+                                <Globe size={14} className={showGlobalDifferences ? 'text-primary' : 'text-muted'} />
+                            </div>
+                        </div>
+                    </label>
+                    {showGlobalDifferences && globalDifferences.length > 0 && (
+                        <button 
+                            onClick={handleExportGlobalDifferences}
+                            className="bg-green-600 hover:bg-green-700 text-white px-4 py-3 rounded-2xl font-black text-xs uppercase transition-all shadow-xl shadow-green-900/20 active:scale-95 flex items-center gap-2"
+                        >
+                            <FileSpreadsheet size={18} /> Exportar Diferencias
+                        </button>
+                    )}
+                    {isVale && (
+                        <button onClick={() => setMode('create')} className="bg-primary hover:bg-primaryHover text-white px-4 py-3 rounded-2xl font-black text-xs uppercase transition-all shadow-xl shadow-primary/20 active:scale-95 flex items-center gap-2">
+                            <Plus size={18} /> Crear Nuevo Control
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {showGlobalDifferences ? (
+                <div className="space-y-8">
+                    {isGlobalLoading ? (
+                        <div className="py-20 flex justify-center bg-surface border border-surfaceHighlight rounded-3xl"><Loader2 className="animate-spin text-primary" size={48} /></div>
+                    ) : globalDifferences.length === 0 ? (
+                        <div className="py-24 text-center border-2 border-dashed border-surfaceHighlight rounded-3xl bg-surface/30 opacity-50">
+                            <CheckCircle2 size={48} className="mx-auto mb-4 text-green-500" />
+                            <p className="font-black uppercase tracking-widest text-muted italic">No hay diferencias globales registradas.</p>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 gap-8">
+                            {(Object.entries(globalDiffsByWarehouse) as [string, any[]][]).map(([warehouse, diffs]) => (
+                                <div key={warehouse} className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm flex flex-col">
+                                    <div className="p-6 bg-slate-900 text-white flex justify-between items-center">
+                                        <div className="flex items-center gap-3">
+                                            <Warehouse className="text-primary" size={24} />
+                                            <div>
+                                                <h3 className="text-xl font-black uppercase italic tracking-tight">{warehouse}</h3>
+                                                <p className="text-[10px] font-black uppercase tracking-widest opacity-60">Diferencias de Stock Detectadas</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <button 
+                                                onClick={() => handleCreateRecontrol(diffs[0].warehouse_id, warehouse, diffs)}
+                                                className="bg-primary hover:bg-primaryHover text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all shadow-lg flex items-center gap-2 active:scale-95"
+                                            >
+                                                <Plus size={14} /> Crear Re-Control
+                                            </button>
+                                            <div className="bg-white/10 px-4 py-2 rounded-xl border border-white/10">
+                                                <span className="text-xs font-black uppercase">{diffs.length} Artículos</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-left">
+                                            <thead className="bg-background/50 border-b border-surfaceHighlight text-[10px] text-muted font-black uppercase tracking-widest">
+                                                <tr>
+                                                    <th className="p-4">Auditoría</th>
+                                                    <th className="p-4">Artículo</th>
+                                                    <th className="p-4 text-center">Sistema</th>
+                                                    <th className="p-4 text-center">Corregido</th>
+                                                    <th className="p-4 text-right pr-10">Ajuste</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-surfaceHighlight">
+                                                {diffs.map(item => (
+                                                    <tr key={item.id} className="hover:bg-primary/5 transition-colors group">
+                                                        <td className="p-4">
+                                                            <span className="text-xs font-black text-text uppercase">{item.session_name}</span>
+                                                        </td>
+                                                        <td className="p-4">
+                                                            <p className="text-xs font-black text-text uppercase leading-tight truncate max-w-[280px]">{item.desart}</p>
+                                                            <p className="text-[9px] font-mono text-muted">#{item.codart}</p>
+                                                        </td>
+                                                        <td className="p-4 text-center">
+                                                            <span className="text-xs font-black text-muted bg-background px-4 py-2 rounded-xl border border-surfaceHighlight shadow-inner">{item.system_qty}</span>
+                                                        </td>
+                                                        <td className="p-4 text-center">
+                                                            <span className="text-xs font-black text-primary bg-primary/10 px-4 py-2 rounded-xl border border-primary/20">{item.corrected_qty}</span>
+                                                        </td>
+                                                        <td className="p-4 text-right pr-10">
+                                                            <div className={`text-lg font-black italic flex items-center justify-end gap-2 ${item.ajuste > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                                {item.ajuste > 0 && '+'} {item.ajuste}{item.ajuste > 0 ? <ArrowUpRight size={16}/> : <ArrowDownLeft size={16}/>}
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {isLoading ? (
+                        <div className="col-span-full py-20 flex justify-center"><Loader2 className="animate-spin text-primary" size={48} /></div>
+                    ) : sessions.length === 0 ? (
+                        <div className="col-span-full py-24 text-center border-2 border-dashed border-surfaceHighlight rounded-3xl bg-surface/30 opacity-50">
+                            <Package size={48} className="mx-auto mb-4 text-muted" />
+                            <p className="font-black uppercase tracking-widest text-muted italic">No hay controles activos.</p>
+                        </div>
+                    ) : sessions.map(session => { 
+                        const uniqueUsers = session.assigned_users || []; 
+                        const alreadyIn = uniqueUsers.includes(currentUser.id); 
+                        const isFull = uniqueUsers.length >= 2; 
+                        const isConfirming = confirmingDeleteId === session.id; 
+                        return (
+                            <div key={session.id} className="bg-surface border border-surfaceHighlight rounded-3xl p-7 shadow-sm hover:shadow-xl transition-all duration-300 group flex flex-col gap-6 relative overflow-hidden">
+                                <div className={`absolute top-0 left-0 w-2 h-full ${session.status === 'active' ? 'bg-primary' : 'bg-green-500'}`}></div>
+                                <div className="flex justify-between items-start">
+                                    <div className="min-w-0 flex-1">
+                                        <h3 className="text-xl font-black text-text uppercase italic leading-tight group-hover:text-primary transition-colors truncate pr-2">{session.name}</h3>
+                                        <div className="flex flex-col gap-1.5 mt-3">
+                                            <p className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-1.5"><Warehouse size={12} className="text-primary"/> Depósito: {session.warehouse_name}</p>
+                                            <p className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-1.5"><LayoutList size={12} className="text-primary"/> {session.item_count} Artículos</p>
+                                            <p className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-1.5"><Calendar size={12} className="text-primary"/> {new Date(session.created_at).toLocaleDateString()}</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-col items-end gap-2 shrink-0">
+                                        {isConfirming ? (
+                                            <div className="flex items-center gap-1 animate-in slide-in-from-right-4 duration-300">
+                                                <button onClick={(e) => { e.stopPropagation(); handleDeleteSession(session.id); }} className="px-3 py-2 bg-red-600 text-white rounded-xl text-[9px] font-black uppercase shadow-lg shadow-red-500/20 active:scale-90 transition-all">Confirmar</button>
+                                                <button onClick={(e) => { e.stopPropagation(); setConfirmingDeleteId(null); }} className="p-2 bg-surfaceHighlight text-text rounded-xl"><X size={14}/></button>
+                                            </div>
+                                        ) : (
+                                            <button onClick={(e) => { e.stopPropagation(); setConfirmingDeleteId(session.id); setTimeout(() => setConfirmingDeleteId(null), 4000); }} className="p-2 text-muted hover:text-red-500 transition-colors bg-background rounded-xl border border-surfaceHighlight shadow-sm"><Trash2 size={18}/></button>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="space-y-4">
+                                    <h4 className="text-[9px] font-black text-muted uppercase tracking-[0.2em] border-b border-surfaceHighlight pb-2 mb-3">Progreso</h4>
+                                    <div className="space-y-4">
+                                        {(session.user_progress || []).map((prog: any, idx: number) => { 
+                                            const percentage = (prog.count / session.item_count) * 100; 
+                                            return (
+                                                <div key={idx} className="space-y-2">
+                                                    <div className="flex justify-between items-center text-[10px] font-black uppercase">
+                                                        <span className="text-text flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-primary" /> Armador {idx + 1}</span>
+                                                        <span className="text-primary bg-primary/10 px-2 py-0.5 rounded">{prog.count} / {session.item_count}</span>
+                                                    </div>
+                                                    <div className="h-2.5 w-full bg-background border border-surfaceHighlight rounded-full overflow-hidden shadow-inner">
+                                                        <div className="h-full bg-primary transition-all duration-700 ease-out" style={{ width: `${percentage}%` }} />
+                                                    </div>
+                                                </div>
+                                            ); 
+                                        })}
+                                        {uniqueUsers.length < 2 && (
+                                            <div className="flex items-center gap-3 p-4 bg-background border border-dashed border-surfaceHighlight rounded-2xl opacity-40">
+                                                <UserIcon size={16} className="text-muted" />
+                                                <span className="text-[10px] font-black text-muted uppercase tracking-widest">Esperando segundo...</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="mt-2 pt-4 border-t border-surfaceHighlight/50">
+                                    {isVale ? (
+                                        <button onClick={() => startSessionExecution(session)} className="w-full py-4 bg-slate-900 text-white hover:bg-slate-800 rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg flex items-center justify-center gap-3 active:scale-95"><ArrowRightLeft size={18}/> Conciliar</button>
+                                    ) : (
+                                        <button disabled={isFull && !alreadyIn} onClick={() => startSessionExecution(session)} className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg flex items-center justify-center gap-2 active:scale-95 ${alreadyIn ? 'bg-green-600 text-white shadow-green-600/20' : isFull ? 'bg-surfaceHighlight text-muted opacity-50' : 'bg-primary text-white shadow-primary/20'}`}>
+                                            {alreadyIn ? <RotateCcw size={18}/> : <ClipboardCheck size={18}/>}
+                                            {alreadyIn ? 'Continuar' : isFull ? 'Completa' : 'Comenzar'}
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        ); 
+                    })}
+                </div>
+            )}
+        </div>
     );
 };

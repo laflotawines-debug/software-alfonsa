@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
     Plus, 
     TrendingUp, 
@@ -10,23 +10,75 @@ import {
     Lock,
     CheckCircle2,
     Building2,
-    CalendarDays
+    CalendarDays,
+    Loader2
 } from 'lucide-react';
 import { User, View } from '../types';
+import { supabase } from '../supabase';
 
 export const DailyCashSheet: React.FC<{ currentUser: User, onNavigate: (view: View) => void }> = ({ currentUser, onNavigate }) => {
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-    const [branch, setBranch] = useState('Llerena (Principal)');
+    const [branch, setBranch] = useState('Llerena');
 
-    // Empty data as requested
-    const movements: any[] = [];
-    const checks: any[] = [];
+    const [movements, setMovements] = useState<any[]>([]);
+    const [checks, setChecks] = useState<any[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
 
-    const totalIngresosARS = 0;
-    const totalEgresosARS = 0;
-    const totalIngresosUSD = 0;
-    const saldoFinal = 0;
-    const totalCheques = 0;
+    const fetchData = async () => {
+        setIsLoading(true);
+        try {
+            // Fetch movements
+            const { data: movementsData, error: movementsError } = await supabase
+                .from('cash_movements')
+                .select(`
+                    *,
+                    cash_concepts (name, type)
+                `)
+                .eq('date', date)
+                .eq('branch', branch);
+
+            if (movementsError) throw movementsError;
+            setMovements(movementsData || []);
+
+            // Fetch checks for these movements
+            if (movementsData && movementsData.length > 0) {
+                const movementIds = movementsData.map(m => m.id);
+                const { data: checksData, error: checksError } = await supabase
+                    .from('checks')
+                    .select('*')
+                    .in('movement_id', movementIds);
+                
+                if (checksError) throw checksError;
+                setChecks(checksData || []);
+            } else {
+                setChecks([]);
+            }
+        } catch (e) {
+            console.error('Error fetching daily sheet data:', e);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchData();
+    }, [date, branch]);
+
+    const totalIngresosARS = movements
+        .filter(m => m.type === 'ingreso')
+        .reduce((acc, curr) => acc + Number(curr.amount_ars), 0);
+    
+    const totalEgresosARS = movements
+        .filter(m => m.type === 'egreso')
+        .reduce((acc, curr) => acc + Number(curr.amount_ars), 0);
+
+    const totalIngresosUSD = movements
+        .filter(m => m.type === 'ingreso')
+        .reduce((acc, curr) => acc + Number(curr.amount_usd), 0);
+
+    const totalCheques = checks.reduce((acc, curr) => acc + Number(curr.amount), 0);
+    
+    const saldoFinal = totalIngresosARS - totalEgresosARS;
 
     return (
         <div className="flex flex-col gap-6 pb-20 animate-in fade-in duration-300 max-w-7xl mx-auto">
@@ -62,7 +114,8 @@ export const DailyCashSheet: React.FC<{ currentUser: User, onNavigate: (view: Vi
                                 onChange={e => setBranch(e.target.value)}
                                 className="w-full bg-background border border-surfaceHighlight rounded-xl py-2.5 pl-10 pr-4 text-sm font-bold outline-none focus:border-primary transition-all appearance-none"
                             >
-                                <option value="Llerena (Principal)">Llerena (Principal)</option>
+                                <option value="Llerena">Llerena (Principal)</option>
+                                <option value="Betbeder">Betbeder</option>
                             </select>
                         </div>
                     </div>
@@ -145,7 +198,13 @@ export const DailyCashSheet: React.FC<{ currentUser: User, onNavigate: (view: Vi
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-surfaceHighlight">
-                            {movements.length === 0 ? (
+                            {isLoading ? (
+                                <tr>
+                                    <td colSpan={8} className="p-12 text-center">
+                                        <Loader2 className="animate-spin mx-auto text-primary" size={32} />
+                                    </td>
+                                </tr>
+                            ) : movements.length === 0 ? (
                                 <tr>
                                     <td colSpan={8} className="p-12 text-center text-muted text-sm font-bold italic">
                                         No hay movimientos registrados
@@ -153,8 +212,29 @@ export const DailyCashSheet: React.FC<{ currentUser: User, onNavigate: (view: Vi
                                 </tr>
                             ) : (
                                 movements.map((m, i) => (
-                                    <tr key={i} className="hover:bg-surfaceHighlight/10">
-                                        {/* Render rows here when data is available */}
+                                    <tr key={m.id} className="hover:bg-surfaceHighlight/10">
+                                        <td className="p-4 text-xs font-mono text-muted">#{m.id.slice(0, 6)}</td>
+                                        <td className="p-4 text-xs font-bold text-text uppercase">{m.cash_concepts?.name || 'S/C'}</td>
+                                        <td className="p-4 text-xs text-muted max-w-xs truncate">{m.comments || '-'}</td>
+                                        <td className="p-4 text-right text-xs font-black text-green-600">
+                                            {m.type === 'ingreso' && m.amount_ars > 0 ? `$ ${m.amount_ars.toLocaleString('es-AR')}` : '-'}
+                                        </td>
+                                        <td className="p-4 text-right text-xs font-black text-blue-600">
+                                            {m.type === 'ingreso' && m.amount_usd > 0 ? `u$s ${m.amount_usd.toLocaleString('es-AR')}` : '-'}
+                                        </td>
+                                        <td className="p-4 text-right text-xs font-black text-red-500">
+                                            {m.type === 'egreso' && m.amount_ars > 0 ? `$ ${m.amount_ars.toLocaleString('es-AR')}` : '-'}
+                                        </td>
+                                        <td className="p-4 text-right text-xs font-black text-red-500">
+                                            {m.type === 'egreso' && m.amount_usd > 0 ? `u$s ${m.amount_usd.toLocaleString('es-AR')}` : '-'}
+                                        </td>
+                                        <td className="p-4 text-center">
+                                            {checks.some(c => c.movement_id === m.id) ? (
+                                                <span className="bg-indigo-500/10 text-indigo-600 px-2 py-0.5 rounded text-[9px] font-black uppercase">Con Cheque</span>
+                                            ) : (
+                                                <span className="text-muted text-[9px] font-bold uppercase">Efectivo</span>
+                                            )}
+                                        </td>
                                     </tr>
                                 ))
                             )}
@@ -204,9 +284,12 @@ export const DailyCashSheet: React.FC<{ currentUser: User, onNavigate: (view: Vi
                                         </td>
                                     </tr>
                                 ) : (
-                                    checks.map((c, i) => (
-                                        <tr key={i} className="hover:bg-surfaceHighlight/10">
-                                            {/* Render checks here */}
+                                    checks.map((c) => (
+                                        <tr key={c.id} className="hover:bg-surfaceHighlight/10">
+                                            <td className="p-4 text-xs font-bold text-text uppercase">{c.bank}</td>
+                                            <td className="p-4 text-xs font-mono text-muted">{c.number}</td>
+                                            <td className="p-4 text-xs text-muted">{new Date(c.due_date).toLocaleDateString()}</td>
+                                            <td className="p-4 text-right text-xs font-black text-text">$ {c.amount.toLocaleString('es-AR')}</td>
                                         </tr>
                                     ))
                                 )}

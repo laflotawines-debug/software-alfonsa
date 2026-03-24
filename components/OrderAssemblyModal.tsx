@@ -49,7 +49,7 @@ interface OrderAssemblyModalProps {
     order: Order;
     currentUser: UserType;
     onClose: () => void;
-    onSave: (updatedOrder: Order, shouldAdvance: boolean, notes?: string) => void;
+    onSave: (updatedOrder: Order, shouldAdvance: boolean, notes?: string) => Promise<void>;
     onUpdateProduct: (productCode: string, quantity: number) => void;
     onToggleCheck: (productCode: string) => void;
     onUpdateObservations: (text: string) => void;
@@ -57,6 +57,7 @@ interface OrderAssemblyModalProps {
     onUpdatePrice?: (productCode: string, newPrice: number) => void;
     onRemoveProduct?: (productCode: string) => void;
     onDeleteOrder?: (orderId: string) => void;
+    onToggleAllChecks?: (check: boolean) => void;
 }
 
 export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
@@ -70,7 +71,8 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     onAddProduct,
     onUpdatePrice,
     onRemoveProduct,
-    onDeleteOrder
+    onDeleteOrder,
+    onToggleAllChecks
 }) => {
     const [activeTab, setActiveTab] = useState<'products' | 'history'>('products');
     const [editingProductCode, setEditingProductCode] = useState<string | null>(null);
@@ -79,6 +81,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
     const [isGeneratingInvoice, setIsGeneratingInvoice] = useState(false);
     const [isSharing, setIsSharing] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
     const [clientPhone, setClientPhone] = useState<string | null>(null);
 
     // Estados para agregar producto manual con búsqueda
@@ -146,7 +149,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         setIsSearchingProd(true);
         try {
             const words = trimmed.split(/\s+/).filter(w => w.length > 0);
-            let query = supabase.from('master_products').select('*');
+            let query = supabase.from('master_products').select('*').neq('familia', 'ELIMINADOS');
             words.forEach(word => {
                 query = query.ilike('desart', `%${word}%`);
             });
@@ -306,7 +309,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
             currentY += 5;
         }
 
-        const isPostShipping = [OrderStatus.EN_TRANSITO, OrderStatus.ENTREGADO, OrderStatus.PAGADO].includes(order.status);
+        const isPostShipping = [OrderStatus.FACTURADO, OrderStatus.FACTURA_CONTROLADA, OrderStatus.EN_TRANSITO, OrderStatus.ENTREGADO, OrderStatus.PAGADO].includes(order.status);
 
         const shortages = order.products.map(p => {
              const absOrig = Math.abs(p.originalQuantity);
@@ -486,19 +489,37 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         setSearchProdTerm('');
     };
 
+    const handleSafeSave = async (orderToSave: Order, shouldAdvance: boolean, notes?: string) => {
+        if (isSaving) return;
+        setIsSaving(true);
+        try {
+            // Deduplicate products to prevent race conditions
+            const uniqueProductsMap = new Map();
+            orderToSave.products.forEach(p => uniqueProductsMap.set(p.code, p));
+            const uniqueProducts = Array.from(uniqueProductsMap.values());
+            const cleanOrder = { ...orderToSave, products: uniqueProducts };
+            
+            await onSave(cleanOrder, shouldAdvance, notes);
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
     const handleInvoiceClick = () => {
         setIsGeneratingInvoice(true);
-        setTimeout(() => { onSave(order, true); }, 1000);
+        setTimeout(() => { handleSafeSave(order, true); }, 1000);
     };
 
     const handlePaymentMethodChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         const newMethod = e.target.value as PaymentMethod;
         const updatedOrder = updatePaymentMethod(order, newMethod);
-        if (hasAdminPrivileges) onSave(updatedOrder, false);
+        if (hasAdminPrivileges) handleSafeSave(updatedOrder, false);
     };
 
     const handleAdvanceClick = () => { setShowTransitionModal(true); };
-    const handleConfirmTransition = (notes: string) => { onSave(order, true, notes); setShowTransitionModal(false); };
+    const handleConfirmTransition = (notes: string) => { handleSafeSave(order, true, notes); setShowTransitionModal(false); };
 
     const uncheckedCount = order.products.filter(p => !p.isChecked).length;
     const isReady = isAutoCheckStep ? true : uncheckedCount === 0;
@@ -591,11 +612,12 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
 
                     <div className="grid grid-cols-2 gap-2">
                         <button 
-                            onClick={() => onSave(order, false)}
-                            className="py-3 rounded-xl bg-primary/10 text-primary font-black border border-primary/20 hover:bg-primary hover:text-white transition-all text-[10px] uppercase flex items-center justify-center gap-2 shadow-sm"
+                            onClick={() => handleSafeSave(order, false)}
+                            disabled={isSaving}
+                            className="py-3 rounded-xl bg-primary/10 text-primary font-black border border-primary/20 hover:bg-primary hover:text-white transition-all text-[10px] uppercase flex items-center justify-center gap-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            <Save size={14} />
-                            Guardar y Salir
+                            {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                            {isSaving ? "Guardando..." : "Guardar y Salir"}
                         </button>
                         <button 
                             onClick={onClose}
@@ -792,6 +814,24 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                         )}
                                     </div>
 
+                                    {isVale && !isFinishedStep && onToggleAllChecks && (
+                                        <div className="flex items-center gap-3 mb-4 animate-in fade-in pl-1">
+                                            <button 
+                                                onClick={() => onToggleAllChecks(true)}
+                                                className="text-[10px] font-black uppercase text-primary hover:underline flex items-center gap-1 transition-all active:scale-95"
+                                            >
+                                                <CheckCircle2 size={14} /> Seleccionar Todos
+                                            </button>
+                                            <span className="text-muted/30">|</span>
+                                            <button 
+                                                onClick={() => onToggleAllChecks(false)}
+                                                className="text-[10px] font-black uppercase text-muted hover:text-text hover:underline flex items-center gap-1 transition-all active:scale-95"
+                                            >
+                                                <XCircle size={14} /> Deseleccionar
+                                            </button>
+                                        </div>
+                                    )}
+
                                     {isAddingProduct && (
                                         <div className="mb-4 p-4 rounded-xl bg-surface border border-primary/30 shadow-lg animate-in fade-in">
                                             <div className="flex justify-between items-center mb-3">
@@ -840,7 +880,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                         {order.products.map((product) => {
                                             const isEditingQty = editingProductCode === product.code;
                                             const isEditingPrice = editingPriceCode === product.code;
-                                            const isPostShipping = [OrderStatus.EN_TRANSITO, OrderStatus.ENTREGADO, OrderStatus.PAGADO].includes(order.status);
+                                            const isPostShipping = [OrderStatus.FACTURADO, OrderStatus.FACTURA_CONTROLADA, OrderStatus.EN_TRANSITO, OrderStatus.ENTREGADO, OrderStatus.PAGADO].includes(order.status);
                                             
                                             // DETERMINACIÓN DE PRODUCTO AGREGADO (originalQuantity <= 0 indica agregado a posteriori)
                                             const isAddedNew = product.originalQuantity <= 0;
@@ -856,7 +896,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                                 : 0;
 
                                             const isShortage = missingAmount > 0;
-                                            const isReturned = returnedAmount > 0;
+                                            const isReturned = !order.isInterdeposito && returnedAmount > 0;
                                             const displayChecked = isAutoCheckStep ? true : product.isChecked;
 
                                             return (

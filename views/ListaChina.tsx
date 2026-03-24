@@ -96,7 +96,8 @@ export const ListaChina: React.FC = () => {
             while (hasMore) {
                 const { data, error } = await supabase
                     .from('master_products')
-                    .select('codart, desart, pventa_4, familia, nsubf, stock_llerena')
+                    .select('codart, desart, pventa_4, familia, nsubf, stock_llerena, costo, pventa_1, pventa_2, pventa_3')
+                    .neq('familia', 'ELIMINADOS')
                     .gt('stock_llerena', 0)
                     .order('desart', { ascending: true })
                     .range(from, from + PAGE_SIZE - 1);

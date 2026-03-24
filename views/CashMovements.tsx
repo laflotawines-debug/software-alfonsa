@@ -43,11 +43,10 @@ export const CashMovements: React.FC<{ currentUser: User }> = ({ currentUser }) 
     const [concepts, setConcepts] = useState<CashConcept[]>([]);
     const [checks, setChecks] = useState<CheckItem[]>([]);
     const [dailyTotal, setDailyTotal] = useState(0);
-    const [isLoading, setIsLoading] = useState(true);
-
-    // Check Modal State (Simplified for now as per request focus)
+    const [isSaving, setIsSaving] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
     const [isCheckModalOpen, setIsCheckModalOpen] = useState(false);
-    const [newCheck, setNewCheck] = useState<Omit<CheckItem, 'id'>>({
+    const [newCheck, setNewCheck] = useState({
         number: '',
         bank: '',
         date: new Date().toISOString().split('T')[0],
@@ -56,8 +55,23 @@ export const CashMovements: React.FC<{ currentUser: User }> = ({ currentUser }) 
 
     useEffect(() => {
         fetchConcepts();
-        // fetchDailyTotal(); // Placeholder
+        fetchDailyTotal();
     }, []);
+
+    const fetchDailyTotal = async () => {
+        const today = new Date().toISOString().split('T')[0];
+        const { data, error } = await supabase
+            .from('cash_movements')
+            .select('amount_ars, type')
+            .eq('date', today);
+        
+        if (!error && data) {
+            const total = data.reduce((acc, curr) => {
+                return curr.type === 'ingreso' ? acc + Number(curr.amount_ars) : acc - Number(curr.amount_ars);
+            }, 0);
+            setDailyTotal(total);
+        }
+    };
 
     const fetchConcepts = async () => {
         setIsLoading(true);
@@ -97,16 +111,75 @@ export const CashMovements: React.FC<{ currentUser: User }> = ({ currentUser }) 
             alert('Seleccione un concepto');
             return;
         }
-        // Logic to save movement will go here later
-        console.log({
-            date,
-            conceptId: selectedConceptId,
-            cash: parseFloat(cashAmount) || 0,
-            usd: parseFloat(usdAmount) || 0,
-            comments,
-            checks
-        });
-        alert('Funcionalidad de guardado pendiente de implementación');
+
+        const concept = concepts.find(c => c.id === selectedConceptId);
+        if (!concept) return;
+
+        const ars = parseFloat(cashAmount) || 0;
+        const usd = parseFloat(usdAmount) || 0;
+
+        if (ars === 0 && usd === 0 && checks.length === 0) {
+            alert('Ingrese al menos un monto o un cheque');
+            return;
+        }
+
+        setIsSaving(true);
+        try {
+            // 1. Insert into cash_movements
+            const { data: movement, error: movementError } = await supabase
+                .from('cash_movements')
+                .insert({
+                    date,
+                    concept_id: selectedConceptId,
+                    amount_ars: ars,
+                    amount_usd: usd,
+                    comments,
+                    created_by: currentUser.id,
+                    type: concept.type,
+                    branch: 'Llerena'
+                })
+                .select()
+                .single();
+
+            if (movementError) throw movementError;
+
+            // 2. Insert checks if any
+            if (checks.length > 0) {
+                const checksToInsert = checks.map(c => ({
+                    movement_id: movement.id,
+                    bank: c.bank,
+                    number: c.number,
+                    amount: c.amount,
+                    due_date: c.date,
+                    status: 'en_cartera'
+                }));
+
+                const { error: checksError } = await supabase
+                    .from('checks')
+                    .insert(checksToInsert);
+
+                if (checksError) throw checksError;
+            }
+
+            alert('✅ Movimiento registrado con éxito');
+            
+            // Reset form
+            setSelectedConceptId('');
+            setCashAmount('');
+            setUsdAmount('');
+            setComments('');
+            setChecks([]);
+            
+            // Refresh total
+            fetchDailyTotal();
+            
+        } catch (e: any) {
+            console.error('Error saving movement:', e);
+            alert('❌ Error al guardar: ' + e.message);
+        } finally {
+            setIsSaving(true);
+            setIsSaving(false);
+        }
     };
 
     return (
@@ -280,8 +353,12 @@ export const CashMovements: React.FC<{ currentUser: User }> = ({ currentUser }) 
                             
                             <div className="my-4 border-t border-surfaceHighlight"></div>
 
-                            <button onClick={handleFinish} className="w-full py-4 bg-green-600 hover:bg-green-700 text-white rounded-xl font-black uppercase text-xs shadow-lg shadow-green-600/20 transition-all active:scale-95 flex items-center justify-center gap-2">
-                                <Check size={18} /> Terminar
+                            <button 
+                                onClick={handleFinish} 
+                                disabled={isSaving}
+                                className="w-full py-4 bg-green-600 hover:bg-green-700 text-white rounded-xl font-black uppercase text-xs shadow-lg shadow-green-600/20 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
+                            >
+                                {isSaving ? <span className="animate-spin">⌛</span> : <Check size={18} />} Terminar
                             </button>
                             <button className="w-full py-4 bg-red-50 hover:bg-red-100 text-red-500 border border-red-200 rounded-xl font-black uppercase text-xs transition-all active:scale-95 flex items-center justify-center gap-2">
                                 <X size={18} /> Cancelar

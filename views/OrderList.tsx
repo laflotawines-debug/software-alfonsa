@@ -33,7 +33,8 @@ import {
   MessageSquare, 
   Send, 
   Users, 
-  CalendarClock 
+  CalendarClock,
+  ArrowRightLeft
 } from 'lucide-react';
 import { DetailedOrder, View, OrderStatus, User, DeliveryZone } from '../types';
 import { 
@@ -167,6 +168,7 @@ export const OrderList: React.FC<OrderListProps> = ({
                   productCount: (o.order_items || []).length,
                   products: (o.order_items || []).map((i: any) => ({
                       code: i.code,
+                      name: i.name || (i.master_products?.desart) || 'S/N',
                       quantity: i.quantity,
                       originalQuantity: i.original_quantity,
                       shippedQuantity: i.shipped_quantity,
@@ -815,6 +817,11 @@ const DetailedOrderCard: React.FC<{
                 {order.isReservation && (
                     <span className="flex items-center gap-1 text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-purple-500/10 text-purple-600 border border-purple-500/20">
                         <CalendarClock size={10} /> {order.scheduledDate ? new Date(order.scheduledDate).toLocaleDateString() : 'Sin Fecha'}
+                    </span>
+                )}
+                {order.isInterdeposito && (
+                    <span className="flex items-center gap-1 text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 border border-blue-500/20">
+                        <ArrowRightLeft size={10} /> Interdepósito
                     </span>
                 )}
             </div>

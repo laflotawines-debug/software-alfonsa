@@ -192,6 +192,8 @@ export const InventoryHistory: React.FC<{ currentUser: UserType }> = ({ currentU
                         <option value="ingreso">Solo Ingresos</option>
                         <option value="ajuste">Solo Ajustes</option>
                         <option value="transferencia">Solo Transf.</option>
+                        <option value="venta">Solo Ventas</option>
+                        <option value="nota de crédito">Solo Notas de Crédito</option>
                     </select>
                 </div>
             </div>
@@ -278,7 +280,7 @@ export const InventoryHistory: React.FC<{ currentUser: UserType }> = ({ currentU
                             <div className="space-y-3 pt-6">
                                 <div className="flex items-center gap-3 ml-2 mb-4">
                                     <History size={18} className="text-primary"/>
-                                    <h3 className="text-xs font-black text-muted uppercase tracking-widest">Ajustes e Internos</h3>
+                                    <h3 className="text-xs font-black text-muted uppercase tracking-widest">Ajustes, Ventas e Internos</h3>
                                 </div>
                                 <div className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm">
                                     <table className="w-full text-left">
@@ -298,12 +300,21 @@ export const InventoryHistory: React.FC<{ currentUser: UserType }> = ({ currentU
                                                         <div className="flex flex-col">
                                                             <span className="text-[10px] font-black text-text">{new Date(m.created_at).toLocaleDateString()}</span>
                                                             <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded border self-start mt-1 ${
-                                                                m.type === 'ajuste' ? 'bg-orange-500/10 text-orange-600 border-orange-200' : 'bg-blue-500/10 text-blue-600 border-blue-200'
+                                                                m.type === 'ajuste' ? 'bg-orange-500/10 text-orange-600 border-orange-200' : 
+                                                                m.type === 'venta' ? 'bg-green-500/10 text-green-600 border-green-200' :
+                                                                m.type === 'nota de crédito' ? 'bg-purple-500/10 text-purple-600 border-purple-200' :
+                                                                'bg-blue-500/10 text-blue-600 border-blue-200'
                                                             }`}>{m.type}</span>
                                                         </div>
                                                     </td>
                                                     <td className="p-4">
-                                                        <div className="flex flex-col"><span className="text-xs font-bold text-text uppercase truncate max-w-[200px]">{m.desart}</span><span className="text-[9px] font-mono text-muted">#{m.codart}</span></div>
+                                                        <div className="flex flex-col">
+                                                            <span className="text-xs font-bold text-text uppercase truncate max-w-[200px]">{m.desart}</span>
+                                                            <span className="text-[9px] font-mono text-muted">#{m.codart}</span>
+                                                            {m.transfer_group_code && (m.type === 'venta' || m.type === 'nota de crédito') && (
+                                                                <span className="text-[9px] font-bold text-orange-500 mt-1 uppercase italic">{m.transfer_group_code}</span>
+                                                            )}
+                                                        </div>
                                                     </td>
                                                     <td className="p-4 text-center font-black text-sm">
                                                         <span className={m.quantity < 0 ? 'text-red-500' : 'text-green-600'}>{m.quantity > 0 ? '+' : ''}{m.quantity}</span>

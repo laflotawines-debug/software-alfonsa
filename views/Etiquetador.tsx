@@ -70,7 +70,7 @@ export const Etiquetador: React.FC = () => {
                 let all: MasterProduct[] = [];
                 let page = 0;
                 while (true) {
-                    const { data, error } = await supabase.from('master_products').select('*').gt('stock_betbeder', 0).order('desart', { ascending: true }).range(page * 1000, (page + 1) * 1000 - 1);
+                    const { data, error } = await supabase.from('master_products').select('*').neq('familia', 'ELIMINADOS').gt('stock_betbeder', 0).order('desart', { ascending: true }).range(page * 1000, (page + 1) * 1000 - 1);
                     if (error) throw error;
                     if (data) all.push(...data);
                     if (!data || data.length < 1000) break;
@@ -246,7 +246,7 @@ export const Etiquetador: React.FC = () => {
 
                 if (item.discount > 0) {
                     const badgeW = 9; const badgeH = 4;
-                    doc.setFillColor(0).roundedRect(x + labelWidth - badgeW - 1.5, y + 1.5, badgeW, badgeH, 0.5, 0.5, 'F');
+                    doc.setFillColor(0, 0, 0).roundedRect(x + labelWidth - badgeW - 1.5, y + 1.5, badgeW, badgeH, 0.5, 0.5, 'F');
                     doc.setTextColor(255).setFontSize(6).text(`-${item.discount}%`, x + labelWidth - (badgeW/2) - 1.5, y + 4.3, { align: 'center' });
                 }
 
@@ -272,7 +272,7 @@ export const Etiquetador: React.FC = () => {
                     doc.text(parts[0], startX, y + priceYmm);
                     const circleX = startX + part1Width + (separatorWidth / 2);
                     const circleY = y + priceYmm - 1.2; 
-                    doc.setFillColor(0).circle(circleX, circleY, 0.75, 'F');
+                    doc.setFillColor(0, 0, 0).circle(circleX, circleY, 0.75, 'F');
                     doc.text(parts[1], startX + part1Width + separatorWidth, y + priceYmm);
                 } else {
                     doc.text(finalPriceStr, x + labelWidth / 2, y + priceYmm, { align: 'center' });

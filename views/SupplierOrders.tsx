@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { SupplierOrder, SupplierOrderItem, User, SupplierMaster, MasterProduct } from '../types';
+import { ProductDetailModal } from '../components/ProductDetailModal';
 
 interface SupplierOrdersProps {
     currentUser: User;
@@ -367,6 +368,7 @@ const CreateSupplierOrderModal: React.FC<{ onClose: () => void, onSuccess: () =>
     const [supplierSearchTerm, setSupplierSearchTerm] = useState('');
     const [showSupplierDropdown, setShowSupplierDropdown] = useState(false);
     const supplierInputRef = useRef<HTMLDivElement>(null);
+    const [isCreatingProduct, setIsCreatingProduct] = useState(false);
 
     useEffect(() => {
         supabase.from('providers_master').select('*').eq('activo', true).order('razon_social').then(res => res.data && setSuppliers(res.data));
@@ -410,7 +412,7 @@ const CreateSupplierOrderModal: React.FC<{ onClose: () => void, onSuccess: () =>
         setIsSearching(true);
         try {
             const tokens = trimmed.split(/\s+/).filter(t => t.length > 0);
-            let query = supabase.from('master_products').select('codart, desart, units_per_box');
+            let query = supabase.from('master_products').select('codart, desart, units_per_box').neq('familia', 'ELIMINADOS');
             tokens.forEach(token => {
                 query = query.ilike('desart', `%${token}%`);
             });
@@ -743,9 +745,18 @@ const CreateSupplierOrderModal: React.FC<{ onClose: () => void, onSuccess: () =>
 
                     {/* LISTA DE ITEMS CARGADOS */}
                     <div className="bg-surface/50 border border-surfaceHighlight rounded-3xl p-6 flex flex-col h-full min-h-[350px]">
-                        <h4 className="text-[10px] font-black text-muted uppercase tracking-widest mb-4 border-b border-surfaceHighlight pb-2 flex items-center gap-2">
-                           <Boxes size={14} className="text-primary" /> Artículos en el Pedido ({items.length})
-                        </h4>
+                        <div className="flex items-center justify-between mb-4 border-b border-surfaceHighlight pb-2">
+                            <h4 className="text-[10px] font-black text-muted uppercase tracking-widest flex items-center gap-2">
+                               <Boxes size={14} className="text-primary" /> Artículos en el Pedido ({items.length})
+                            </h4>
+                            <button 
+                                onClick={() => setIsCreatingProduct(true)}
+                                className="bg-orange-500 hover:bg-orange-600 text-white p-1.5 rounded-lg transition-colors shadow-sm active:scale-95"
+                                title="Crear Nuevo Artículo"
+                            >
+                                <Plus size={14} />
+                            </button>
+                        </div>
                         <div className="flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-thin">
                             {items.map((item, idx) => (
                                 <div key={idx} className="bg-background border border-surfaceHighlight rounded-xl p-4 flex justify-between items-center group animate-in slide-in-from-right-2">
@@ -774,6 +785,20 @@ const CreateSupplierOrderModal: React.FC<{ onClose: () => void, onSuccess: () =>
                         {isSaving ? <Loader2 className="animate-spin" size={18}/> : <Save size={18}/>} Guardar Pedido (F10)
                     </button>
                 </div>
+
+                {isCreatingProduct && (
+                    <ProductDetailModal 
+                        product={null} 
+                        existingFamilies={[]}
+                        existingSubfamilies={[]}
+                        onClose={(created) => { 
+                            setIsCreatingProduct(false);
+                            // Si se creó, el usuario puede buscarlo inmediatamente
+                        }} 
+                        currentUser={currentUser}
+                        masterSuppliers={suppliers}
+                    />
+                )}
             </div>
         </div>
     );
@@ -784,10 +809,45 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
     const [items, setItems] = useState<SupplierOrderItem[]>(order.items || []);
     const [hasChanges, setHasChanges] = useState(false);
     const [deletingItemId, setDeletingItemId] = useState<string | null>(null);
+    const [isUploading, setIsUploading] = useState(false);
+    const [currentPdfUrl, setCurrentPdfUrl] = useState(order.pdf_url);
+    const fileInputRef = useRef<HTMLInputElement>(null);
     
     useEffect(() => {
         if (order.items) setItems(order.items);
+        setCurrentPdfUrl(order.pdf_url);
     }, [order]);
+
+    const handleUploadPdf = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        
+        setIsUploading(true);
+        try {
+            const fileExt = file.name.split('.').pop();
+            const fileName = `${Date.now()}_${order.supplier_code}.${fileExt}`;
+            const { data: uploadData, error: uploadErr } = await supabase.storage
+                .from('supplier-orders')
+                .upload(fileName, file);
+            
+            if (uploadErr) throw uploadErr;
+            const { data: { publicUrl } } = supabase.storage.from('supplier-orders').getPublicUrl(fileName);
+            
+            const { error: updateErr } = await supabase
+                .from('supplier_orders')
+                .update({ pdf_url: publicUrl })
+                .eq('id', order.id);
+            
+            if (updateErr) throw updateErr;
+            
+            setCurrentPdfUrl(publicUrl);
+            setHasChanges(true);
+        } catch (e: any) {
+            alert("Error al subir PDF: " + e.message);
+        } finally {
+            setIsUploading(false);
+        }
+    };
 
     const handleUpdateQty = async (itemId: string, newQty: number) => {
         if (newQty <= 0) return;
@@ -864,26 +924,60 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
                         </div>
                     </div>
 
-                    {/* Botón de PDF si existe */}
-                    {order.pdf_url && (
-                        <div className="p-4 bg-blue-600 rounded-2xl text-white flex items-center justify-between shadow-lg shadow-blue-900/20">
-                            <div className="flex items-center gap-3">
-                                <FileText size={24} />
-                                <div>
-                                    <p className="text-[10px] font-black uppercase opacity-80 leading-none">Comprobante Adjunto</p>
-                                    <p className="text-xs font-bold mt-1">Archivo de orden de compra</p>
+                    {/* Sección de PDF */}
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Comprobante PDF</label>
+                        {currentPdfUrl ? (
+                            <div className="p-4 bg-blue-600 rounded-2xl text-white flex items-center justify-between shadow-lg shadow-blue-900/20">
+                                <div className="flex items-center gap-3">
+                                    <FileText size={24} />
+                                    <div>
+                                        <p className="text-[10px] font-black uppercase opacity-80 leading-none">Comprobante Adjunto</p>
+                                        <p className="text-xs font-bold mt-1">Archivo de orden de compra</p>
+                                    </div>
+                                </div>
+                                <div className="flex gap-2">
+                                    <a 
+                                        href={currentPdfUrl} 
+                                        target="_blank" 
+                                        rel="noreferrer" 
+                                        className="px-4 py-2 bg-white text-blue-600 rounded-xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-blue-50 transition-colors"
+                                    >
+                                        <ExternalLink size={14} /> Abrir
+                                    </a>
+                                    <button 
+                                        onClick={() => fileInputRef.current?.click()}
+                                        disabled={isUploading}
+                                        className="px-4 py-2 bg-blue-500 text-white rounded-xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-blue-400 transition-colors"
+                                    >
+                                        {isUploading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} Cambiar
+                                    </button>
                                 </div>
                             </div>
-                            <a 
-                                href={order.pdf_url} 
-                                target="_blank" 
-                                rel="noreferrer" 
-                                className="px-4 py-2 bg-white text-blue-600 rounded-xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-blue-50 transition-colors"
+                        ) : (
+                            <button 
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={isUploading}
+                                className="w-full p-4 border-2 border-dashed border-surfaceHighlight rounded-2xl flex flex-col items-center justify-center gap-2 hover:border-primary/50 hover:bg-primary/5 transition-all group"
                             >
-                                <ExternalLink size={14} /> Abrir PDF
-                            </a>
-                        </div>
-                    )}
+                                {isUploading ? (
+                                    <Loader2 size={24} className="animate-spin text-primary" />
+                                ) : (
+                                    <>
+                                        <FileUp size={24} className="text-muted group-hover:text-primary transition-colors" />
+                                        <p className="text-[10px] font-black text-muted uppercase group-hover:text-primary transition-colors">Adjuntar Comprobante PDF</p>
+                                    </>
+                                )}
+                            </button>
+                        )}
+                        <input 
+                            ref={fileInputRef}
+                            type="file" 
+                            accept=".pdf" 
+                            className="hidden" 
+                            onChange={handleUploadPdf} 
+                        />
+                    </div>
 
                     <div className="border border-surfaceHighlight rounded-2xl overflow-hidden bg-surface">
                         <table className="w-full text-left">

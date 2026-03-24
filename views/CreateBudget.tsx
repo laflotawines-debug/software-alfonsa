@@ -38,6 +38,37 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
   const [address, setAddress] = useState('');
   const [phone, setPhone] = useState('');
   
+  const [showNewClientModal, setShowNewClientModal] = useState(false);
+  const [newClientData, setNewClientData] = useState({ codigo: '', nombre: '', domicilio: '', celular: '' });
+  const [isSavingClient, setIsSavingClient] = useState(false);
+
+  const handleSaveNewClient = async () => {
+      if (!newClientData.codigo || !newClientData.nombre) {
+          alert("El código y nombre son obligatorios.");
+          return;
+      }
+      setIsSavingClient(true);
+      const { data, error } = await supabase.from('clients_master').insert([{
+          codigo: newClientData.codigo.toUpperCase(),
+          nombre: newClientData.nombre.toUpperCase(),
+          domicilio: newClientData.domicilio,
+          celular: newClientData.celular,
+          activo: true
+      }]).select();
+      
+      setIsSavingClient(false);
+      if (error) {
+          alert("Error al guardar cliente: " + error.message);
+      } else if (data && data.length > 0) {
+          setShowNewClientModal(false);
+          setClientName(data[0].nombre);
+          setAddress(data[0].domicilio || '');
+          setPhone(data[0].celular || '');
+          setSelectedClient(data[0]);
+          setNewClientData({ codigo: '', nombre: '', domicilio: '', celular: '' });
+      }
+  };
+
   const [selectedZone, setSelectedZone] = useState<string>('');
   const [availableZones, setAvailableZones] = useState<DeliveryZone[]>([]);
   const [rawText, setRawText] = useState('');
@@ -48,6 +79,11 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
   // Estados para reserva
   const [isReservation, setIsReservation] = useState(false);
   const [scheduledDate, setScheduledDate] = useState('');
+
+  // Estados para interdepósito
+  const [isInterdeposito, setIsInterdeposito] = useState(false);
+  const [interdepositoOrigin, setInterdepositoOrigin] = useState('LLERENA');
+  const [interdepositoDestination, setInterdepositoDestination] = useState('BETBEDER');
 
   // Estados para búsqueda de clientes
   const [clientSearchResults, setClientSearchResults] = useState<ClientMaster[]>([]);
@@ -185,7 +221,7 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
 
     try {
         const words = trimmed.split(/\s+/).filter(w => w.length > 0);
-        let query = supabase.from('master_products').select('*');
+        let query = supabase.from('master_products').select('*').neq('familia', 'ELIMINADOS');
         words.forEach(word => {
             query = query.ilike('desart', `%${word}%`);
         });
@@ -384,21 +420,24 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
             id: '', 
             displayId: displayId,
             clientName: clientName,
-            zone: selectedZone,
+            zone: isInterdeposito ? 'Interdepósito' : selectedZone,
             status: OrderStatus.EN_ARMADO, 
             productCount: products.length,
-            total: totalAmount,
+            total: isInterdeposito ? 0 : totalAmount,
             createdDate: new Date().toLocaleDateString('es-AR'),
             products: products,
             observations: finalObservations,
             isReservation: isReservation,
+            isInterdeposito: isInterdeposito,
+            interdepositoOrigin: isInterdeposito ? interdepositoOrigin : undefined,
+            interdepositoDestination: isInterdeposito ? interdepositoDestination : undefined,
             scheduledDate: isReservation ? scheduledDate : undefined,
             history: [{
                 timestamp: new Date().toISOString(),
                 userId: currentUser.id, 
                 userName: currentUser.name,
                 action: 'CREATE_ORDER',
-                details: selectedBudgetId ? 'Pedido creado desde presupuesto transitorio' : 'Pedido creado manualmente'
+                details: isInterdeposito ? `Movimiento interdepósito creado (${interdepositoOrigin} -> ${interdepositoDestination})` : (selectedBudgetId ? 'Pedido creado desde presupuesto transitorio' : 'Pedido creado manualmente')
             }]
         };
 
@@ -441,11 +480,19 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
       <section className="bg-surface rounded-2xl p-6 border border-surfaceHighlight shadow-sm">
         <div className="flex justify-between items-center mb-6">
             <h3 className="text-text text-lg font-bold flex items-center gap-2">Datos del Cliente</h3>
-            <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all cursor-pointer ${isReservation ? 'bg-purple-500/10 border-purple-500/30 text-purple-600' : 'bg-background border-surfaceHighlight text-muted'}`} onClick={() => setIsReservation(!isReservation)}>
-                <div className={`w-4 h-4 rounded border flex items-center justify-center ${isReservation ? 'bg-purple-600 border-purple-600' : 'border-muted'}`}>
-                    {isReservation && <Check size={12} className="text-white"/>}
+            <div className="flex items-center gap-4">
+                <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all cursor-pointer ${isInterdeposito ? 'bg-blue-500/10 border-blue-500/30 text-blue-600' : 'bg-background border-surfaceHighlight text-muted'}`} onClick={() => { setIsInterdeposito(!isInterdeposito); if (!isInterdeposito) { if (!clientName) setClientName(`TRF: ${interdepositoOrigin} -> ${interdepositoDestination}`); setSelectedZone('Interdepósito'); } else { if (clientName.startsWith('TRF:')) setClientName(''); setSelectedZone(availableZones[0]?.name || 'V. Mercedes'); } }}>
+                    <div className={`w-4 h-4 rounded border flex items-center justify-center ${isInterdeposito ? 'bg-blue-600 border-blue-600' : 'border-muted'}`}>
+                        {isInterdeposito && <Check size={12} className="text-white"/>}
+                    </div>
+                    <span className="text-xs font-black uppercase select-none">Movimiento interdepósito</span>
                 </div>
-                <span className="text-xs font-black uppercase select-none">Es Reserva</span>
+                <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all cursor-pointer ${isReservation ? 'bg-purple-500/10 border-purple-500/30 text-purple-600' : 'bg-background border-surfaceHighlight text-muted'}`} onClick={() => setIsReservation(!isReservation)}>
+                    <div className={`w-4 h-4 rounded border flex items-center justify-center ${isReservation ? 'bg-purple-600 border-purple-600' : 'border-muted'}`}>
+                        {isReservation && <Check size={12} className="text-white"/>}
+                    </div>
+                    <span className="text-xs font-black uppercase select-none">Es Reserva</span>
+                </div>
             </div>
         </div>
 
@@ -454,10 +501,19 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
             {/* NOMBRE DEL CLIENTE */}
             <div className="flex flex-col gap-2 relative" ref={dropdownRef}>
                 <label className="text-xs font-bold text-muted uppercase tracking-wider">Nombre del Cliente *</label>
-                <div className="relative">
-                    <UserIcon className={`absolute left-3 top-1/2 -translate-y-1/2 ${isSearchingClient ? 'text-primary animate-pulse' : 'text-muted'}`} size={18} />
-                    <input type="text" value={clientName} onChange={(e) => handleSearchClient(e.target.value)} onFocus={() => clientName.length >= 2 && setShowClientDropdown(true)} placeholder="Buscar por nombre o código..." className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3.5 pl-10 pr-4 text-sm text-text focus:border-primary outline-none transition-colors shadow-sm font-bold uppercase" autoComplete="off" />
-                    {isSearchingClient && <div className="absolute right-3 top-1/2 -translate-y-1/2"><Loader2 className="animate-spin text-primary" size={16} /></div>}
+                <div className="flex gap-2">
+                    <div className="relative flex-1">
+                        <UserIcon className={`absolute left-3 top-1/2 -translate-y-1/2 ${isSearchingClient ? 'text-primary animate-pulse' : 'text-muted'}`} size={18} />
+                        <input type="text" value={clientName} onChange={(e) => handleSearchClient(e.target.value)} onFocus={() => clientName.length >= 2 && setShowClientDropdown(true)} placeholder="Buscar por nombre o código..." className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3.5 pl-10 pr-4 text-sm text-text focus:border-primary outline-none transition-colors shadow-sm font-bold uppercase" autoComplete="off" />
+                        {isSearchingClient && <div className="absolute right-3 top-1/2 -translate-y-1/2"><Loader2 className="animate-spin text-primary" size={16} /></div>}
+                    </div>
+                    <button 
+                        onClick={() => setShowNewClientModal(true)}
+                        className="p-3.5 bg-primary text-white rounded-xl hover:bg-primaryHover transition-colors shadow-sm flex items-center justify-center"
+                        title="Nuevo Cliente"
+                    >
+                        <Plus size={20} />
+                    </button>
                 </div>
                 {showClientDropdown && (
                   <div className="absolute top-full left-0 w-full bg-surface border border-primary/30 rounded-2xl shadow-2xl mt-2 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
@@ -477,7 +533,7 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
             </div>
             
             {/* ZONA DE ENTREGA */}
-            <div className="flex flex-col gap-2">
+            <div className={`flex flex-col gap-2 ${isInterdeposito ? 'hidden' : ''}`}>
                 <label className="text-xs font-bold text-muted uppercase tracking-wider">Zona de Entrega</label>
                 <div className="relative">
                     <Compass className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={18} />
@@ -486,9 +542,36 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
                             <option key={z.id} value={z.name}>{z.name}</option>
                         ))}
                         {availableZones.length === 0 && <option value="V. Mercedes">V. Mercedes (Default)</option>}
+                        {isInterdeposito && <option value="Interdepósito">Interdepósito</option>}
                     </select>
                 </div>
             </div>
+
+            {/* ORIGEN Y DESTINO (Solo si es interdepósito) */}
+            {isInterdeposito && (
+                <>
+                    <div className="flex flex-col gap-2 animate-in fade-in slide-in-from-top-2">
+                        <label className="text-xs font-bold text-blue-600 uppercase tracking-wider">Depósito Origen *</label>
+                        <div className="relative">
+                            <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-500" size={18} />
+                            <select value={interdepositoOrigin} onChange={(e) => { setInterdepositoOrigin(e.target.value); if (clientName.startsWith('TRF:')) setClientName(`TRF: ${e.target.value} -> ${interdepositoDestination}`); }} className="w-full bg-blue-500/5 border border-blue-500/20 rounded-xl py-3.5 pl-10 pr-4 text-sm text-blue-700 focus:border-blue-500 outline-none transition-colors appearance-none cursor-pointer shadow-sm font-bold uppercase">
+                                <option value="LLERENA">LLERENA</option>
+                                <option value="BETBEDER">BETBEDER</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div className="flex flex-col gap-2 animate-in fade-in slide-in-from-top-2">
+                        <label className="text-xs font-bold text-blue-600 uppercase tracking-wider">Depósito Destino *</label>
+                        <div className="relative">
+                            <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-500" size={18} />
+                            <select value={interdepositoDestination} onChange={(e) => { setInterdepositoDestination(e.target.value); if (clientName.startsWith('TRF:')) setClientName(`TRF: ${interdepositoOrigin} -> ${e.target.value}`); }} className="w-full bg-blue-500/5 border border-blue-500/20 rounded-xl py-3.5 pl-10 pr-4 text-sm text-blue-700 focus:border-blue-500 outline-none transition-colors appearance-none cursor-pointer shadow-sm font-bold uppercase">
+                                <option value="BETBEDER">BETBEDER</option>
+                                <option value="LLERENA">LLERENA</option>
+                            </select>
+                        </div>
+                    </div>
+                </>
+            )}
 
             {/* FECHA RESERVA (Solo si es reserva) */}
             {isReservation && (
@@ -697,6 +780,71 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
              </div>
          )}
       </section>
+
+      {/* NEW CLIENT MODAL */}
+      {showNewClientModal && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+              <div className="bg-surface rounded-2xl shadow-xl max-w-md w-full overflow-hidden flex flex-col">
+                  <div className="p-6 border-b border-surfaceHighlight">
+                      <h3 className="text-lg font-bold text-text">Agregar Nuevo Cliente</h3>
+                  </div>
+                  <div className="p-6 flex flex-col gap-4">
+                      <div className="flex flex-col gap-1">
+                          <label className="text-xs font-bold text-muted uppercase">Código *</label>
+                          <input 
+                              type="text" 
+                              value={newClientData.codigo} 
+                              onChange={e => setNewClientData({...newClientData, codigo: e.target.value})}
+                              className="w-full bg-background border border-surfaceHighlight rounded-lg p-3 text-sm font-bold uppercase focus:border-primary outline-none"
+                          />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                          <label className="text-xs font-bold text-muted uppercase">Nombre *</label>
+                          <input 
+                              type="text" 
+                              value={newClientData.nombre} 
+                              onChange={e => setNewClientData({...newClientData, nombre: e.target.value})}
+                              className="w-full bg-background border border-surfaceHighlight rounded-lg p-3 text-sm font-bold uppercase focus:border-primary outline-none"
+                          />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                          <label className="text-xs font-bold text-muted uppercase">Domicilio</label>
+                          <input 
+                              type="text" 
+                              value={newClientData.domicilio} 
+                              onChange={e => setNewClientData({...newClientData, domicilio: e.target.value})}
+                              className="w-full bg-background border border-surfaceHighlight rounded-lg p-3 text-sm focus:border-primary outline-none"
+                          />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                          <label className="text-xs font-bold text-muted uppercase">Celular</label>
+                          <input 
+                              type="text" 
+                              value={newClientData.celular} 
+                              onChange={e => setNewClientData({...newClientData, celular: e.target.value})}
+                              className="w-full bg-background border border-surfaceHighlight rounded-lg p-3 text-sm focus:border-primary outline-none"
+                          />
+                      </div>
+                  </div>
+                  <div className="p-4 bg-surfaceHighlight/30 flex justify-end gap-3">
+                      <button 
+                          onClick={() => setShowNewClientModal(false)}
+                          className="px-4 py-2 text-sm font-bold text-text/70 hover:text-text transition-colors"
+                      >
+                          Cancelar
+                      </button>
+                      <button 
+                          onClick={handleSaveNewClient}
+                          disabled={isSavingClient}
+                          className="px-4 py-2 text-sm font-bold bg-primary text-white rounded-xl hover:bg-primaryHover transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2"
+                      >
+                          {isSavingClient ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                          Guardar
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
     </div>
   );
 };

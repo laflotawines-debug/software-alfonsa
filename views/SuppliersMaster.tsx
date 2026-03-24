@@ -115,7 +115,8 @@ export const SuppliersMaster: React.FC<SuppliersMasterProps> = ({ currentUser })
         }
     };
 
-    if (currentUser.role !== 'vale') {
+    const hasAccess = currentUser.role === 'vale' || currentUser.permissions?.includes('catalog.suppliers');
+    if (!hasAccess) {
         return <div className="p-10 text-center text-muted uppercase font-black tracking-widest">Acceso Denegado</div>;
     }
 

@@ -41,10 +41,11 @@ interface PaymentsOverviewProps {
     onUpdateTransfers: (transfer: Transfer) => void;
     onConfirmTransfer: (id: string, status: 'Pendiente' | 'Realizado') => void;
     onDeleteTransfer: (id: string) => void;
+    onRefresh: () => void;
 }
 
 export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({ 
-    providers, onDeleteProvider, onUpdateProviders, transfers, onUpdateTransfers, onConfirmTransfer, onDeleteTransfer
+    providers, onDeleteProvider, onUpdateProviders, transfers, onUpdateTransfers, onConfirmTransfer, onDeleteTransfer, onRefresh
 }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [expandedProviders, setExpandedProviders] = useState<Record<string, boolean>>({});
@@ -56,6 +57,13 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
     
     const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
     const [transferToDelete, setTransferToDelete] = useState<Transfer | null>(null);
+    const [isRefreshing, setIsRefreshing] = useState(false);
+
+    const handleRefresh = async () => {
+        setIsRefreshing(true);
+        await onRefresh();
+        setTimeout(() => setIsRefreshing(false), 500);
+    };
 
     const handleCopy = (id: string, text: string) => {
         if (!text) return;
@@ -146,9 +154,19 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
                     <h2 className="text-3xl font-black text-text tracking-tight uppercase italic">Tablero General</h2>
                     <p className="text-muted text-sm mt-1">Metas de cobro por proveedor activo.</p>
                 </div>
-                <div className="relative w-full md:w-80">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
-                    <input type="text" placeholder="Buscar proveedor..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl py-2.5 pl-11 pr-4 text-sm text-text outline-none focus:border-primary transition-all shadow-sm font-bold uppercase" />
+                <div className="flex items-center gap-2 w-full md:w-auto">
+                    <button 
+                        onClick={handleRefresh}
+                        disabled={isRefreshing}
+                        className={`p-2.5 rounded-xl bg-surface border border-surfaceHighlight text-muted hover:text-primary hover:border-primary/30 transition-all active:scale-95 ${isRefreshing ? 'animate-spin text-primary' : ''}`}
+                        title="Actualizar datos"
+                    >
+                        <RotateCcw size={18} />
+                    </button>
+                    <div className="relative w-full md:w-80">
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                        <input type="text" placeholder="Buscar proveedor..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl py-2.5 pl-11 pr-4 text-sm text-text outline-none focus:border-primary transition-all shadow-sm font-bold uppercase" />
+                    </div>
                 </div>
             </div>
 

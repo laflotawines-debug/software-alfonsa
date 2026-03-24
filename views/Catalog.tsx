@@ -33,6 +33,8 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
     const [familyFilter, setFamilyFilter] = useState<string>('TODAS');
     const [subfamilyFilter, setSubfamilyFilter] = useState<string>('TODAS');
     const [providerFilter, setProviderFilter] = useState<string>('TODOS');
+    const [showDeleted, setShowDeleted] = useState(false);
+    const [showWithoutStock, setShowWithoutStock] = useState(false);
 
     const fetchData = async () => {
         setIsLoading(true);
@@ -50,11 +52,21 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
             let hasMore = true;
 
             while (hasMore) {
-                const { data, error } = await supabase
+                let query = supabase
                     .from('master_products')
                     .select('*')
                     .order('desart', { ascending: true })
                     .range(from, from + PAGE_SIZE - 1);
+
+                if (!showDeleted) {
+                    query = query.neq('familia', 'ELIMINADOS');
+                }
+                
+                if (!showWithoutStock) {
+                    query = query.or('stock_betbeder.gt.0,stock_llerena.gt.0');
+                }
+
+                const { data, error } = await query;
 
                 if (error) throw error;
                 if (data && data.length > 0) {
@@ -76,7 +88,7 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
 
     useEffect(() => {
         fetchData();
-    }, []);
+    }, [showDeleted, showWithoutStock]);
 
     const suppliersMap = useMemo(() => {
         const map = new Map<string, string>();
@@ -187,6 +199,38 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
                         </select>
                     </div>
                 </div>
+
+                <div className="flex items-center gap-6 pt-2 border-t border-surfaceHighlight/50">
+                    <label className="flex items-center gap-2 cursor-pointer group">
+                        <div className={`w-10 h-5 rounded-full p-1 transition-colors ${showWithoutStock ? 'bg-primary' : 'bg-surfaceHighlight'}`}>
+                            <div className={`w-3 h-3 bg-white rounded-full transition-transform ${showWithoutStock ? 'translate-x-5' : 'translate-x-0'}`} />
+                        </div>
+                        <input 
+                            type="checkbox" 
+                            className="hidden" 
+                            checked={showWithoutStock} 
+                            onChange={() => setShowWithoutStock(!showWithoutStock)} 
+                        />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-muted group-hover:text-text transition-colors">
+                            Cargar productos sin stock
+                        </span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer group">
+                        <div className={`w-10 h-5 rounded-full p-1 transition-colors ${showDeleted ? 'bg-primary' : 'bg-surfaceHighlight'}`}>
+                            <div className={`w-3 h-3 bg-white rounded-full transition-transform ${showDeleted ? 'translate-x-5' : 'translate-x-0'}`} />
+                        </div>
+                        <input 
+                            type="checkbox" 
+                            className="hidden" 
+                            checked={showDeleted} 
+                            onChange={() => setShowDeleted(!showDeleted)} 
+                        />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-muted group-hover:text-text transition-colors">
+                            Ver productos eliminados / inactivos
+                        </span>
+                    </label>
+                </div>
             </div>
 
             <div className="bg-surface border border-surfaceHighlight rounded-2xl overflow-hidden shadow-sm">
@@ -220,6 +264,9 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
                                                 <div className="flex items-center gap-2">
                                                     <span className="text-[10px] font-black text-primary bg-primary/10 px-2 py-0.5 rounded">#{p.codart}</span>
                                                     <span className="text-sm font-black text-text uppercase truncate max-w-[250px]">{p.desart}</span>
+                                                    {p.familia === 'ELIMINADOS' && (
+                                                        <span className="text-[8px] font-black text-white bg-red-500 px-1.5 py-0.5 rounded uppercase tracking-widest">Inactivo</span>
+                                                    )}
                                                 </div>
                                                 <div className="flex flex-wrap gap-1.5">
                                                     <span className="text-[8px] font-black text-muted uppercase px-1.5 py-0.5 rounded border border-surfaceHighlight">{p.familia || 'S/FAM'}</span>

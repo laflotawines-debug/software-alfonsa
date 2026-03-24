@@ -363,8 +363,21 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                 if (rows.length < 1) throw new Error("El archivo está vacío.");
                 setSyncLog(prev => [...prev, "Analizando encabezados..."]);
                 
-                const { data: existingProductsData } = await supabase.from('master_products').select('codart');
-                const existingProductCodes = new Set<string>((existingProductsData as any[])?.map(p => String(p.codart)) || []);
+                let allExistingCodes: string[] = [];
+                let fetchPage = 0;
+                while (true) {
+                    const { data: existingProductsData, error: fetchErr } = await supabase
+                        .from('master_products')
+                        .select('codart')
+                        .range(fetchPage * 1000, (fetchPage + 1) * 1000 - 1);
+                    if (fetchErr) throw fetchErr;
+                    if (existingProductsData) {
+                        allExistingCodes.push(...existingProductsData.map(p => String(p.codart)));
+                    }
+                    if (!existingProductsData || existingProductsData.length < 1000) break;
+                    fetchPage++;
+                }
+                const existingProductCodes = new Set<string>(allExistingCodes);
                 
                 let headerRowIndex = -1; let foundHeaders: string[] = [];
                 for (let i = 0; i < Math.min(rows.length, 20); i++) {
@@ -384,8 +397,10 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                 };
 
                 const dataToUpsert: any[] = []; const dataRows = rows.slice(headerRowIndex + 1);
+                const importedCodes = new Set<string>();
                 dataRows.forEach((row) => { 
                     const code = String(row[idx.codart] || '').trim(); if (!code) return;
+                    importedCodes.add(code);
                     if (!existingProductCodes.has(code)) inconsistencies.push(code); 
                     const payload: any = { codart: code, updated_at: new Date().toISOString() };
                     if (idx.desart !== -1) payload.desart = String(row[idx.desart] || '').trim().toUpperCase();
@@ -406,8 +421,58 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                     const { error } = await supabase.from('master_products').upsert(chunk, { onConflict: 'codart' }); 
                     if (error) throw error;
                 }
+
+                // Delete products not in the Excel
+                const codesToDelete = Array.from(existingProductCodes).filter(code => !importedCodes.has(code));
+                if (codesToDelete.length > 0) {
+                    setSyncLog(prev => [...prev, `Eliminando ${codesToDelete.length} productos no encontrados en el Excel...`]);
+                    const deleteChunkSize = 100;
+                    let errorCount = 0;
+                    for (let i = 0; i < codesToDelete.length; i += deleteChunkSize) {
+                        const chunk = codesToDelete.slice(i, i + deleteChunkSize);
+                        const { error: deleteErr } = await supabase.from('master_products').delete().in('codart', chunk);
+                        if (deleteErr) {
+                            // Fallback to one by one if chunk fails (e.g., due to foreign key constraints)
+                            for (const code of chunk) {
+                                const { error: singleErr } = await supabase.from('master_products').delete().eq('codart', code);
+                                if (singleErr) {
+                                    // Soft delete (Borrado Lógico)
+                                    const { data: prodData } = await supabase.from('master_products').select('desart').eq('codart', code).single();
+                                    const oldName = prodData?.desart || '';
+                                    const newName = oldName.startsWith('[ELIMINADO]') ? oldName : `[ELIMINADO] ${oldName}`;
+                                    
+                                    await supabase.from('master_products').update({
+                                        familia: 'ELIMINADOS',
+                                        desart: newName,
+                                        stock_total: 0,
+                                        stock_llerena: 0,
+                                        stock_betbeder: 0,
+                                        stock_iseas: 0,
+                                        pventa_1: 0,
+                                        pventa_2: 0,
+                                        pventa_3: 0,
+                                        pventa_4: 0,
+                                        costo: 0
+                                    }).eq('codart', code);
+                                    
+                                    errorCount++;
+                                }
+                            }
+                        }
+                    }
+                    if (errorCount > 0) {
+                        setSyncLog(prev => [...prev, `Nota: ${errorCount} productos no se pudieron borrar porque tienen historial (ej. remitos). Fueron marcados como inactivos y ocultados del sistema.`]);
+                    }
+                }
+
                 setSyncSuccess(true); setSyncLog(prev => [...prev, "¡IMPORTACIÓN COMPLETADA!"]);
-            } catch (err: any) { setSyncError(err.message); } finally { setIsSyncing(false); }
+            } catch (err: any) { 
+                if (err.message && err.message.includes("0x27d")) {
+                    setSyncError("Error de formato: El archivo XLS tiene un formato antiguo o corrupto. Por favor, abra el archivo en Excel y guárdelo como 'Libro de Excel (*.xlsx)' antes de subirlo.");
+                } else {
+                    setSyncError(err.message); 
+                }
+            } finally { setIsSyncing(false); }
         };
         reader.readAsArrayBuffer(file);
     };

@@ -14,7 +14,8 @@ import {
     Hash,
     Type,
     Building2,
-    Package
+    Package,
+    Trash2
 } from 'lucide-react';
 import { MasterProduct, User, SupplierMaster } from '../types';
 import { supabase } from '../supabase';
@@ -38,6 +39,8 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
 }) => {
     const isCreate = !product;
     const [isSaving, setIsSaving] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     
     // Estados para controlar si usamos select o input manual
     const [manualFamily, setManualFamily] = useState(false);
@@ -102,6 +105,54 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
         const cost = formData.costo || 0;
         if (cost === 0 || !price) return 0;
         return ((price - cost) / price) * 100;
+    };
+
+    const handleDelete = async () => {
+        if (!product) return;
+        setIsDeleting(true);
+        try {
+            // Intentar borrado físico primero
+            const { error: deleteErr } = await supabase
+                .from('master_products')
+                .delete()
+                .eq('codart', product.codart);
+
+            if (deleteErr) {
+                // Si falla (probablemente por FK), aplicar borrado lógico
+                const oldName = product.desart || '';
+                const newName = oldName.startsWith('[ELIMINADO]') ? oldName : `[ELIMINADO] ${oldName}`;
+                
+                const { error: updateErr } = await supabase
+                    .from('master_products')
+                    .update({
+                        familia: 'ELIMINADOS',
+                        desart: newName,
+                        stock_total: 0,
+                        stock_llerena: 0,
+                        stock_betbeder: 0,
+                        stock_iseas: 0,
+                        pventa_1: 0,
+                        pventa_2: 0,
+                        pventa_3: 0,
+                        pventa_4: 0,
+                        costo: 0,
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('codart', product.codart);
+
+                if (updateErr) throw updateErr;
+                alert("El producto tiene historial y no puede borrarse físicamente. Se ha marcado como INACTIVO.");
+            } else {
+                alert("Producto eliminado correctamente.");
+            }
+            
+            onClose(true);
+        } catch (err: any) {
+            alert("Error al eliminar: " + err.message);
+        } finally {
+            setIsDeleting(false);
+            setShowDeleteConfirm(false);
+        }
     };
 
     return (
@@ -345,6 +396,15 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                                 {isSaving ? "Guardando..." : (isCreate ? "Crear Artículo" : "Guardar Cambios")}
                             </button>
 
+                            {!isCreate && isVale && (
+                                <button 
+                                    onClick={() => setShowDeleteConfirm(true)}
+                                    className="w-full flex items-center justify-center gap-3 py-4 bg-red-500/10 border border-red-500/20 text-red-500 hover:bg-red-500 hover:text-white rounded-xl font-black text-sm transition-all uppercase tracking-tighter"
+                                >
+                                    <Trash2 size={20} /> Eliminar Artículo
+                                </button>
+                            )}
+
                             <button 
                                 onClick={() => onClose()}
                                 className="w-full flex items-center justify-center gap-3 py-4 bg-background border border-surfaceHighlight text-text hover:bg-surfaceHighlight rounded-xl font-black text-sm transition-all uppercase tracking-tighter"
@@ -366,6 +426,39 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                         </div>
                     </div>
                 </div>
+
+                {/* Confirmación de Eliminación */}
+                {showDeleteConfirm && (
+                    <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in zoom-in duration-200">
+                        <div className="bg-surface w-full max-w-md rounded-3xl border border-red-500/30 p-8 shadow-2xl flex flex-col items-center text-center gap-6">
+                            <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center text-red-500">
+                                <Trash2 size={40} />
+                            </div>
+                            <div className="space-y-2">
+                                <h3 className="text-2xl font-black text-text uppercase italic tracking-tighter">¿Eliminar Artículo?</h3>
+                                <p className="text-sm text-muted font-bold leading-relaxed uppercase">
+                                    Esta acción es irreversible. Si el producto tiene historial de movimientos, será marcado como <span className="text-red-500">INACTIVO</span> en lugar de borrarse físicamente.
+                                </p>
+                            </div>
+                            <div className="flex flex-col w-full gap-3">
+                                <button 
+                                    onClick={handleDelete}
+                                    disabled={isDeleting}
+                                    className="w-full py-4 bg-red-500 hover:bg-red-600 text-white rounded-2xl font-black text-sm uppercase shadow-xl shadow-red-500/20 transition-all active:scale-95 disabled:opacity-50"
+                                >
+                                    {isDeleting ? <Loader2 size={20} className="animate-spin mx-auto" /> : "Confirmar Eliminación"}
+                                </button>
+                                <button 
+                                    onClick={() => setShowDeleteConfirm(false)}
+                                    disabled={isDeleting}
+                                    className="w-full py-4 bg-background border border-surfaceHighlight text-text hover:bg-surfaceHighlight rounded-2xl font-black text-sm uppercase transition-all"
+                                >
+                                    Cancelar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );

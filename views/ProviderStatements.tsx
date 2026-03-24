@@ -45,6 +45,18 @@ export const ProviderStatements: React.FC<{ currentUser: User }> = ({ currentUse
     // --- ESTADO MODAL NUEVA OPERACIÓN ---
     const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
 
+    // --- ESTADO OCULTAR NOMBRES ---
+    const [hideThirdPartyNames, setHideThirdPartyNames] = useState(false);
+
+    const formatConcept = (concept: string) => {
+        if (!hideThirdPartyNames) return concept;
+        // Simplificar tanto pagos directos a proveedores como de clientes
+        if (concept.toLowerCase().includes('pago directo')) {
+            return 'PAGO DIRECTO';
+        }
+        return concept;
+    };
+
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
             if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -168,7 +180,7 @@ export const ProviderStatements: React.FC<{ currentUser: User }> = ({ currentUse
         if (!selectedProvider) return;
         const data = movements.map(m => ({
             'Fecha': m.date,
-            'Concepto': m.is_annulled ? `(ANULADO) ${m.concept}` : m.concept,
+            'Concepto': m.is_annulled ? `(ANULADO) ${formatConcept(m.concept)}` : formatConcept(m.concept),
             'Factura (Debe)': m.is_annulled ? 0 : (m.debit || 0),
             'Pago (Haber)': m.is_annulled ? 0 : (m.credit || 0),
             'Saldo': m.balance,
@@ -212,7 +224,7 @@ export const ProviderStatements: React.FC<{ currentUser: User }> = ({ currentUse
             }
             
             doc.text(new Date(m.date).toLocaleDateString(), 20, y);
-            const conceptText = m.is_annulled ? `(ANULADO) ${m.concept}` : m.concept;
+            const conceptText = m.is_annulled ? `(ANULADO) ${formatConcept(m.concept)}` : formatConcept(m.concept);
             doc.text(conceptText.substring(0, 35), 45, y);
             
             const debitVal = m.is_annulled ? 0 : m.debit;
@@ -261,25 +273,36 @@ export const ProviderStatements: React.FC<{ currentUser: User }> = ({ currentUse
                 </div>
 
                 {selectedProvider && (
-                    <div className="flex items-center gap-4">
-                        <div className="bg-surface border border-surfaceHighlight rounded-2xl p-4 flex items-center gap-6 shadow-sm animate-in zoom-in-95">
-                            <div className="text-right">
-                                <p className="text-[10px] font-black text-muted uppercase tracking-[0.2em]">Deuda Actual</p>
-                                <p className={`text-3xl font-black tracking-tighter ${totalBalance > 0 ? 'text-red-500' : 'text-green-600'}`}>
-                                    $ {totalBalance.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
-                                </p>
+                    <div className="flex flex-col items-end gap-4">
+                        <div className="flex items-center gap-4">
+                            <div className="bg-surface border border-surfaceHighlight rounded-2xl p-4 flex items-center gap-6 shadow-sm animate-in zoom-in-95">
+                                <div className="text-right">
+                                    <p className="text-[10px] font-black text-muted uppercase tracking-[0.2em]">Deuda Actual</p>
+                                    <p className={`text-3xl font-black tracking-tighter ${totalBalance > 0 ? 'text-red-500' : 'text-green-600'}`}>
+                                        $ {totalBalance.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                                    </p>
+                                </div>
+                                <div className="h-10 w-px bg-surfaceHighlight"></div>
+                                <button onClick={() => fetchMovements(selectedProvider.codigo)} className="p-2 text-muted hover:text-primary transition-colors">
+                                    <CheckCircle2 size={24} />
+                                </button>
                             </div>
-                            <div className="h-10 w-px bg-surfaceHighlight"></div>
-                            <button onClick={() => fetchMovements(selectedProvider.codigo)} className="p-2 text-muted hover:text-primary transition-colors">
-                                <CheckCircle2 size={24} />
+                            <button 
+                                onClick={() => setIsTransactionModalOpen(true)}
+                                className="bg-primary hover:bg-primaryHover text-white px-6 py-4 rounded-2xl font-black text-xs uppercase shadow-xl shadow-primary/20 active:scale-95 transition-all flex items-center gap-2"
+                            >
+                                <Plus size={18} /> Nueva Operación
                             </button>
                         </div>
-                        <button 
-                            onClick={() => setIsTransactionModalOpen(true)}
-                            className="bg-primary hover:bg-primaryHover text-white px-6 py-4 rounded-2xl font-black text-xs uppercase shadow-xl shadow-primary/20 active:scale-95 transition-all flex items-center gap-2"
-                        >
-                            <Plus size={18} /> Nueva Operación
-                        </button>
+                        <label className="flex items-center gap-2 cursor-pointer group">
+                            <input 
+                                type="checkbox" 
+                                checked={hideThirdPartyNames}
+                                onChange={(e) => setHideThirdPartyNames(e.target.checked)}
+                                className="w-4 h-4 text-primary rounded border-surfaceHighlight focus:ring-primary/20"
+                            />
+                            <span className="text-xs font-bold text-muted group-hover:text-text transition-colors uppercase tracking-wider">Ocultar nombres de terceros (Clientes)</span>
+                        </label>
                     </div>
                 )}
             </div>
@@ -354,7 +377,7 @@ export const ProviderStatements: React.FC<{ currentUser: User }> = ({ currentUse
                                                 {new Date(m.date).toLocaleDateString()}
                                             </td>
                                             <td className={`p-4 text-sm font-bold ${m.is_annulled ? 'text-muted line-through italic' : 'text-text uppercase'}`}>
-                                                {m.concept} {m.is_annulled && "(ANULADO)"}
+                                                {formatConcept(m.concept)} {m.is_annulled && "(ANULADO)"}
                                             </td>
                                             <td className={`p-4 text-right text-sm font-black ${m.is_annulled ? 'text-muted line-through' : 'text-red-500/80'}`}>
                                                 {m.debit > 0 ? `$ ${m.debit.toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : '-'}

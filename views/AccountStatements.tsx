@@ -21,7 +21,8 @@ import {
     CheckCircle2,
     Eye,
     Activity,
-    LogOut
+    LogOut,
+    Printer
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { ClientMaster, AccountMovement, MasterProduct, User } from '../types';
@@ -47,6 +48,18 @@ export const AccountStatements: React.FC<{ currentUser: User }> = ({ currentUser
     
     // --- ESTADO MODAL DETALLE ---
     const [detailMovement, setDetailMovement] = useState<AccountMovement | null>(null);
+
+    // --- ESTADO OCULTAR NOMBRES ---
+    const [hideThirdPartyNames, setHideThirdPartyNames] = useState(false);
+
+    const formatConcept = (concept: string) => {
+        if (!hideThirdPartyNames) return concept;
+        // Simplificar tanto pagos directos a proveedores como de clientes
+        if (concept.toLowerCase().includes('pago directo')) {
+            return 'PAGO DIRECTO';
+        }
+        return concept;
+    };
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -135,6 +148,13 @@ export const AccountStatements: React.FC<{ currentUser: User }> = ({ currentUser
         
         setIsLoadingData(true);
         try {
+            // Obtener el movimiento para ver si tiene order_id
+            const { data: movData } = await supabase
+                .from('client_account_movements')
+                .select('order_id, concept')
+                .eq('id', confirmAction.id)
+                .single();
+
             if (confirmAction.type === 'delete') {
                 const { error } = await supabase
                     .from('client_account_movements')
@@ -147,6 +167,31 @@ export const AccountStatements: React.FC<{ currentUser: User }> = ({ currentUser
                     .update({ is_annulled: true })
                     .eq('id', confirmAction.id);
                 if (error) throw error;
+            }
+
+            // Si tiene order_id y es una factura o nota de crédito, revertir el stock
+            if (movData?.order_id) {
+                const isInvoice = movData.concept.toLowerCase().includes('factura');
+                const isCreditNote = movData.concept.toLowerCase().includes('nota de crédito') || movData.concept.toLowerCase().includes('nc');
+
+                if (isInvoice || isCreditNote) {
+                    const reason = confirmAction.type === 'delete' 
+                        ? `Eliminación desde estado de cuenta: ${movData.concept}`
+                        : `Anulación de ${isInvoice ? 'factura' : 'nota de crédito'}: ${movData.concept}`;
+                        
+                    const rpcName = isInvoice ? 'revertir_venta' : 'revertir_nota_credito';
+                    const { error: revertError } = await supabase.rpc(rpcName, {
+                        p_order_id: movData.order_id,
+                        p_user_id: currentUser?.id,
+                        p_reason: reason
+                    });
+                    
+                    if (revertError) {
+                        console.error("Error al revertir stock:", revertError);
+                        // No lanzamos error para no interrumpir el flujo si ya se anuló,
+                        // pero se podría alertar al usuario.
+                    }
+                }
             }
             
             await fetchMovements(selectedClient.codigo);
@@ -167,7 +212,7 @@ export const AccountStatements: React.FC<{ currentUser: User }> = ({ currentUser
         if (!selectedClient) return;
         const data = movements.map(m => ({
             'Fecha': m.date,
-            'Concepto': m.is_annulled ? `(ANULADO) ${m.concept}` : m.concept,
+            'Concepto': m.is_annulled ? `(ANULADO) ${formatConcept(m.concept)}` : formatConcept(m.concept),
             'Debe (Deuda)': m.is_annulled ? 0 : (m.debit || 0),
             'Haber (Pago)': m.is_annulled ? 0 : (m.credit || 0),
             'Saldo': m.balance,
@@ -211,7 +256,7 @@ export const AccountStatements: React.FC<{ currentUser: User }> = ({ currentUser
             }
             
             doc.text(new Date(m.date).toLocaleDateString(), 20, y);
-            const conceptText = m.is_annulled ? `(ANULADO) ${m.concept}` : m.concept;
+            const conceptText = m.is_annulled ? `(ANULADO) ${formatConcept(m.concept)}` : formatConcept(m.concept);
             doc.text(conceptText.substring(0, 35), 45, y);
             
             const debitVal = m.is_annulled ? 0 : m.debit;
@@ -257,25 +302,36 @@ export const AccountStatements: React.FC<{ currentUser: User }> = ({ currentUser
                 </div>
 
                 {selectedClient && (
-                    <div className="flex items-center gap-4">
-                        <div className="bg-surface border border-surfaceHighlight rounded-2xl p-4 flex items-center gap-6 shadow-sm animate-in zoom-in-95">
-                            <div className="text-right">
-                                <p className="text-[10px] font-black text-muted uppercase tracking-[0.2em]">Saldo Actual</p>
-                                <p className={`text-3xl font-black tracking-tighter ${totalBalance > 0 ? 'text-red-500' : 'text-green-600'}`}>
-                                    $ {totalBalance.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
-                                </p>
+                    <div className="flex flex-col items-end gap-4">
+                        <div className="flex items-center gap-4">
+                            <div className="bg-surface border border-surfaceHighlight rounded-2xl p-4 flex items-center gap-6 shadow-sm animate-in zoom-in-95">
+                                <div className="text-right">
+                                    <p className="text-[10px] font-black text-muted uppercase tracking-[0.2em]">Saldo Actual</p>
+                                    <p className={`text-3xl font-black tracking-tighter ${totalBalance > 0 ? 'text-red-500' : 'text-green-600'}`}>
+                                        $ {totalBalance.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                                    </p>
+                                </div>
+                                <div className="h-10 w-px bg-surfaceHighlight"></div>
+                                <button onClick={() => fetchMovements(selectedClient.codigo)} className="p-2 text-muted hover:text-primary transition-colors">
+                                    <CheckCircle2 size={24} />
+                                </button>
                             </div>
-                            <div className="h-10 w-px bg-surfaceHighlight"></div>
-                            <button onClick={() => fetchMovements(selectedClient.codigo)} className="p-2 text-muted hover:text-primary transition-colors">
-                                <CheckCircle2 size={24} />
+                            <button 
+                                onClick={() => setIsTransactionModalOpen(true)}
+                                className="bg-primary hover:bg-primaryHover text-white px-6 py-4 rounded-2xl font-black text-xs uppercase shadow-xl shadow-primary/20 active:scale-95 transition-all flex items-center gap-2"
+                            >
+                                <Plus size={18} /> Nueva Operación
                             </button>
                         </div>
-                        <button 
-                            onClick={() => setIsTransactionModalOpen(true)}
-                            className="bg-primary hover:bg-primaryHover text-white px-6 py-4 rounded-2xl font-black text-xs uppercase shadow-xl shadow-primary/20 active:scale-95 transition-all flex items-center gap-2"
-                        >
-                            <Plus size={18} /> Nueva Operación
-                        </button>
+                        <label className="flex items-center gap-2 cursor-pointer group">
+                            <input 
+                                type="checkbox" 
+                                checked={hideThirdPartyNames}
+                                onChange={(e) => setHideThirdPartyNames(e.target.checked)}
+                                className="w-4 h-4 text-primary rounded border-surfaceHighlight focus:ring-primary/20"
+                            />
+                            <span className="text-xs font-bold text-muted group-hover:text-text transition-colors uppercase tracking-wider">Ocultar nombres de terceros (Proveedores)</span>
+                        </label>
                     </div>
                 )}
             </div>
@@ -350,7 +406,7 @@ export const AccountStatements: React.FC<{ currentUser: User }> = ({ currentUser
                                                 {new Date(m.date).toLocaleDateString()}
                                             </td>
                                             <td className={`p-4 text-sm font-bold ${m.is_annulled ? 'text-muted line-through italic' : 'text-text uppercase'}`}>
-                                                {m.concept} {m.is_annulled && "(ANULADO)"}
+                                                {formatConcept(m.concept)} {m.is_annulled && "(ANULADO)"}
                                             </td>
                                             <td className={`p-4 text-right text-sm font-black ${m.is_annulled ? 'text-muted line-through' : 'text-red-500/80'}`}>
                                                 {m.debit > 0 ? `$ ${m.debit.toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : '-'}
@@ -515,14 +571,108 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ client, onClose, on
     const [historyLoading, setHistoryLoading] = useState(false);
     const [targetItemId, setTargetItemId] = useState<string | null>(null);
 
+    // Estados para Notas de Crédito Pendientes
+    const [pendingCreditNotes, setPendingCreditNotes] = useState<any[]>([]);
+    const [selectedPendingCreditNote, setSelectedPendingCreditNote] = useState<string | null>(null);
+    const [isLoadingPending, setIsLoadingPending] = useState(false);
+
     // Cargar productos al abrir
     useEffect(() => {
         const loadProducts = async () => {
-            const { data } = await supabase.from('master_products').select('*').order('desart');
-            if (data) setProducts(data);
+            let allProducts: MasterProduct[] = [];
+            let page = 0;
+            while (true) {
+                const { data } = await supabase.from('master_products').select('*').neq('familia', 'ELIMINADOS').order('desart').range(page * 1000, (page + 1) * 1000 - 1);
+                if (data) allProducts.push(...data);
+                if (!data || data.length < 1000) break;
+                page++;
+            }
+            setProducts(allProducts);
         };
         loadProducts();
     }, []);
+
+    // Cargar notas de crédito pendientes
+    useEffect(() => {
+        if (type === 'credit_note') {
+            const fetchPending = async () => {
+                setIsLoadingPending(true);
+                try {
+                    // 1. Obtener todos los pedidos del cliente
+                    const { data: orders } = await supabase
+                        .from('orders')
+                        .select('id, display_id, created_at, status')
+                        .eq('client_name', client.nombre);
+                    
+                    if (!orders || orders.length === 0) {
+                        setPendingCreditNotes([]);
+                        return;
+                    }
+
+                    const orderIds = orders.map(o => o.id);
+
+                    // 2. Obtener items con devoluciones (shipped_quantity > quantity)
+                    const { data: items } = await supabase
+                        .from('order_items')
+                        .select('order_id, code, name, quantity, shipped_quantity, unit_price')
+                        .in('order_id', orderIds);
+                    
+                    if (!items) return;
+
+                    // 3. Obtener movimientos de cuenta para ver si ya se hizo NC
+                    const { data: movements } = await supabase
+                        .from('client_account_movements')
+                        .select('order_id, credit')
+                        .in('order_id', orderIds)
+                        .gt('credit', 0);
+
+                    // 3.5 Obtener movimientos de stock para ver si ya se hizo NC (incluso si se eliminó de la cuenta)
+                    const { data: stockMovements } = await supabase
+                        .from('stock_movements')
+                        .select('reference_id')
+                        .in('reference_id', orderIds)
+                        .eq('type', 'nota de crédito');
+
+                    const creditedOrderIds = new Set([
+                        ...(movements?.map(m => m.order_id) || []),
+                        ...(stockMovements?.map(m => m.reference_id) || [])
+                    ]);
+
+                    // 4. Filtrar pedidos que tienen devoluciones y NO han sido acreditados
+                    const pending = orders.filter(order => {
+                        if (creditedOrderIds.has(order.id)) return false;
+                        
+                        const orderItems = items.filter(i => i.order_id === order.id);
+                        const hasReturns = orderItems.some(i => i.shipped_quantity && i.shipped_quantity > i.quantity);
+                        return hasReturns;
+                    }).map(order => {
+                        const orderItems = items.filter(i => i.order_id === order.id);
+                        const returnedItems = orderItems.filter(i => i.shipped_quantity && i.shipped_quantity > i.quantity);
+                        const totalReturn = returnedItems.reduce((acc, item) => {
+                            const diff = (item.shipped_quantity || 0) - item.quantity;
+                            return acc + (diff * item.unit_price);
+                        }, 0);
+
+                        return {
+                            ...order,
+                            returnedItems,
+                            totalReturn
+                        };
+                    });
+
+                    setPendingCreditNotes(pending);
+                } catch (err) {
+                    console.error("Error fetching pending credit notes:", err);
+                } finally {
+                    setIsLoadingPending(false);
+                }
+            };
+            fetchPending();
+        } else {
+            setPendingCreditNotes([]);
+            setSelectedPendingCreditNote(null);
+        }
+    }, [type, client.nombre]);
 
     const handleSearch = (val: string) => {
         setSearchTerm(val);
@@ -655,37 +805,85 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ client, onClose, on
         
         setIsSaving(true);
         try {
-            const displayId = `${type === 'invoice' ? 'FAC' : 'NC'}-${Date.now().toString().slice(-6)}`;
-            
-            const { data: order, error: orderErr } = await supabase.from('orders').insert({
-                display_id: displayId,
-                client_name: client.nombre,
-                status: 'entregado', 
-                total: totalAmount,
-                observations: `GENERADO DESDE CTA CTE: ${type === 'invoice' ? 'FACTURA MANUAL' : 'NOTA DE CRÉDITO'} - LISTA ${listPrice} - SUC: ${warehouse}`,
-                payment_method: 'Cta Cte',
-                history: [{
-                    timestamp: new Date().toISOString(),
-                    action: 'MANUAL_ENTRY',
-                    details: `Creación directa en Cuenta Corriente (${type}) desde ${warehouse}`
-                }]
-            }).select().single();
+            let finalOrderId = '';
+            let displayId = '';
 
-            if (orderErr) throw orderErr;
+            if (selectedPendingCreditNote) {
+                // Es una nota de crédito pendiente, no creamos un nuevo pedido
+                const pendingOrder = pendingCreditNotes.find(o => o.id === selectedPendingCreditNote);
+                displayId = `NC-${pendingOrder.display_id}`;
+                finalOrderId = selectedPendingCreditNote;
+                
+                // Obtener el ID del depósito
+                const { data: wh } = await supabase.from('warehouses').select('id').eq('name', warehouse).single();
+                const warehouseId = wh?.id;
 
-            const orderItems = items.map(i => ({
-                order_id: order.id,
-                code: i.codart,
-                name: i.description,
-                original_quantity: i.quantity,
-                quantity: i.quantity,
-                shipped_quantity: i.quantity,
-                unit_price: i.unitPrice,
-                subtotal: i.subtotal
-            }));
+                // Actualizar stock de los items devueltos insertando en stock_movements
+                if (warehouseId) {
+                    const stockMovements = items.map(item => ({
+                        codart: item.codart,
+                        warehouse_id: warehouseId,
+                        quantity: item.quantity, // Positivo porque es una entrada (devolución)
+                        type: 'nota de crédito',
+                        reference_id: finalOrderId,
+                        transfer_group_code: `Generado desde Cta Cte: ${displayId}`,
+                        created_by: currentUser.id
+                    }));
+                    const { error: stockErr } = await supabase.from('stock_movements').insert(stockMovements);
+                    if (stockErr) throw stockErr;
+                }
+            } else {
+                displayId = `${type === 'invoice' ? 'FAC' : 'NC'}-${Date.now().toString().slice(-6)}`;
+                
+                const { data: order, error: orderErr } = await supabase.from('orders').insert({
+                    display_id: displayId,
+                    client_name: client.nombre,
+                    status: 'entregado', 
+                    total: totalAmount,
+                    observations: `GENERADO DESDE CTA CTE: ${type === 'invoice' ? 'FACTURA MANUAL' : 'NOTA DE CRÉDITO MANUAL'} - LISTA ${listPrice} - SUC: ${warehouse}`,
+                    payment_method: 'Cta Cte',
+                    history: [{
+                        timestamp: new Date().toISOString(),
+                        action: 'MANUAL_ENTRY',
+                        details: `Creación directa en Cuenta Corriente (${type}) desde ${warehouse}`
+                    }]
+                }).select().single();
 
-            const { error: itemsErr } = await supabase.from('order_items').insert(orderItems);
-            if (itemsErr) throw itemsErr;
+                if (orderErr) throw orderErr;
+                finalOrderId = order.id;
+
+                const orderItems = items.map(i => ({
+                    order_id: finalOrderId,
+                    code: i.codart,
+                    name: i.description,
+                    original_quantity: i.quantity,
+                    quantity: i.quantity,
+                    shipped_quantity: i.quantity,
+                    unit_price: i.unitPrice,
+                    subtotal: i.subtotal
+                }));
+
+                const { error: itemsErr } = await supabase.from('order_items').insert(orderItems);
+                if (itemsErr) throw itemsErr;
+
+                // Obtener el ID del depósito
+                const { data: wh } = await supabase.from('warehouses').select('id').eq('name', warehouse).single();
+                const warehouseId = wh?.id;
+
+                if (warehouseId) {
+                    const stockMovements = items.map(item => ({
+                        codart: item.codart,
+                        warehouse_id: warehouseId,
+                        quantity: type === 'invoice' ? -item.quantity : item.quantity,
+                        type: type === 'invoice' ? 'venta' : 'nota de crédito',
+                        reference_id: finalOrderId,
+                        transfer_group_code: `Generado desde Cta Cte: ${displayId}`,
+                        created_by: currentUser.id
+                    }));
+                    const { error: stockErr } = await supabase.from('stock_movements').insert(stockMovements);
+                    if (stockErr) throw stockErr;
+                }
+            }
 
             const movementData = {
                 client_code: client.codigo,
@@ -693,33 +891,12 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ client, onClose, on
                 concept: `${type === 'invoice' ? 'Factura' : 'Nota de Crédito'} ${displayId}`,
                 debit: type === 'invoice' ? totalAmount : 0,
                 credit: type === 'credit_note' ? totalAmount : 0,
-                order_id: order.id,
+                order_id: finalOrderId,
                 created_by: currentUser.id
             };
 
             const { error: moveErr } = await supabase.from('client_account_movements').insert(movementData);
             if (moveErr) throw moveErr;
-
-            for (const item of items) {
-                const { data: currentProd } = await supabase.from('master_products').select('stock_llerena, stock_betbeder').eq('codart', item.codart).single();
-                
-                if (currentProd) {
-                    const currentStock = warehouse === 'LLERENA' ? (currentProd.stock_llerena || 0) : (currentProd.stock_betbeder || 0);
-                    let newStock = currentStock;
-
-                    if (type === 'invoice') {
-                        newStock = currentStock - item.quantity;
-                    } else {
-                        newStock = currentStock + item.quantity;
-                    }
-
-                    const updatePayload = warehouse === 'LLERENA' 
-                        ? { stock_llerena: newStock } 
-                        : { stock_betbeder: newStock };
-
-                    await supabase.from('master_products').update(updatePayload).eq('codart', item.codart);
-                }
-            }
 
             onSuccess();
         } catch (e: any) {
@@ -730,7 +907,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ client, onClose, on
     };
 
     useEffect(() => {
-        if (items.length > 0 && products.length > 0) {
+        if (items.length > 0 && products.length > 0 && !selectedPendingCreditNote) {
             const updatedItems = items.map(item => {
                 const prod = products.find(p => p.codart === item.codart);
                 if (prod) {
@@ -761,10 +938,10 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ client, onClose, on
                     <div className="p-6 bg-background border-b border-surfaceHighlight flex flex-col gap-4">
                         <div className="flex flex-col md:flex-row justify-between gap-4">
                             <div className="flex bg-surface p-1 rounded-xl border border-surfaceHighlight">
-                                <button onClick={() => setType('invoice')} className={`px-6 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2 ${type === 'invoice' ? 'bg-red-500 text-white shadow-md' : 'text-muted hover:text-text'}`}>
+                                <button onClick={() => { setType('invoice'); setItems([]); }} className={`px-6 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2 ${type === 'invoice' ? 'bg-red-500 text-white shadow-md' : 'text-muted hover:text-text'}`}>
                                     <FilePlus size={14}/> Factura (Resta Stock)
                                 </button>
-                                <button onClick={() => setType('credit_note')} className={`px-6 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2 ${type === 'credit_note' ? 'bg-green-600 text-white shadow-md' : 'text-muted hover:text-text'}`}>
+                                <button onClick={() => { setType('credit_note'); setItems([]); }} className={`px-6 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2 ${type === 'credit_note' ? 'bg-green-600 text-white shadow-md' : 'text-muted hover:text-text'}`}>
                                     <FileMinus size={14}/> Nota Crédito (Suma Stock)
                                 </button>
                             </div>
@@ -785,7 +962,12 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ client, onClose, on
                                 <div className="flex items-center gap-2 bg-surface p-1 rounded-xl border border-surfaceHighlight">
                                     <span className="text-[10px] font-black uppercase text-muted px-3">Lista:</span>
                                     {[1, 2, 3, 4].map(n => (
-                                        <button key={n} onClick={() => setListPrice(n)} className={`w-8 h-8 rounded-lg text-xs font-black transition-all ${listPrice === n ? 'bg-primary text-white' : 'text-muted hover:bg-surfaceHighlight'}`}>
+                                        <button 
+                                            key={n} 
+                                            onClick={() => setListPrice(n)} 
+                                            disabled={!!selectedPendingCreditNote}
+                                            className={`w-8 h-8 rounded-lg text-xs font-black transition-all ${listPrice === n ? 'bg-primary text-white' : 'text-muted hover:bg-surfaceHighlight'} disabled:opacity-50 disabled:cursor-not-allowed`}
+                                        >
                                             {n}
                                         </button>
                                     ))}
@@ -793,17 +975,61 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ client, onClose, on
                             </div>
                         </div>
 
+                        {type === 'credit_note' && (
+                            <div className="flex items-center gap-4 bg-surface/50 p-3 rounded-xl border border-surfaceHighlight">
+                                <span className="text-xs font-black uppercase text-muted flex items-center gap-2">
+                                    <History size={14}/> Notas de Crédito Pendientes:
+                                </span>
+                                {isLoadingPending ? (
+                                    <Loader2 size={16} className="animate-spin text-primary" />
+                                ) : (
+                                    <select 
+                                        className="bg-background border border-surfaceHighlight rounded-lg px-4 py-2 text-xs font-bold text-text outline-none focus:border-primary flex-1 uppercase"
+                                        value={selectedPendingCreditNote || ''}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setSelectedPendingCreditNote(val || null);
+                                            if (val) {
+                                                const order = pendingCreditNotes.find(o => o.id === val);
+                                                if (order) {
+                                                    const newItems = order.returnedItems.map((i: any) => ({
+                                                        id: Math.random().toString(),
+                                                        codart: i.code,
+                                                        description: i.name,
+                                                        quantity: (i.shipped_quantity || 0) - i.quantity,
+                                                        unitPrice: i.unit_price,
+                                                        subtotal: ((i.shipped_quantity || 0) - i.quantity) * i.unit_price
+                                                    }));
+                                                    setItems(newItems);
+                                                }
+                                            } else {
+                                                setItems([]);
+                                            }
+                                        }}
+                                    >
+                                        <option value="">-- MANUAL (Sin pedido asociado) --</option>
+                                        {pendingCreditNotes.map(n => (
+                                            <option key={n.id} value={n.id}>
+                                                PEDIDO {n.display_id} - {new Date(n.created_at).toLocaleDateString()} - DEVOLUCIÓN: ${n.totalReturn.toLocaleString('es-AR')}
+                                            </option>
+                                        ))}
+                                    </select>
+                                )}
+                            </div>
+                        )}
+
                         <div className="relative z-20">
                             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
                             <input 
                                 autoFocus
                                 type="text" 
-                                placeholder="Buscar productos para agregar..." 
+                                placeholder={selectedPendingCreditNote ? "No se pueden agregar productos a una NC automática" : "Buscar productos para agregar..."}
                                 value={searchTerm}
                                 onChange={e => handleSearch(e.target.value)}
-                                className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3 pl-12 pr-4 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase"
+                                disabled={!!selectedPendingCreditNote}
+                                className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3 pl-12 pr-4 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase disabled:opacity-50 disabled:cursor-not-allowed"
                             />
-                            {searchResults.length > 0 && (
+                            {searchResults.length > 0 && !selectedPendingCreditNote && (
                                 <div className="absolute top-full left-0 w-full mt-2 bg-surface border border-primary/30 rounded-xl shadow-2xl overflow-hidden max-h-60 overflow-y-auto">
                                     {searchResults.map(p => {
                                         const stock = warehouse === 'LLERENA' ? p.stock_llerena : p.stock_betbeder;
@@ -857,13 +1083,18 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ client, onClose, on
                                             min="1" 
                                             value={item.quantity} 
                                             onChange={(e) => updateItem(item.id, parseInt(e.target.value) || 1)}
-                                            className="w-12 text-center bg-transparent text-xs font-black py-2 outline-none"
+                                            disabled={!!selectedPendingCreditNote}
+                                            className="w-12 text-center bg-transparent text-xs font-black py-2 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                                         />
                                     </div>
                                     <div className="text-right w-24">
                                         <span className="text-sm font-black text-text">$ {item.subtotal.toLocaleString()}</span>
                                     </div>
-                                    <button onClick={() => removeItem(item.id)} className="p-2 text-muted hover:text-red-500 rounded-lg hover:bg-red-500/10 transition-colors">
+                                    <button 
+                                        onClick={() => removeItem(item.id)} 
+                                        disabled={!!selectedPendingCreditNote}
+                                        className="p-2 text-muted hover:text-red-500 rounded-lg hover:bg-red-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
                                         <Trash2 size={16}/>
                                     </button>
                                 </div>
@@ -938,16 +1169,59 @@ const TransactionDetailModal: React.FC<{ movement: AccountMovement, onClose: () 
     const [items, setItems] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
+    const isCreditNote = movement.credit > 0;
+    const amount = isCreditNote ? movement.credit : movement.debit;
+    const colorClass = isCreditNote ? 'text-green-600' : 'text-red-500';
+    const bgClass = isCreditNote ? 'bg-green-500/10' : 'bg-red-500/10';
+
     useEffect(() => {
         const fetchItems = async () => {
             if (!movement.order_id) return;
             try {
-                const { data } = await supabase
+                const { data: orderItemsData } = await supabase
                     .from('order_items')
                     .select('*')
                     .eq('order_id', movement.order_id);
                 
-                if (data) setItems(data);
+                let finalItems = orderItemsData || [];
+
+                if (isCreditNote && finalItems.length > 0) {
+                    // Fetch stock movements to know exactly what was returned
+                    const { data: stockMovements } = await supabase
+                        .from('stock_movements')
+                        .select('codart, quantity')
+                        .eq('reference_id', movement.order_id)
+                        .eq('type', 'nota de crédito')
+                        .gt('quantity', 0);
+                    
+                    if (stockMovements && stockMovements.length > 0) {
+                        // Map the quantities based on stock movements
+                        finalItems = finalItems.map(item => {
+                            const returnedQty = stockMovements
+                                .filter(sm => sm.codart === item.code)
+                                .reduce((sum, sm) => sum + Number(sm.quantity), 0);
+                            
+                            return {
+                                ...item,
+                                _returned_qty: returnedQty
+                            };
+                        }).filter(item => item._returned_qty > 0);
+                    } else {
+                        // Fallback if no stock movements found (e.g. old data)
+                        finalItems = finalItems.map(item => {
+                            const currentQty = item.shipped_quantity ?? item.quantity;
+                            const returnedQty = (item.original_quantity && item.original_quantity > currentQty) 
+                                ? item.original_quantity - currentQty 
+                                : currentQty;
+                            return {
+                                ...item,
+                                _returned_qty: returnedQty
+                            };
+                        }).filter(item => item._returned_qty > 0);
+                    }
+                }
+
+                setItems(finalItems);
             } catch (err) {
                 console.error(err);
             } finally {
@@ -955,12 +1229,61 @@ const TransactionDetailModal: React.FC<{ movement: AccountMovement, onClose: () 
             }
         };
         fetchItems();
-    }, [movement.order_id]);
+    }, [movement.order_id, isCreditNote]);
 
-    const isCreditNote = movement.credit > 0;
-    const amount = isCreditNote ? movement.credit : movement.debit;
-    const colorClass = isCreditNote ? 'text-green-600' : 'text-red-500';
-    const bgClass = isCreditNote ? 'bg-green-500/10' : 'bg-red-500/10';
+    const handlePrint = () => {
+        const doc = new jsPDF();
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(20);
+        doc.text(isCreditNote ? "NOTA DE CRÉDITO" : "FACTURA", 105, 20, { align: "center" });
+        
+        doc.setFontSize(12);
+        doc.setFont("helvetica", "normal");
+        doc.text(`Fecha: ${new Date(movement.date).toLocaleDateString()}`, 20, 35);
+        doc.text(`Ref: ${movement.concept}`, 20, 42);
+
+        doc.setFontSize(10);
+        doc.setFont("helvetica", "bold");
+        doc.text("Cód.", 20, 55);
+        doc.text("Descripción", 50, 55);
+        doc.text("Cant.", 140, 55, { align: "right" });
+        doc.text("P. Unit", 165, 55, { align: "right" });
+        doc.text("Subtotal", 190, 55, { align: "right" });
+        
+        doc.line(20, 57, 190, 57);
+
+        doc.setFont("helvetica", "normal");
+        let y = 65;
+        items.forEach(item => {
+            const displayQty = isCreditNote 
+                ? (item._returned_qty || 0)
+                : (item.shipped_quantity ?? item.quantity);
+            
+            if (displayQty <= 0) return; // Skip items with 0 quantity
+
+            const displaySubtotal = displayQty * item.unit_price;
+
+            doc.text(item.code, 20, y);
+            const desc = doc.splitTextToSize(item.name, 80);
+            doc.text(desc, 50, y);
+            doc.text(displayQty.toString(), 140, y, { align: "right" });
+            doc.text(`$${item.unit_price.toLocaleString('es-AR')}`, 165, y, { align: "right" });
+            doc.text(`$${displaySubtotal.toLocaleString('es-AR')}`, 190, y, { align: "right" });
+            y += 5 * desc.length + 2;
+            if (y > 270) {
+                doc.addPage();
+                y = 20;
+            }
+        });
+
+        doc.line(20, y, 190, y);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(14);
+        doc.text("TOTAL:", 140, y + 10);
+        doc.text(`$${amount.toLocaleString('es-AR')}`, 190, y + 10, { align: "right" });
+
+        doc.save(`${isCreditNote ? 'NC' : 'FAC'}_${movement.concept.replace(/\s+/g, '_')}.pdf`);
+    };
 
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
@@ -974,7 +1297,12 @@ const TransactionDetailModal: React.FC<{ movement: AccountMovement, onClose: () 
                         <h3 className="text-xl font-black text-text uppercase italic tracking-tight">Detalle de Operación</h3>
                         <p className="text-[10px] text-muted font-bold uppercase">{new Date(movement.date).toLocaleDateString()} — REF: {movement.concept}</p>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-surfaceHighlight rounded-full text-muted transition-colors"><X size={24}/></button>
+                    <div className="flex items-center gap-2">
+                        <button onClick={handlePrint} className="p-2 hover:bg-surfaceHighlight rounded-full text-muted hover:text-primary transition-colors" title="Imprimir Detalle">
+                            <Printer size={20}/>
+                        </button>
+                        <button onClick={onClose} className="p-2 hover:bg-surfaceHighlight rounded-full text-muted transition-colors"><X size={24}/></button>
+                    </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-0">
@@ -992,23 +1320,31 @@ const TransactionDetailModal: React.FC<{ movement: AccountMovement, onClose: () 
                                 <tr><td colSpan={4} className="p-10 text-center"><Loader2 className="animate-spin mx-auto text-primary"/></td></tr>
                             ) : items.length === 0 ? (
                                 <tr><td colSpan={4} className="p-10 text-center text-muted font-bold italic uppercase">Sin items registrados</td></tr>
-                            ) : items.map((item, idx) => (
+                            ) : items.map((item, idx) => {
+                                const displayQty = isCreditNote 
+                                    ? (item._returned_qty || 0)
+                                    : (item.shipped_quantity ?? item.quantity);
+                                
+                                if (displayQty <= 0) return null; // Skip items with 0 quantity
+
+                                const displaySubtotal = displayQty * item.unit_price;
+                                return (
                                 <tr key={idx} className="hover:bg-background/50 transition-colors">
                                     <td className="p-4 pl-6">
                                         <p className="text-xs font-black text-text uppercase">{item.name}</p>
                                         <p className="text-[9px] font-mono text-muted">#{item.code}</p>
                                     </td>
                                     <td className="p-4 text-center">
-                                        <span className="text-xs font-bold text-text">{item.quantity}</span>
+                                        <span className="text-xs font-bold text-text">{displayQty}</span>
                                     </td>
                                     <td className="p-4 text-right">
                                         <span className="text-xs text-muted">$ {item.unit_price.toLocaleString('es-AR')}</span>
                                     </td>
                                     <td className="p-4 text-right pr-6">
-                                        <span className="text-xs font-black text-text">$ {item.subtotal.toLocaleString('es-AR')}</span>
+                                        <span className="text-xs font-black text-text">$ {displaySubtotal.toLocaleString('es-AR')}</span>
                                     </td>
                                 </tr>
-                            ))}
+                            )})}
                         </tbody>
                     </table>
                 </div>

@@ -33,9 +33,12 @@ import {
     Users,
     Info,
     Edit2,
-    FileDown
+    FileDown,
+    Copy,
+    ChevronDown,
+    ChevronUp
 } from 'lucide-react';
-import { Trip, TripClient, User as UserType, TripExpense, PaymentStatus, DetailedOrder, OrderStatus, DeliveryZone, ExpenseType } from '../types';
+import { Trip, TripClient, User as UserType, TripExpense, PaymentStatus, DetailedOrder, OrderStatus, DeliveryZone, ExpenseType, Provider, Transfer } from '../types';
 import { hasPermission } from '../logic';
 import { supabase } from '../supabase';
 import jsPDF from 'jspdf';
@@ -49,6 +52,8 @@ interface OrderSheetProps {
     onDeleteTrip: (tripId: string) => void;
     selectedTripId: string | null;
     onSelectTrip: (id: string | null) => void;
+    providers?: Provider[];
+    transfers?: Transfer[];
 }
 
 const generateDeliverySheetPDF = (trip: Trip) => {
@@ -202,6 +207,122 @@ const generateDeliverySheetPDF = (trip: Trip) => {
     doc.save(`Planilla_Reparto_${trip.driverName.replace(/\s+/g, '_')}_${trip.date}.pdf`);
 };
 
+const generateTripReportPDF = (trip: Trip) => {
+    const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+    });
+
+    const marginLeft = 15;
+    const marginTop = 15;
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    // --- ENCABEZADO ---
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(18);
+    doc.text('RENDICIÓN DETALLADA DE VIAJE', marginLeft, marginTop);
+
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Viaje: ${trip.name || trip.displayId}`, marginLeft, marginTop + 10);
+    doc.text(`Chofer: ${trip.driverName}`, marginLeft, marginTop + 16);
+    doc.text(`Fecha: ${trip.date}`, marginLeft, marginTop + 22);
+
+    // --- RESUMEN ---
+    const cashTotal = trip.clients.reduce((acc, c) => acc + (c.paymentCash || 0), 0);
+    const transferTotal = trip.clients.reduce((acc, c) => acc + (c.paymentTransfer || 0), 0);
+    const expensesTotal = trip.expenses.reduce((acc, e) => acc + (e.amount || 0), 0);
+    const netCash = cashTotal - expensesTotal;
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('RESUMEN DE CAJA', marginLeft, marginTop + 35);
+    doc.setFont('helvetica', 'normal');
+
+    const summaryData = [
+        ['Cobrado en Efectivo', `$ ${cashTotal.toLocaleString('es-AR')}`],
+        ['Cobrado por Transferencia', `$ ${transferTotal.toLocaleString('es-AR')}`],
+        ['Total Cobrado', `$ ${(cashTotal + transferTotal).toLocaleString('es-AR')}`],
+        ['Total Gastos (-)', `$ ${expensesTotal.toLocaleString('es-AR')}`],
+        ['SALDO NETO A ENTREGAR', `$ ${netCash.toLocaleString('es-AR')}`]
+    ];
+
+    autoTable(doc, {
+        startY: marginTop + 38,
+        body: summaryData,
+        theme: 'plain',
+        styles: { fontSize: 10, cellPadding: 2 },
+        columnStyles: {
+            0: { fontStyle: 'bold', cellWidth: 50 },
+            1: { halign: 'right' }
+        },
+        margin: { left: marginLeft }
+    });
+
+    // --- TABLA COBRANZAS ---
+    const collectionsY = (doc as any).lastAutoTable.finalY + 10;
+    doc.setFont('helvetica', 'bold');
+    doc.text('DETALLE DE COBRANZAS', marginLeft, collectionsY);
+
+    const collectionsBody = trip.clients.map(c => {
+        const totalDebt = (c.previousBalance || 0) + (c.currentInvoiceAmount || 0);
+        const totalPaid = (c.paymentCash || 0) + (c.paymentTransfer || 0);
+        return [
+            c.name.substring(0, 30),
+            `$ ${totalDebt.toLocaleString('es-AR')}`,
+            `$ ${c.paymentCash.toLocaleString('es-AR')}`,
+            `$ ${c.paymentTransfer.toLocaleString('es-AR')}`,
+            `$ ${totalPaid.toLocaleString('es-AR')}`,
+            c.status === 'PAID' ? 'PAGADO' : c.status === 'PARTIAL' ? 'PARCIAL' : 'PENDIENTE'
+        ];
+    });
+
+    autoTable(doc, {
+        startY: collectionsY + 5,
+        head: [['CLIENTE', 'DEUDA', 'EFECTIVO', 'TRANSF.', 'TOTAL PAG.', 'ESTADO']],
+        body: collectionsBody,
+        theme: 'grid',
+        styles: { fontSize: 8, cellPadding: 2 },
+        headStyles: { fillColor: [220, 220, 220], textColor: [0, 0, 0], fontStyle: 'bold' },
+        columnStyles: {
+            1: { halign: 'right' },
+            2: { halign: 'right' },
+            3: { halign: 'right' },
+            4: { halign: 'right', fontStyle: 'bold' },
+            5: { halign: 'center' }
+        },
+        margin: { left: marginLeft, right: marginLeft }
+    });
+
+    // --- TABLA GASTOS ---
+    const expensesY = (doc as any).lastAutoTable.finalY + 10;
+    if (expensesY > 250) doc.addPage();
+    
+    doc.setFont('helvetica', 'bold');
+    doc.text('DETALLE DE GASTOS', marginLeft, expensesY > 250 ? marginTop : expensesY);
+
+    const expensesBody = trip.expenses.map(e => [
+        e.type.toUpperCase(),
+        e.note || '-',
+        `$ ${e.amount.toLocaleString('es-AR')}`
+    ]);
+
+    autoTable(doc, {
+        startY: (expensesY > 250 ? marginTop : expensesY) + 5,
+        head: [['TIPO', 'DETALLE', 'MONTO']],
+        body: expensesBody.length > 0 ? expensesBody : [['-', 'Sin gastos registrados', '$ 0']],
+        theme: 'grid',
+        styles: { fontSize: 9, cellPadding: 2 },
+        headStyles: { fillColor: [220, 220, 220], textColor: [0, 0, 0], fontStyle: 'bold' },
+        columnStyles: {
+            2: { halign: 'right', fontStyle: 'bold' }
+        },
+        margin: { left: marginLeft, right: marginLeft }
+    });
+
+    doc.save(`Rendicion_Detallada_${trip.driverName.replace(/\s+/g, '_')}_${trip.date}.pdf`);
+};
+
 export const OrderSheet: React.FC<OrderSheetProps> = ({ 
     currentUser, 
     orders, 
@@ -209,10 +330,13 @@ export const OrderSheet: React.FC<OrderSheetProps> = ({
     onSaveTrip, 
     onDeleteTrip, 
     selectedTripId,
-    onSelectTrip
+    onSelectTrip,
+    providers = [],
+    transfers = []
 }) => {
     const [isEditorOpen, setIsEditorOpen] = useState(false);
     const [tripToEdit, setTripToEdit] = useState<Trip | null>(null);
+    const [isAccountsModalOpen, setIsAccountsModalOpen] = useState(false);
 
     const selectedTrip = useMemo(() => 
         trips.find(t => t.id === selectedTripId), 
@@ -264,13 +388,162 @@ export const OrderSheet: React.FC<OrderSheetProps> = ({
     }
 
     return (
-        <TripListView 
-            trips={trips} 
-            onSelect={onSelectTrip} 
-            onCreate={handleCreateNew}
-            onDelete={handleDelete}
-            currentUser={currentUser}
-        />
+        <>
+            <TripListView 
+                trips={trips} 
+                onSelect={onSelectTrip} 
+                onCreate={handleCreateNew}
+                onDelete={handleDelete}
+                currentUser={currentUser}
+                onOpenAccounts={() => setIsAccountsModalOpen(true)}
+            />
+            {isAccountsModalOpen && (
+                <AccountsModal 
+                    providers={providers} 
+                    transfers={transfers}
+                    onClose={() => setIsAccountsModalOpen(false)} 
+                />
+            )}
+        </>
+    );
+};
+
+const AccountsModal: React.FC<{ providers: Provider[]; transfers: Transfer[]; onClose: () => void }> = ({ providers, transfers, onClose }) => {
+    const [copiedId, setCopiedId] = useState<string | null>(null);
+    const [expandedAccounts, setExpandedAccounts] = useState<Record<string, boolean>>({});
+
+    const handleCopy = (id: string, text: string) => {
+        if (!text) return;
+        navigator.clipboard.writeText(text);
+        setCopiedId(id);
+        setTimeout(() => setCopiedId(null), 2000);
+    };
+
+    const toggleAccount = (id: string) => {
+        setExpandedAccounts(prev => ({ ...prev, [id]: !prev[id] }));
+    };
+
+    return (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-surface w-full max-w-4xl max-h-[90vh] rounded-3xl border border-surfaceHighlight shadow-2xl flex flex-col overflow-hidden">
+                <div className="p-6 border-b border-surfaceHighlight flex justify-between items-center bg-surface shrink-0">
+                    <h2 className="text-2xl font-black text-text uppercase italic flex items-center gap-3">
+                        <Wallet className="text-primary" size={28} />
+                        Cuentas de Proveedores
+                    </h2>
+                    <button onClick={onClose} className="p-2 rounded-full hover:bg-surfaceHighlight text-muted transition-colors">
+                        <X size={24} />
+                    </button>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-background/50">
+                    {providers.filter(p => p.status !== 'Desactivado').map(provider => {
+                        const providerTransfers = (transfers || []).filter(t => t.providerId === provider.id && t.status !== 'Archivado');
+                        const totalRealized = providerTransfers.filter(t => t.status === 'Realizado').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+                        const totalPending = providerTransfers.filter(t => t.status === 'Pendiente').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+                        const goal = Number(provider.goalAmount) || 0;
+                        const providerFalta = Math.max(0, goal - totalRealized - totalPending);
+
+                        return (
+                        <div key={provider.id} className="bg-surface border border-surfaceHighlight rounded-2xl overflow-hidden shadow-sm">
+                            <div className="p-4 bg-surfaceHighlight/10 border-b border-surfaceHighlight flex justify-between items-center">
+                                <h3 className="text-lg font-black text-text uppercase tracking-tight">{provider.name}</h3>
+                                <div className="text-right">
+                                    <p className="text-[10px] font-black text-muted uppercase tracking-widest mb-0.5">Falta Global</p>
+                                    <p className="text-lg font-black text-text tracking-tighter">$ {providerFalta.toLocaleString('es-AR')}</p>
+                                </div>
+                            </div>
+                            
+                            <div className="p-4 space-y-4">
+                                {provider.accounts.length === 0 ? (
+                                    <p className="text-sm text-muted italic">No hay cuentas registradas.</p>
+                                ) : (
+                                    provider.accounts.map(account => {
+                                        const accountTransfers = (transfers || []).filter(t => t.accountId === account.id && t.status !== 'Archivado');
+                                        const accRealized = accountTransfers.filter(t => t.status === 'Realizado').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+                                        const accPending = accountTransfers.filter(t => t.status === 'Pendiente').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+                                        const accMeta = Number(account.metaAmount) || 0;
+                                        const falta = accMeta > 0 ? Math.max(0, accMeta - accRealized - accPending) : providerFalta;
+                                        
+                                        return (
+                                            <div key={account.id} className="bg-background border border-surfaceHighlight rounded-xl p-4 flex flex-col gap-4">
+                                                <div className="flex flex-col md:flex-row justify-between gap-4 cursor-pointer" onClick={() => toggleAccount(account.id)}>
+                                                    <div className="space-y-1 flex-1">
+                                                        <p className="text-[10px] font-black text-muted uppercase tracking-widest">Condición de Pago / Nombre Cuenta</p>
+                                                        <p className="text-sm font-bold text-text uppercase">{account.condition || '-'}</p>
+                                                    </div>
+                                                    
+                                                    <div className="flex flex-row items-center justify-between md:justify-end gap-6 shrink-0 md:pl-6 md:border-l border-surfaceHighlight">
+                                                        <div className="flex flex-col items-start md:items-end">
+                                                            <p className="text-xs font-black text-muted uppercase tracking-widest mb-1">{accMeta > 0 ? 'Falta (Cuenta)' : 'Falta (Global)'}</p>
+                                                            <p className="text-2xl font-black text-text tracking-tighter">
+                                                                $ {falta > 0 ? falta.toLocaleString('es-AR') : '0'}
+                                                            </p>
+                                                        </div>
+                                                        <button className="p-2 text-muted hover:text-primary transition-colors bg-surfaceHighlight/20 rounded-full">
+                                                            {expandedAccounts[account.id] ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                {expandedAccounts[account.id] && (
+                                                    <div className="pt-4 border-t border-surfaceHighlight space-y-4 animate-in slide-in-from-top-2">
+                                                        <div>
+                                                            <p className="text-[10px] font-black text-muted uppercase tracking-widest">Titular / Razón Social</p>
+                                                            <p className="text-sm font-bold text-text">{account.holder || '-'}</p>
+                                                        </div>
+                                                        
+                                                        <div className="flex flex-col sm:flex-row gap-3">
+                                                            {account.identifierAlias && (
+                                                                <div className="flex-1 bg-surface border border-surfaceHighlight rounded-lg p-2.5 flex justify-between items-center group">
+                                                                    <div>
+                                                                        <p className="text-[9px] font-black text-primary uppercase tracking-widest">Alias</p>
+                                                                        <p className="text-xs font-mono font-bold text-text truncate max-w-[150px]">{account.identifierAlias}</p>
+                                                                    </div>
+                                                                    <button 
+                                                                        onClick={(e) => { e.stopPropagation(); handleCopy(`${account.id}-alias`, account.identifierAlias); }}
+                                                                        className="p-1.5 text-muted hover:text-primary hover:bg-primary/10 rounded-md transition-colors"
+                                                                        title="Copiar Alias"
+                                                                    >
+                                                                        {copiedId === `${account.id}-alias` ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                            
+                                                            {account.identifierCBU && (
+                                                                <div className="flex-1 bg-surface border border-surfaceHighlight rounded-lg p-2.5 flex justify-between items-center group">
+                                                                    <div>
+                                                                        <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest">CBU / CVU</p>
+                                                                        <p className="text-xs font-mono font-bold text-text truncate max-w-[150px]">{account.identifierCBU}</p>
+                                                                    </div>
+                                                                    <button 
+                                                                        onClick={(e) => { e.stopPropagation(); handleCopy(`${account.id}-cbu`, account.identifierCBU); }}
+                                                                        className="p-1.5 text-muted hover:text-blue-500 hover:bg-blue-500/10 rounded-md transition-colors"
+                                                                        title="Copiar CBU"
+                                                                    >
+                                                                        {copiedId === `${account.id}-cbu` ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })
+                                )}
+                            </div>
+                        </div>
+                    );
+                })}
+                    {providers.filter(p => p.status !== 'Desactivado').length === 0 && (
+                        <div className="text-center py-12 text-muted italic">
+                            No hay proveedores activos.
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
     );
 };
 
@@ -280,7 +553,8 @@ const TripListView: React.FC<{
     onCreate: () => void;
     onDelete: (id: string) => void;
     currentUser: UserType;
-}> = ({ trips, onSelect, onCreate, onDelete, currentUser }) => {
+    onOpenAccounts: () => void;
+}> = ({ trips, onSelect, onCreate, onDelete, currentUser, onOpenAccounts }) => {
     const canManage = hasPermission(currentUser, 'orders.sheet_manage');
 
     return (
@@ -291,13 +565,22 @@ const TripListView: React.FC<{
                     <p className="text-muted text-sm">Gestiona recorridos y cobranzas.</p>
                 </div>
                 {canManage && (
-                    <button 
-                        onClick={onCreate}
-                        className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary hover:bg-primaryHover text-white font-bold text-sm shadow-lg shadow-primary/20 transition-all"
-                    >
-                        <Plus size={18} />
-                        Nuevo Viaje
-                    </button>
+                    <div className="flex items-center gap-3">
+                        <button 
+                            onClick={onOpenAccounts}
+                            className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-surface border border-surfaceHighlight hover:border-primary/50 text-text font-bold text-sm shadow-sm transition-all"
+                        >
+                            <Wallet size={18} className="text-primary" />
+                            Consultar Cuentas
+                        </button>
+                        <button 
+                            onClick={onCreate}
+                            className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary hover:bg-primaryHover text-white font-bold text-sm shadow-lg shadow-primary/20 transition-all"
+                        >
+                            <Plus size={18} />
+                            Nuevo Viaje
+                        </button>
+                    </div>
                 )}
             </div>
 
@@ -1018,9 +1301,19 @@ const TripReportModal: React.FC<{ trip: Trip; onClose: () => void }> = ({ trip, 
                             </p>
                         </div>
                     </div>
-                    <button onClick={onClose} className="p-2 rounded-full hover:bg-surfaceHighlight text-muted transition-all">
-                        <X size={24} className="md:w-7 md:h-7" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button 
+                            onClick={() => generateTripReportPDF(trip)}
+                            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-surfaceHighlight hover:bg-surfaceHighlight/80 text-text font-bold text-xs uppercase transition-all border border-surfaceHighlight"
+                            title="Descargar PDF"
+                        >
+                            <FileDown size={18} />
+                            <span className="hidden md:inline">Descargar PDF</span>
+                        </button>
+                        <button onClick={onClose} className="p-2 rounded-full hover:bg-surfaceHighlight text-muted transition-all">
+                            <X size={24} className="md:w-7 md:h-7" />
+                        </button>
+                    </div>
                 </div>
 
                 <div className="flex-1 flex flex-col lg:flex-row overflow-hidden bg-background/50">

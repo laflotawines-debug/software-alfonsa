@@ -203,12 +203,13 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
         });
     }, [clients, searchTerm]);
 
-    if (currentUser.role !== 'vale') {
+    const hasAccess = currentUser.role === 'vale' || currentUser.permissions?.includes('catalog.clients');
+    if (!hasAccess) {
         return (
             <div className="flex flex-col items-center justify-center h-[60vh] text-muted">
                 <AlertCircle size={48} className="mb-4 opacity-20" />
                 <p className="font-black uppercase tracking-widest italic text-xl">Acceso Restringido</p>
-                <p className="text-sm font-medium mt-2">Solo administradores pueden gestionar el maestro de clientes.</p>
+                <p className="text-sm font-medium mt-2">No tienes permisos para gestionar el maestro de clientes.</p>
             </div>
         );
     }

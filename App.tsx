@@ -50,7 +50,8 @@ import {
     addProductToOrder, 
     updateProductPrice, 
     removeProductFromOrder, 
-    updatePaymentMethod
+    updatePaymentMethod,
+    toggleAllProductsCheck
 } from './logic';
 
 // Helper local si no existe en logic.ts
@@ -70,6 +71,12 @@ const VIEW_STORAGE_KEY = 'alfonsa_last_view';
 export default function App() {
     const [session, setSession] = useState<any>(null);
     const [currentUser, setCurrentUser] = useState<User | null>(null);
+    
+    // Dialog state for custom alerts/confirms
+    const [dialogState, setDialogState] = useState<{ isOpen: boolean, title: string, message: string | React.ReactNode, type: 'alert' | 'confirm', onConfirm?: () => void }>({ isOpen: false, title: '', message: '', type: 'alert' });
+    const showDialog = (title: string, message: string | React.ReactNode, type: 'alert' | 'confirm' = 'alert', onConfirm?: () => void) => {
+        setDialogState({ isOpen: true, title, message, type, onConfirm });
+    };
     
     // Inicializar vista desde LocalStorage si existe, para persistencia entre refrescos
     const [currentView, setCurrentView] = useState<View>(() => {
@@ -94,15 +101,28 @@ export default function App() {
     const [hasMoreHistory, setHasMoreHistory] = useState(false);
 
     useEffect(() => {
-        supabase.auth.getSession().then(({ data: { session } }) => {
-            setSession(session);
-            if (session) fetchProfile(session.user.id);
+        supabase.auth.getSession().then(({ data: { session }, error }) => {
+            if (error) {
+                console.warn('Auth session error:', error.message);
+                setSession(null);
+                setCurrentUser(null);
+            } else {
+                setSession(session);
+                if (session) fetchProfile(session.user.id);
+            }
+        }).catch(err => {
+            console.warn('Auth session catch error:', err);
         });
 
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-            setSession(session);
-            if (session) fetchProfile(session.user.id);
-            else setCurrentUser(null);
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+            if (event === 'SIGNED_OUT') {
+                setSession(null);
+                setCurrentUser(null);
+            } else {
+                setSession(session);
+                if (session) fetchProfile(session.user.id);
+                else setCurrentUser(null);
+            }
         });
 
         return () => subscription.unsubscribe();
@@ -194,6 +214,9 @@ export default function App() {
             total: o.total,
             observations: o.observations,
             isReservation: o.is_reservation,
+            isInterdeposito: o.is_interdeposito,
+            interdepositoOrigin: o.interdeposito_origin,
+            interdepositoDestination: o.interdeposito_destination,
             scheduledDate: o.scheduled_date,
             history: typeof o.history === 'string' ? JSON.parse(o.history) : o.history || [],
             productCount: (o.order_items || []).length,
@@ -219,16 +242,167 @@ export default function App() {
         // Pagination logic
     };
 
+    // Audio Context Management
+    const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
+    const [isAudioEnabled, setIsAudioEnabled] = useState(false);
+    const [isMuted, setIsMuted] = useState(() => {
+        return localStorage.getItem('alfonsa_is_muted') === 'true';
+    });
+
+    const toggleMute = () => {
+        const newState = !isMuted;
+        setIsMuted(newState);
+        localStorage.setItem('alfonsa_is_muted', String(newState));
+    };
+
+    const requestNotificationPermission = () => {
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+    };
+
+    const initAudio = useCallback(() => {
+        requestNotificationPermission();
+        if (!audioContext) {
+            const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+            if (AudioContextClass) {
+                const ctx = new AudioContextClass();
+                setAudioContext(ctx);
+                setIsAudioEnabled(true);
+            }
+        } else if (audioContext.state === 'suspended') {
+            audioContext.resume().then(() => setIsAudioEnabled(true));
+        } else {
+            setIsAudioEnabled(true);
+        }
+    }, [audioContext]);
+
+    useEffect(() => {
+        document.addEventListener('click', initAudio);
+        document.addEventListener('touchstart', initAudio); // Add touch support for mobile
+        return () => {
+            document.removeEventListener('click', initAudio);
+            document.removeEventListener('touchstart', initAudio);
+        };
+    }, [initAudio]);
+
+    const playNotificationSound = useCallback((currentNotifications?: AppNotification[], force = false) => {
+        if (!audioContext || isMuted) return;
+        
+        const targetNotifications = currentNotifications || notifications;
+        const unread = targetNotifications.filter(n => !n.is_read);
+        
+        if (unread.length === 0 && !force) return;
+
+        // Logic to limit plays (Max 2 times per notification batch)
+        if (!force) {
+            const latestId = unread[0]?.id || 'unknown';
+            const storedId = localStorage.getItem('last_sound_notification_id');
+            const storedCount = parseInt(localStorage.getItem('last_sound_notification_count') || '0');
+
+            if (storedId === latestId) {
+                if (storedCount >= 2) return; // Max 2 times
+                localStorage.setItem('last_sound_notification_count', (storedCount + 1).toString());
+            } else {
+                localStorage.setItem('last_sound_notification_id', latestId);
+                localStorage.setItem('last_sound_notification_count', '1');
+            }
+        }
+
+        try {
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+
+            const now = audioContext.currentTime;
+            
+            // Single subtle beep
+            const osc1 = audioContext.createOscillator();
+            const gain1 = audioContext.createGain();
+            osc1.type = 'sine';
+            osc1.frequency.setValueAtTime(880, now);
+            osc1.frequency.exponentialRampToValueAtTime(440, now + 0.15);
+            gain1.gain.setValueAtTime(0.1, now); // Lower volume for subtlety
+            gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+            osc1.connect(gain1);
+            gain1.connect(audioContext.destination);
+            osc1.start(now);
+            osc1.stop(now + 0.15);
+
+        } catch (e) {
+            console.error("Audio play failed", e);
+        }
+    }, [audioContext, notifications, isMuted]);
+
     const fetchNotifications = async () => {
         if (!currentUser) return;
         const { data } = await supabase
             .from('notifications')
             .select('*')
             .eq('user_id', currentUser.id)
-            .eq('is_read', false)
-            .order('created_at', { ascending: false });
-        if (data) setNotifications(data);
+            .order('created_at', { ascending: false })
+            .limit(50);
+        
+        if (data) {
+            setNotifications(data);
+            // Check for unread notifications and play sound if any exist
+            const hasUnread = data.some(n => !n.is_read);
+            if (hasUnread) {
+                playNotificationSound(data);
+            }
+        }
     };
+
+    // Play sound on first user interaction if there are unread notifications
+    useEffect(() => {
+        if (isAudioEnabled && notifications.some(n => !n.is_read)) {
+            // Use a small timeout to ensure context is fully ready
+            setTimeout(() => {
+                playNotificationSound(notifications);
+            }, 100);
+        }
+    }, [isAudioEnabled]); // Removed notifications from dependency to avoid loop
+
+    useEffect(() => {
+        if (!currentUser) return;
+
+        console.log("Subscribing to notifications for user:", currentUser.id);
+        const channel = supabase
+            .channel('public:notifications')
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'notifications',
+                    filter: `user_id=eq.${currentUser.id}`
+                },
+                (payload) => {
+                    console.log("New notification received:", payload);
+                    const newNotification = payload.new as AppNotification;
+                    setNotifications(prev => {
+                        const updated = [newNotification, ...prev];
+                        playNotificationSound(updated);
+                        return updated;
+                    });
+                    
+                    // System Notification (Background)
+                    if ('Notification' in window && Notification.permission === 'granted') {
+                        new Notification('Alfonsa Management', {
+                            body: newNotification.message,
+                            icon: '/vite.svg' // Fallback icon
+                        });
+                    }
+                }
+            )
+            .subscribe((status) => {
+                console.log("Notification subscription status:", status);
+            });
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [currentUser, playNotificationSound]);
 
     // --- FETCHERS FOR MODULES ---
     const fetchProviders = async () => {
@@ -298,7 +472,7 @@ export default function App() {
     const markAllNotificationsRead = async () => { 
         if(!currentUser) return;
         await supabase.from('notifications').update({ is_read: true }).eq('user_id', currentUser.id);
-        setNotifications([]); 
+        setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
     };
     const clearNotifications = async () => { 
         if(!currentUser) return;
@@ -307,6 +481,29 @@ export default function App() {
     };
     const handleNotificationClick = (n: AppNotification) => { console.log(n); };
     
+    const sendNotificationToRole = async (role: 'vale' | 'armador', message: string, linkId?: string) => {
+        try {
+            const { data: users } = await supabase
+                .from('profiles')
+                .select('id')
+                .eq('role', role);
+            
+            if (!users || users.length === 0) return;
+
+            const notifications = users.map(u => ({
+                user_id: u.id,
+                message,
+                type: 'info',
+                link_id: linkId,
+                is_read: false
+            }));
+
+            await supabase.from('notifications').insert(notifications);
+        } catch (error) {
+            console.error("Error sending notifications:", error);
+        }
+    };
+
     const handleClaimOrder = async (o: DetailedOrder) => {
         if (!currentUser) return;
         const updates: any = { updated_by: currentUser.id };
@@ -334,9 +531,142 @@ export default function App() {
         }
     };
 
-    const handleAdvanceOrder = async (o: DetailedOrder) => {
+    const handleAdvanceOrder = async (o: DetailedOrder, notes?: string) => {
         const next = advanceOrderStatus(o);
-        await supabase.from('orders').update({ status: next.status }).eq('id', o.id);
+        
+        if (next.status === OrderStatus.FACTURADO) {
+            let clientCode = '';
+            
+            // Check if client exists - BYPASS for inter-depot movements
+            if (!o.isInterdeposito) {
+                const { data: clients, error: clientErr } = await supabase
+                    .from('clients_master')
+                    .select('*')
+                    .eq('nombre', o.clientName);
+                
+                if (clientErr || !clients || clients.length === 0) {
+                    showDialog("Error de Facturación", `El cliente '${o.clientName}' no existe en el maestro de clientes. No se puede facturar.`, 'alert');
+                    return;
+                }
+                clientCode = clients[0].codigo;
+            }
+            
+            // Check for negative stock
+            const itemsJson = o.products.map(p => ({ codart: p.code, qty: p.shippedQuantity ?? p.quantity }));
+            const warehouseToCheck = o.isInterdeposito 
+                ? (o.interdepositoOrigin || 'LLERENA')
+                : (o.zone?.toLowerCase().includes('llerena') ? 'LLERENA' : 'BETBEDER');
+
+            const { data: products, error: prodErr } = await supabase
+                .from('master_products')
+                .select('codart, desart, stock_llerena, stock_betbeder')
+                .in('codart', itemsJson.map(i => i.codart));
+                
+            if (prodErr) {
+                showDialog("Error", "Error al verificar stock: " + prodErr.message, 'alert');
+                return;
+            }
+            
+            const negativeStockItems = [];
+            for (const item of itemsJson) {
+                const prod = products?.find(p => p.codart === item.codart);
+                if (prod) {
+                    const currentStock = warehouseToCheck === 'LLERENA' ? (prod.stock_llerena || 0) : (prod.stock_betbeder || 0);
+                    if (currentStock - item.qty < 0) {
+                        negativeStockItems.push(`• ${prod.desart} (Stock actual: ${currentStock}, A descontar: ${item.qty})`);
+                    }
+                }
+            }
+            
+            const executeFacturacion = async () => {
+                if (o.isInterdeposito) {
+                    // For inter-depot movements, we call transferir_stock instead of facturar_pedido
+                    const { error: transferErr } = await supabase.rpc('transferir_stock', {
+                        p_origin: o.interdepositoOrigin || 'LLERENA',
+                        p_destination: o.interdepositoDestination || 'BETBEDER',
+                        p_items: itemsJson,
+                        p_reference_code: o.displayId,
+                        p_user_id: currentUser?.id
+                    });
+                    
+                    if (transferErr) {
+                        showDialog("Error", "Error al transferir stock interdepósito: " + transferErr.message, 'alert');
+                        return;
+                    }
+                    
+                    showDialog("Éxito", "Movimiento interdepósito procesado correctamente.", 'alert');
+                } else {
+                    // Call facturar_pedido for regular orders
+                    const { data: facturarData, error: facturarErr } = await supabase.rpc('facturar_pedido', {
+                        p_order_id: o.id,
+                        p_client_code: clientCode,
+                        p_user_id: currentUser?.id,
+                        p_warehouse_id: warehouseToCheck
+                    });
+                    
+                    if (facturarErr) {
+                        showDialog("Error", "Error en facturación transaccional: " + facturarErr.message, 'alert');
+                        return;
+                    }
+                    
+                    showDialog("Éxito", "Pedido facturado exitosamente. Comprobante: " + facturarData.invoice_number, 'alert');
+                }
+                
+                // Manual status update since we are in a callback and the main function returned
+                const historyEntry = {
+                    timestamp: new Date().toISOString(),
+                    userId: currentUser?.id,
+                    userName: currentUser?.name,
+                    action: 'ADVANCE_STATUS',
+                    previousState: o.status,
+                    newState: next.status,
+                    details: notes || 'Facturación procesada'
+                };
+                const newHistory = [...(o.history || []), historyEntry];
+                await supabase.from('orders').update({ status: next.status, history: newHistory }).eq('id', o.id);
+                fetchActiveOrders();
+            };
+
+            if (negativeStockItems.length > 0) {
+                const message = (
+                    <div className="flex flex-col gap-2">
+                        <p><strong>ADVERTENCIA:</strong> Los siguientes productos quedarán con stock negativo en {warehouseToCheck}:</p>
+                        <ul className="text-sm text-red-500 font-mono bg-red-50 p-2 rounded-md max-h-40 overflow-y-auto">
+                            {negativeStockItems.map((item, i) => <li key={i}>{item}</li>)}
+                        </ul>
+                        <p>¿Desea continuar con la {o.isInterdeposito ? 'transferencia' : 'facturación'} de todas formas?</p>
+                    </div>
+                );
+                showDialog("Advertencia de Stock", message, 'confirm', executeFacturacion);
+                return;
+            } else {
+                showDialog(
+                    o.isInterdeposito ? "Confirmar Transferencia" : "Confirmar Facturación", 
+                    o.isInterdeposito 
+                        ? `¿Desea procesar el movimiento interdepósito ${o.displayId} desde ${o.interdepositoOrigin} hacia ${o.interdepositoDestination}?`
+                        : `¿Desea facturar el pedido de ${o.clientName} por un total de $${o.total}?`, 
+                    'confirm', 
+                    executeFacturacion
+                );
+                return;
+            }
+        }
+
+        // Remove the transferir_stock call from ENTREGADO block as it's now handled in FACTURADO
+        // if (next.status === OrderStatus.ENTREGADO && o.isInterdeposito) { ... }
+
+        const historyEntry = {
+            timestamp: new Date().toISOString(),
+            userId: currentUser?.id,
+            userName: currentUser?.name,
+            action: 'ADVANCE_STATUS',
+            previousState: o.status,
+            newState: next.status,
+            details: notes || 'Avance de estado'
+        };
+        const newHistory = [...(o.history || []), historyEntry];
+
+        await supabase.from('orders').update({ status: next.status, history: newHistory }).eq('id', o.id);
         fetchActiveOrders();
     };
 
@@ -406,14 +736,34 @@ export default function App() {
             await supabase.from('providers').update(payload).eq('id', providerId);
         }
 
-        await supabase.from('provider_accounts').delete().eq('provider_id', providerId);
-        if (p.accounts.length > 0) {
-            const accounts = p.accounts.map(a => ({
-                provider_id: providerId, condition: a.condition, holder: a.holder, identifier_alias: a.identifierAlias, identifier_cbu: a.identifierCBU,
-                meta_amount: a.metaAmount, current_amount: a.currentAmount, pending_amount: a.pendingAmount, status: a.status
-            }));
-            await supabase.from('provider_accounts').insert(accounts);
+        const { data: existingAccounts } = await supabase.from('provider_accounts').select('id').eq('provider_id', providerId);
+        const existingIds = existingAccounts?.map(a => a.id) || [];
+        
+        const accountsToKeep = p.accounts.filter(a => !a.id.startsWith('acc-'));
+        const accountIdsToKeep = accountsToKeep.map(a => a.id);
+        
+        const accountsToDelete = existingIds.filter(id => !accountIdsToKeep.includes(id));
+        
+        if (accountsToDelete.length > 0) {
+            await supabase.from('provider_accounts').delete().in('id', accountsToDelete);
         }
+
+        const newAccounts = p.accounts.filter(a => a.id.startsWith('acc-')).map(a => ({
+            provider_id: providerId, condition: a.condition, holder: a.holder, identifier_alias: a.identifierAlias, identifier_cbu: a.identifierCBU,
+            meta_amount: a.metaAmount, current_amount: a.currentAmount, pending_amount: a.pendingAmount, status: a.status
+        }));
+
+        if (newAccounts.length > 0) {
+            await supabase.from('provider_accounts').insert(newAccounts);
+        }
+
+        for (const account of accountsToKeep) {
+            await supabase.from('provider_accounts').update({
+                condition: account.condition, holder: account.holder, identifier_alias: account.identifierAlias, identifier_cbu: account.identifierCBU,
+                meta_amount: account.metaAmount, current_amount: account.currentAmount, pending_amount: account.pendingAmount, status: account.status
+            }).eq('id', account.id);
+        }
+
         fetchProviders();
         return true;
     };
@@ -490,7 +840,7 @@ export default function App() {
                 .eq('order_id', updatedOrder.id);
             
             const existingCodes = new Set(existingDbItems?.map((i: any) => i.code));
-            const isPostShippingStatus = [OrderStatus.EN_TRANSITO, OrderStatus.ENTREGADO, OrderStatus.PAGADO].includes(updatedOrder.status);
+            const isPostShippingStatus = [OrderStatus.FACTURADO, OrderStatus.FACTURA_CONTROLADA, OrderStatus.EN_TRANSITO, OrderStatus.ENTREGADO, OrderStatus.PAGADO].includes(updatedOrder.status);
 
             for (const p of updatedOrder.products) {
                  let finalShippedQuantity = p.shippedQuantity;
@@ -508,11 +858,19 @@ export default function App() {
 
             let nextStatus = updatedOrder.status;
             let history = updatedOrder.history || [];
+            let isAdvancingToFacturado = false;
+            let isAdvancingToEntregadoInterdeposito = false;
             
             if (shouldAdvance) {
                  const advanced = advanceOrderStatus(updatedOrder);
-                 nextStatus = advanced.status;
-                 history = [...history, { timestamp: new Date().toISOString(), userId: currentUser?.id, userName: currentUser?.name, action: 'ADVANCE_STATUS', previousState: updatedOrder.status, newState: nextStatus, details: notes || 'Avance desde modal' }];
+                 if (advanced.status === OrderStatus.FACTURADO) {
+                     isAdvancingToFacturado = true;
+                 } else if (advanced.status === OrderStatus.ENTREGADO && updatedOrder.isInterdeposito) {
+                     isAdvancingToEntregadoInterdeposito = true;
+                 } else {
+                     nextStatus = advanced.status;
+                     history = [...history, { timestamp: new Date().toISOString(), userId: currentUser?.id, userName: currentUser?.name, action: 'ADVANCE_STATUS', previousState: updatedOrder.status, newState: nextStatus, details: notes || 'Avance desde modal' }];
+                 }
             }
 
             const orderUpdates: any = {
@@ -520,14 +878,24 @@ export default function App() {
                 total: updatedOrder.total, history: history, updated_by: currentUser?.id 
             };
 
-            if (shouldAdvance) {
+            if (shouldAdvance && !isAdvancingToFacturado && !isAdvancingToEntregadoInterdeposito) {
                 if (updatedOrder.status === OrderStatus.EN_ARMADO && !updatedOrder.assemblerId) { orderUpdates.assembler_id = currentUser?.id; orderUpdates.assembler_name = currentUser?.name; } 
                 else if (updatedOrder.status === OrderStatus.ARMADO && !updatedOrder.controllerId) { orderUpdates.controller_id = currentUser?.id; orderUpdates.controller_name = currentUser?.name; }
             }
 
             await supabase.from('orders').update(orderUpdates).eq('id', updatedOrder.id);
+            
+            // Notify Admin Vale when order is Controlled
+            if (shouldAdvance && nextStatus === OrderStatus.ARMADO_CONTROLADO) {
+                await sendNotificationToRole('vale', `Pedido ${updatedOrder.displayId} controlado y listo para facturar (${updatedOrder.clientName})`, updatedOrder.id);
+            }
+
             setActiveOrder(null); 
             fetchActiveOrders(); 
+
+            if (isAdvancingToFacturado || isAdvancingToEntregadoInterdeposito) {
+                handleAdvanceOrder(updatedOrder, notes);
+            }
         } catch (err: any) { alert("Error al guardar cambios: " + err.message); }
     };
 
@@ -558,6 +926,10 @@ export default function App() {
                     onMarkAllRead={markAllNotificationsRead}
                     onClearNotifications={clearNotifications}
                     onNotificationClick={handleNotificationClick}
+                    isMuted={isMuted}
+                    onToggleMute={toggleMute}
+                    isAudioEnabled={isAudioEnabled}
+                    onEnableSound={initAudio}
                 />
 
                 <main className="flex-1 overflow-y-auto p-4 md:p-8 relative">
@@ -578,7 +950,10 @@ export default function App() {
                             onDeleteOrders={handleDeleteOrders}
                             onAdvanceOrder={handleAdvanceOrder}
                             onToggleLock={handleToggleLock}
-                            onRefresh={fetchActiveOrders}
+                            onRefresh={async () => {
+                                await fetchActiveOrders();
+                                await fetchNotifications();
+                            }}
                         />
                     )}
                     {currentView === View.CREATE_BUDGET && (
@@ -590,6 +965,9 @@ export default function App() {
                                     const { data, error } = await supabase.from('orders').insert({
                                         display_id: order.displayId, client_name: order.clientName, total: order.total, status: order.status,
                                         zone: order.zone, observations: order.observations, history: order.history, is_reservation: order.isReservation,
+                                        is_interdeposito: order.isInterdeposito,
+                                        interdeposito_origin: order.interdepositoOrigin,
+                                        interdeposito_destination: order.interdepositoDestination,
                                         scheduled_date: order.scheduledDate, created_by: currentUser.id 
                                     }).select().single();
                                     if (error) throw error;
@@ -598,6 +976,10 @@ export default function App() {
                                             order_id: data.id, code: p.code, name: p.name, quantity: p.quantity, original_quantity: p.originalQuantity, unit_price: p.unitPrice, subtotal: p.subtotal, is_checked: false
                                         }));
                                         await supabase.from('order_items').insert(items);
+                                        
+                                        // Notify Armadores about new order
+                                        await sendNotificationToRole('armador', `Nuevo pedido disponible: ${order.displayId} - ${order.clientName}`, data.id);
+                                        
                                         await fetchActiveOrders();
                                         setCurrentView(View.ORDERS);
                                     }
@@ -605,8 +987,8 @@ export default function App() {
                             }}
                         />
                     )}
-                    {currentView === View.ORDER_SHEET && <OrderSheet currentUser={currentUser} orders={orders} trips={trips} onSaveTrip={handleSaveTrip} onDeleteTrip={handleDeleteTrip} selectedTripId={selectedTripId} onSelectTrip={setSelectedTripId} />}
-                    {currentView === View.PAYMENTS_OVERVIEW && <PaymentsOverview providers={providers} onDeleteProvider={handleDeleteProvider} onUpdateProviders={handleUpdateProvider} transfers={transfers} onUpdateTransfers={handleUpdateTransfer} onConfirmTransfer={handleConfirmTransfer} onDeleteTransfer={handleDeleteTransfer} />}
+                    {currentView === View.ORDER_SHEET && <OrderSheet currentUser={currentUser} orders={orders} trips={trips} onSaveTrip={handleSaveTrip} onDeleteTrip={handleDeleteTrip} selectedTripId={selectedTripId} onSelectTrip={setSelectedTripId} providers={providers} transfers={transfers} />}
+                    {currentView === View.PAYMENTS_OVERVIEW && <PaymentsOverview providers={providers} onDeleteProvider={handleDeleteProvider} onUpdateProviders={handleUpdateProvider} transfers={transfers} onUpdateTransfers={handleUpdateTransfer} onConfirmTransfer={handleConfirmTransfer} onDeleteTransfer={handleDeleteTransfer} onRefresh={async () => { await fetchProviders(); await fetchTransfers(); }} />}
                     {currentView === View.PAYMENTS_PROVIDERS && <PaymentsProviders providers={providers} onUpdateProviders={handleUpdateProvider} onDeleteProvider={handleDeleteProvider} onResetProvider={handleResetProvider} />}
                     {currentView === View.PAYMENTS_HISTORY && <PaymentsHistory transfers={transfers} onDeleteTransfer={handleDeleteTransfer} onClearHistory={handleClearHistory} onUpdateTransfers={handleUpdateTransfer} onUpdateStatus={handleUpdateTransferStatus} providers={providers} />}
                     {currentView === View.PROVIDER_STATEMENTS && <ProviderStatements currentUser={currentUser} />}
@@ -654,6 +1036,7 @@ export default function App() {
                         onSave={handleSaveAssembly}
                         onUpdateProduct={handleUpdateProductQuantity}
                         onToggleCheck={(code) => setActiveOrder(toggleProductCheck(activeOrder, code) as DetailedOrder)}
+                        onToggleAllChecks={(check) => setActiveOrder(toggleAllProductsCheck(activeOrder, check) as DetailedOrder)}
                         onUpdateObservations={(text) => setActiveOrder(updateObservations(activeOrder, text) as DetailedOrder)}
                         onAddProduct={(prod) => {
                             const updatedOrder = addProductToOrder(activeOrder, prod);
@@ -677,6 +1060,39 @@ export default function App() {
                         }}
                         onDeleteOrder={handleDeleteOrder}
                     />
+                )}
+
+                {/* Generic Dialog Modal */}
+                {dialogState.isOpen && (
+                    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                        <div className="bg-surface rounded-2xl shadow-xl max-w-md w-full overflow-hidden flex flex-col">
+                            <div className="p-6 border-b border-surfaceHighlight">
+                                <h3 className="text-lg font-bold text-text">{dialogState.title}</h3>
+                            </div>
+                            <div className="p-6 text-text/80 text-sm">
+                                {dialogState.message}
+                            </div>
+                            <div className="p-4 bg-surfaceHighlight/30 flex justify-end gap-3">
+                                <button 
+                                    onClick={() => setDialogState(prev => ({ ...prev, isOpen: false }))}
+                                    className="px-4 py-2 text-sm font-bold text-text/70 hover:text-text transition-colors"
+                                >
+                                    {dialogState.type === 'confirm' ? 'Cancelar' : 'Cerrar'}
+                                </button>
+                                {dialogState.type === 'confirm' && (
+                                    <button 
+                                        onClick={() => {
+                                            if (dialogState.onConfirm) dialogState.onConfirm();
+                                            setDialogState(prev => ({ ...prev, isOpen: false }));
+                                        }}
+                                        className="px-4 py-2 text-sm font-bold bg-primary text-white rounded-xl hover:bg-primaryHover transition-colors shadow-sm"
+                                    >
+                                        Confirmar
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
                 )}
             </div>
         </div>

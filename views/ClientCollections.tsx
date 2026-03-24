@@ -9,12 +9,17 @@ import {
     Save,
     Plus,
     Trash2,
-    History,
     CheckCircle2,
     AlertCircle,
     Building2,
     ArrowRight,
-    Check
+    ArrowLeft,
+    Check,
+    User as UserIcon,
+    Receipt,
+    Banknote,
+    Landmark,
+    Calendar
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { ClientMaster, User, ClientCollection, SupplierMaster } from '../types';
@@ -31,17 +36,37 @@ export const ClientCollections: React.FC<ClientCollectionsProps> = ({ currentUse
     const [isLoadingData, setIsLoadingData] = useState(false);
     const [history, setHistory] = useState<ClientCollection[]>([]);
     const [currentBalance, setCurrentBalance] = useState(0);
+    const [showReceipt, setShowReceipt] = useState<ClientCollection | null>(null);
     
-    // Estados para nuevo pago
-    const [amount, setAmount] = useState('');
-    const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+    // Efectivo
+    const [cashArs, setCashArs] = useState('');
+    const [cashUsd, setCashUsd] = useState('');
+    const exchangeRate = 1376.00;
+
+    // Pago a Proveedor
+    const [supplierPayment, setSupplierPayment] = useState('');
+    const [targetSupplierCode, setTargetSupplierCode] = useState('');
+    const [suppliers, setSuppliers] = useState<SupplierMaster[]>([]);
     const [notes, setNotes] = useState('');
+    const [supplierNotes, setSupplierNotes] = useState('');
+
+    const [supplierSearchTerm, setSupplierSearchTerm] = useState('');
+    const [supplierSearchResults, setSupplierSearchResults] = useState<SupplierMaster[]>([]);
+    const [selectedSupplier, setSelectedSupplier] = useState<SupplierMaster | null>(null);
+    const [isSearchingSupplier, setIsSearchingSupplier] = useState(false);
+    const supplierDropdownRef = useRef<HTMLDivElement>(null);
+
+    // Depósito / Transferencia
+    const [transferAmount, setTransferAmount] = useState('');
+    const [bankAccount, setBankAccount] = useState('');
+    const [transferDate, setTransferDate] = useState(new Date().toISOString().split('T')[0]);
+
     const [isSaving, setIsSaving] = useState(false);
 
-    // Estados para Pago a Proveedor (Triangulación)
-    const [isDirectPayment, setIsDirectPayment] = useState(false);
-    const [suppliers, setSuppliers] = useState<SupplierMaster[]>([]);
-    const [targetSupplierCode, setTargetSupplierCode] = useState('');
+    // Cálculos
+    const totalEfectivo = (parseFloat(cashArs) || 0) + ((parseFloat(cashUsd) || 0) * exchangeRate);
+    const totalProveedor = parseFloat(supplierPayment) || 0;
+    const totalPagado = totalEfectivo + totalProveedor;
 
     const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -50,6 +75,9 @@ export const ClientCollections: React.FC<ClientCollectionsProps> = ({ currentUse
         const handleClickOutside = (event: MouseEvent) => {
             if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
                 setSearchResults([]);
+            }
+            if (supplierDropdownRef.current && !supplierDropdownRef.current.contains(event.target as Node)) {
+                setSupplierSearchResults([]);
             }
         };
         document.addEventListener('mousedown', handleClickOutside);
@@ -64,6 +92,44 @@ export const ClientCollections: React.FC<ClientCollectionsProps> = ({ currentUse
         };
         loadSuppliers();
     }, []);
+
+    const handleSearchSupplier = async (val: string) => {
+        setSupplierSearchTerm(val);
+        if (selectedSupplier && val !== selectedSupplier.razon_social) {
+            setSelectedSupplier(null);
+        }
+        
+        const trimmed = val.trim();
+        if (trimmed.length < 2) {
+            setSupplierSearchResults([]);
+            return;
+        }
+
+        setIsSearchingSupplier(true);
+        try {
+            const words = trimmed.split(/\s+/).filter(w => w.length > 0);
+            let query = supabase.from('providers_master').select('*');
+            
+            words.forEach(word => {
+                query = query.or(`razon_social.ilike.%${word}%,codigo.ilike.%${word}%`);
+            });
+
+            const { data, error } = await query.limit(8);
+
+            if (error) throw error;
+            setSupplierSearchResults(data || []);
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setIsSearchingSupplier(false);
+        }
+    };
+
+    const selectSupplier = (supplier: SupplierMaster) => {
+        setSelectedSupplier(supplier);
+        setSupplierSearchTerm(supplier.razon_social);
+        setSupplierSearchResults([]);
+    };
 
     const handleSearch = async (val: string) => {
         setSearchTerm(val);
@@ -121,11 +187,17 @@ export const ClientCollections: React.FC<ClientCollectionsProps> = ({ currentUse
         setSearchResults([]); // Ocultar dropdown
         
         // Reset form
-        setAmount('');
-        setNotes('');
-        setIsDirectPayment(false);
+        setCashArs('');
+        setCashUsd('');
+        setSupplierPayment('');
         setTargetSupplierCode('');
-        setDate(new Date().toISOString().split('T')[0]);
+        setSupplierSearchTerm('');
+        setSelectedSupplier(null);
+        setNotes('');
+        setSupplierNotes('');
+        setTransferAmount('');
+        setBankAccount('');
+        setTransferDate(new Date().toISOString().split('T')[0]);
 
         await fetchHistory(client.codigo);
         await fetchBalance(client.codigo);
@@ -151,59 +223,90 @@ export const ClientCollections: React.FC<ClientCollectionsProps> = ({ currentUse
 
     const handleSave = async () => {
         if (!selectedClient) return;
-        const val = parseFloat(amount);
+        const val = totalPagado;
         if (!val || val <= 0) return alert("Ingrese un monto válido");
         
-        // Validación extra si es pago a proveedor
-        if (isDirectPayment && !targetSupplierCode) {
-            return alert("Seleccione el proveedor al cual se destina el pago.");
+        if (totalProveedor > 0 && !selectedSupplier) {
+            return alert("Debe seleccionar un proveedor para el pago directo.");
         }
-        
+
         setIsSaving(true);
         try {
-            // Determinar notas finales
-            const supplierName = suppliers.find(s => s.codigo === targetSupplierCode)?.razon_social;
-            const finalNotes = isDirectPayment 
-                ? `PAGO DIRECTO A PROVEEDOR: ${supplierName}. ${notes}` 
-                : notes;
+            const cashNotes = [];
+            if (cashArs && parseFloat(cashArs) > 0) cashNotes.push(`EFECTIVO ARS: $${parseFloat(cashArs).toLocaleString('es-AR')}`);
+            if (cashUsd && parseFloat(cashUsd) > 0) cashNotes.push(`EFECTIVO USD: u$s${parseFloat(cashUsd).toLocaleString('es-AR')} (TC: ${exchangeRate})`);
+            if (totalProveedor > 0 && selectedSupplier) {
+                cashNotes.push(`PAGO A PROVEEDOR: $${totalProveedor.toLocaleString('es-AR')} (${selectedSupplier.razon_social})`);
+            }
+            
+            const finalNotes = [notes, supplierNotes, ...cashNotes].filter(Boolean).join(' | ');
 
             // 1. Guardar Cobranza (Log) en Cliente
             const { data: collection, error } = await supabase.from('client_collections').insert({
                 client_code: selectedClient.codigo,
                 amount: val,
-                date: date,
+                date: new Date().toISOString().split('T')[0],
                 notes: finalNotes,
                 created_by: currentUser.id
             }).select().single();
             if (error) throw error;
             
             // 2. Insertar movimiento de CRÉDITO (Haber) en Cuenta Corriente Cliente
+            let concept = 'Cobranza';
+            if (totalEfectivo > 0 && totalProveedor > 0) concept = 'Cobranza Mixta (Efectivo + Proveedor)';
+            else if (totalEfectivo > 0) concept = 'Cobranza Efectivo';
+            else if (totalProveedor > 0) concept = `Pago Directo a Proveedor (${selectedSupplier?.razon_social})`;
+
             await supabase.from('client_account_movements').insert({
                 client_code: selectedClient.codigo,
-                date: date,
-                concept: isDirectPayment ? `Pago Directo a Prov. ${supplierName}` : `Cobranza / Entrega`,
+                date: new Date().toISOString().split('T')[0],
+                concept: concept,
                 debit: 0,
                 credit: val,
                 collection_id: collection.id,
                 created_by: currentUser.id
             });
 
-            // 3. (OPCIONAL) Si es pago directo, impactar en la cuenta del proveedor también
-            if (isDirectPayment && targetSupplierCode) {
-                await supabase.from('provider_account_movements').insert({
-                    provider_code: targetSupplierCode,
-                    date: date,
-                    concept: `PAGO DIRECTO DE CLIENTE: ${selectedClient.nombre}`,
-                    debit: 0, 
-                    credit: val, // Credit en proveedor = Pago que hacemos (baja deuda)
+            // 3. Registrar Movimiento de Caja (Solo si hay efectivo)
+            if (totalEfectivo > 0) {
+                // Intentamos buscar el concepto "COBRANZA DE CLIENTES"
+                const { data: conceptData } = await supabase
+                    .from('cash_concepts')
+                    .select('id')
+                    .eq('name', 'COBRANZA DE CLIENTES')
+                    .maybeSingle();
+
+                await supabase.from('cash_movements').insert({
+                    date: new Date().toISOString().split('T')[0],
+                    concept_id: conceptData?.id || null,
+                    type: 'ingreso',
+                    amount_ars: parseFloat(cashArs) || 0,
+                    amount_usd: parseFloat(cashUsd) || 0,
+                    comments: `COBRANZA CLIENTE: ${selectedClient.nombre} (${selectedClient.codigo}). ${notes}`,
+                    branch: 'Llerena', // Default branch
                     created_by: currentUser.id
                 });
             }
 
-            setAmount('');
+            // 4. Registrar Movimiento en Cuenta Corriente Proveedor (Si hay pago a proveedor)
+            if (totalProveedor > 0 && selectedSupplier) {
+                await supabase.from('provider_account_movements').insert({
+                    provider_code: selectedSupplier.codigo,
+                    date: new Date().toISOString().split('T')[0],
+                    concept: `Pago Directo de Cliente: ${selectedClient.nombre} (${selectedClient.codigo})`,
+                    debit: 0,
+                    credit: totalProveedor, // Credit decreases provider balance (we owe them less)
+                    created_by: currentUser.id
+                });
+            }
+
+            setCashArs('');
+            setCashUsd('');
             setNotes('');
-            setIsDirectPayment(false);
-            setTargetSupplierCode('');
+            setSupplierPayment('');
+            setSupplierSearchTerm('');
+            setSelectedSupplier(null);
+            setSupplierNotes('');
             
             // Refrescar historial y saldo
             await fetchHistory(selectedClient.codigo);
@@ -285,151 +388,351 @@ export const ClientCollections: React.FC<ClientCollectionsProps> = ({ currentUse
 
             {/* PANEL PRINCIPAL (Solo si hay cliente seleccionado) */}
             {selectedClient && (
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in slide-in-from-bottom-4 duration-500">
-                    
-                    {/* COLUMNA IZQ: FORMULARIO */}
-                    <div className="lg:col-span-5 space-y-6">
-                        <div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 shadow-sm">
-                            <div className="mb-6 pb-4 border-b border-surfaceHighlight flex flex-row justify-between items-start">
-                                <div>
-                                    <h3 className="text-lg font-black text-text uppercase italic leading-tight">{selectedClient.nombre}</h3>
-                                    <p className="text-xs font-bold text-muted uppercase mt-1 flex items-center gap-2">
-                                        <span className="bg-primary/10 text-primary px-2 py-0.5 rounded">#{selectedClient.codigo}</span>
-                                        {selectedClient.localidad}
-                                    </p>
-                                </div>
-                                <div className="text-right bg-background/50 p-2 rounded-xl border border-surfaceHighlight">
-                                    <p className="text-[9px] font-black text-muted uppercase tracking-widest">Saldo Actual</p>
-                                    <p className={`text-xl font-black tracking-tighter ${currentBalance > 0 ? 'text-red-500' : 'text-green-500'}`}>
-                                        $ {currentBalance.toLocaleString('es-AR')}
-                                    </p>
+                <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+                    {/* TOP HEADER CARD */}
+                    <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div className="flex flex-col md:flex-row items-start md:items-center gap-8">
+                            <div>
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Cliente</p>
+                                <div className="flex items-center gap-2">
+                                    <UserIcon size={16} className="text-gray-400" />
+                                    <span className="font-bold text-gray-800 uppercase">{selectedClient.nombre}</span>
                                 </div>
                             </div>
-
-                            <div className="space-y-4">
-                                <h4 className="text-xs font-black text-primary uppercase tracking-widest flex items-center gap-2 mb-4">
-                                    <Plus size={14}/> Nuevo Pago
-                                </h4>
-                                
-                                <div className="space-y-1">
-                                    <label className="text-[9px] font-black text-muted uppercase ml-1">Monto ($)</label>
-                                    <input 
-                                        type="number" 
-                                        value={amount} 
-                                        onChange={e => setAmount(e.target.value)} 
-                                        className="w-full bg-background border border-surfaceHighlight rounded-xl p-4 text-2xl font-black text-text outline-none focus:border-primary shadow-inner text-center" 
-                                        placeholder="0.00" 
-                                    />
+                            <div>
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Comprobante</p>
+                                <div className="flex items-center gap-2">
+                                    <Receipt size={16} className="text-gray-400" />
+                                    <span className="font-bold text-gray-800">Recibo #001-00234</span>
                                 </div>
-
-                                <div className="space-y-1">
-                                    <label className="text-[9px] font-black text-muted uppercase ml-1">Fecha</label>
-                                    <input 
-                                        type="date" 
-                                        value={date} 
-                                        onChange={e => setDate(e.target.value)} 
-                                        className="w-full bg-background border border-surfaceHighlight rounded-xl p-3 font-bold text-sm text-text outline-none focus:border-primary shadow-inner" 
-                                    />
-                                </div>
-
-                                {/* TOGGLE PAGO A PROVEEDOR */}
-                                <div 
-                                    onClick={() => setIsDirectPayment(!isDirectPayment)}
-                                    className={`p-3 rounded-xl border-2 cursor-pointer transition-all flex items-center gap-3 ${isDirectPayment ? 'bg-indigo-500/5 border-indigo-500' : 'bg-background border-surfaceHighlight hover:border-indigo-500/50'}`}
-                                >
-                                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${isDirectPayment ? 'bg-indigo-500 border-indigo-500' : 'border-muted'}`}>
-                                        {isDirectPayment && <Check size={12} className="text-white"/>}
-                                    </div>
-                                    <div className="flex-1">
-                                        <p className={`text-xs font-black uppercase ${isDirectPayment ? 'text-indigo-600' : 'text-muted'}`}>Paga a Proveedor</p>
-                                        <p className="text-[9px] font-bold text-muted uppercase leading-tight">Triangular: Cobro a cliente y pago a proveedor simultáneo.</p>
-                                    </div>
-                                </div>
-
-                                {isDirectPayment && (
-                                    <div className="space-y-1 animate-in slide-in-from-top-2">
-                                        <label className="text-[9px] font-black text-indigo-600 uppercase ml-1 flex items-center gap-1"><Building2 size={10}/> Seleccionar Proveedor Destino</label>
-                                        <select 
-                                            value={targetSupplierCode} 
-                                            onChange={(e) => setTargetSupplierCode(e.target.value)} 
-                                            className="w-full bg-indigo-500/5 border border-indigo-500/30 rounded-xl p-3 text-sm font-bold text-text outline-none focus:border-indigo-500 uppercase cursor-pointer"
-                                        >
-                                            <option value="">-- SELECCIONAR --</option>
-                                            {suppliers.map(s => (
-                                                <option key={s.codigo} value={s.codigo}>{s.razon_social}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                )}
-
-                                <div className="space-y-1">
-                                    <label className="text-[9px] font-black text-muted uppercase ml-1">Observaciones</label>
-                                    <textarea 
-                                        value={notes} 
-                                        onChange={e => setNotes(e.target.value)} 
-                                        className="w-full bg-background border border-surfaceHighlight rounded-xl p-3 text-sm font-medium text-text outline-none focus:border-primary shadow-inner h-24 resize-none" 
-                                        placeholder="Opcional..." 
-                                    />
-                                </div>
-
-                                <button 
-                                    onClick={handleSave} 
-                                    disabled={isSaving || !amount} 
-                                    className={`w-full py-4 font-black rounded-2xl uppercase text-xs shadow-xl transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${isDirectPayment ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-500/20' : 'bg-primary hover:bg-primaryHover text-white shadow-primary/20'}`}
-                                >
-                                    {isSaving ? <Loader2 size={18} className="animate-spin"/> : isDirectPayment ? <ArrowRight size={18}/> : <Save size={18}/>} 
-                                    {isDirectPayment ? 'Confirmar Pago Directo' : 'Registrar Cobro'}
-                                </button>
+                            </div>
+                        </div>
+                        <div className="bg-orange-50 border border-orange-100 rounded-lg p-3 min-w-[200px]">
+                            <p className="text-[10px] font-bold text-orange-600 uppercase tracking-wider mb-1">Saldo Actual</p>
+                            <div className="flex items-center gap-2">
+                                <Wallet size={16} className="text-orange-500" />
+                                <span className="text-lg font-black text-orange-600">
+                                    {currentBalance < 0 ? 'A FAVOR: ' : 'DEUDA: '}
+                                    $ {Math.abs(currentBalance).toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                                </span>
                             </div>
                         </div>
                     </div>
 
-                    {/* COLUMNA DER: HISTORIAL */}
-                    <div className="lg:col-span-7">
-                        <div className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm flex flex-col h-full min-h-[400px]">
-                            <div className="p-6 border-b border-surfaceHighlight bg-background/30 flex justify-between items-center">
-                                <h3 className="text-sm font-black text-text uppercase tracking-widest flex items-center gap-2">
-                                    <History size={16} className="text-primary"/> Historial de Cobros
-                                </h3>
-                                <button onClick={() => fetchHistory(selectedClient.codigo)} className="p-2 hover:bg-surfaceHighlight rounded-full text-muted transition-colors">
-                                    <RefreshCw size={16} className={isLoadingData ? 'animate-spin' : ''}/>
-                                </button>
-                            </div>
-
-                            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-background/50">
-                                {isLoadingData ? (
-                                    <div className="h-full flex items-center justify-center">
-                                        <Loader2 className="animate-spin text-primary" size={32} />
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                        {/* LEFT COLUMN */}
+                        <div className="lg:col-span-8 space-y-6">
+                            {/* EFECTIVO */}
+                            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                                <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-orange-50/30">
+                                    <h3 className="font-bold text-orange-600 flex items-center gap-2 uppercase text-sm tracking-wider">
+                                        <Banknote size={18} /> Cobranza en Efectivo
+                                    </h3>
+                                    <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-full px-3 py-1 shadow-sm">
+                                        <RefreshCw size={12} className="text-orange-500" />
+                                        <span className="text-[10px] font-bold text-gray-600 uppercase">TC: <strong className="text-gray-800">{exchangeRate.toFixed(2)}</strong></span>
                                     </div>
-                                ) : history.length === 0 ? (
-                                    <div className="h-full flex flex-col items-center justify-center opacity-40 text-center">
-                                        <AlertCircle size={48} className="mb-4 text-muted" />
-                                        <p className="text-xs font-bold text-muted uppercase">Sin registros</p>
-                                    </div>
-                                ) : (
-                                    history.map(item => (
-                                        <div key={item.id} className="bg-surface border border-surfaceHighlight p-4 rounded-2xl flex justify-between items-center group hover:border-primary/30 transition-all shadow-sm">
-                                            <div className="flex flex-col gap-1">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-lg font-black text-green-600">$ {item.amount.toLocaleString('es-AR')}</span>
-                                                    <span className="text-[9px] font-bold text-muted bg-surfaceHighlight px-2 py-0.5 rounded uppercase">{new Date(item.date).toLocaleDateString()}</span>
-                                                </div>
-                                                {item.notes && <p className="text-[10px] text-muted italic flex items-center gap-1"><AlertCircle size={10}/> {item.notes}</p>}
+                                </div>
+                                <div className="p-6 space-y-6">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div className="space-y-2">
+                                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Efectivo en Pesos ($)</label>
+                                            <div className="relative group">
+                                                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold group-focus-within:text-orange-500 transition-colors">$</span>
+                                                <input 
+                                                    type="number" 
+                                                    value={cashArs} 
+                                                    onChange={e => setCashArs(e.target.value)} 
+                                                    className="w-full pl-10 pr-4 py-4 border-2 border-gray-100 rounded-2xl text-lg font-black focus:outline-none focus:border-orange-500 transition-all bg-gray-50/50 focus:bg-white" 
+                                                    placeholder="0.00" 
+                                                />
                                             </div>
-                                            <button 
-                                                onClick={() => handleDelete(item.id)} 
-                                                className="p-2 text-muted hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all opacity-50 group-hover:opacity-100" 
-                                                title="Anular Registro"
-                                            >
-                                                <Trash2 size={18}/>
-                                            </button>
                                         </div>
-                                    ))
-                                )}
+                                        <div className="space-y-2">
+                                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Efectivo en Dólares (US$)</label>
+                                            <div className="relative group">
+                                                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold group-focus-within:text-orange-500 transition-colors">US$</span>
+                                                <input 
+                                                    type="number" 
+                                                    value={cashUsd} 
+                                                    onChange={e => setCashUsd(e.target.value)} 
+                                                    className="w-full pl-14 pr-4 py-4 border-2 border-gray-100 rounded-2xl text-lg font-black focus:outline-none focus:border-orange-500 transition-all bg-gray-50/50 focus:bg-white" 
+                                                    placeholder="0.00" 
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Observaciones / Notas</label>
+                                        <textarea 
+                                            value={notes} 
+                                            onChange={e => setNotes(e.target.value)} 
+                                            className="w-full px-4 py-4 border-2 border-gray-100 rounded-2xl text-sm font-medium focus:outline-none focus:border-orange-500 transition-all min-h-[100px] resize-none bg-gray-50/50 focus:bg-white" 
+                                            placeholder="Detalles adicionales del pago..." 
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* PAGO DIRECTO A PROVEEDOR */}
+                            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                                <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-orange-50/30">
+                                    <h3 className="font-bold text-orange-600 flex items-center gap-2 uppercase text-sm tracking-wider">
+                                        <Building2 size={18} /> Pago Directo a Proveedor
+                                    </h3>
+                                </div>
+                                <div className="p-6 space-y-6">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div className="space-y-2 relative" ref={supplierDropdownRef}>
+                                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Seleccionar Proveedor</label>
+                                            <div className="relative group">
+                                                <input 
+                                                    type="text" 
+                                                    placeholder="- Buscar o seleccionar proveedor -" 
+                                                    value={supplierSearchTerm}
+                                                    onChange={(e) => handleSearchSupplier(e.target.value)}
+                                                    className={`w-full px-4 py-4 border-2 rounded-2xl text-sm font-bold focus:outline-none transition-all bg-gray-50/50 focus:bg-white uppercase ${selectedSupplier ? 'border-green-500 text-green-700' : 'border-gray-100 focus:border-orange-500'}`}
+                                                />
+                                                {isSearchingSupplier && <div className="absolute right-4 top-1/2 -translate-y-1/2"><Loader2 size={16} className="animate-spin text-orange-500"/></div>}
+                                                {selectedSupplier && !isSearchingSupplier && <Check className="absolute right-4 top-1/2 -translate-y-1/2 text-green-500" size={16} />}
+                                            </div>
+                                            
+                                            {/* Resultados Dropdown Proveedores */}
+                                            {supplierSearchResults.length > 0 && (
+                                                <div className="absolute top-full left-0 w-full mt-2 bg-white border border-gray-200 rounded-2xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 z-50">
+                                                    {supplierSearchResults.map(supplier => (
+                                                        <button 
+                                                            key={supplier.codigo}
+                                                            onClick={() => selectSupplier(supplier)}
+                                                            className="w-full text-left p-4 hover:bg-orange-50 border-b border-gray-100 last:border-none transition-colors group"
+                                                        >
+                                                            <div className="flex justify-between items-center">
+                                                                <div>
+                                                                    <p className="text-sm font-black text-gray-800 uppercase group-hover:text-orange-600">{supplier.razon_social}</p>
+                                                                    <p className="text-[10px] font-mono text-gray-400 bg-gray-100 px-1.5 rounded w-fit mt-1">#{supplier.codigo}</p>
+                                                                </div>
+                                                            </div>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Importe Pagado a Proveedor</label>
+                                            <div className="relative group">
+                                                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold group-focus-within:text-orange-500 transition-colors">$</span>
+                                                <input 
+                                                    type="number" 
+                                                    value={supplierPayment} 
+                                                    onChange={e => setSupplierPayment(e.target.value)} 
+                                                    className="w-full pl-10 pr-4 py-4 border-2 border-gray-100 rounded-2xl text-lg font-black focus:outline-none focus:border-orange-500 transition-all bg-gray-50/50 focus:bg-white" 
+                                                    placeholder="0.00" 
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Método de Pago</label>
+                                        <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 w-fit">
+                                            <CheckCircle2 size={16} className="text-orange-500" />
+                                            <span className="text-sm font-bold text-gray-800">Efectivo</span>
+                                            <span className="text-xs text-gray-400 font-medium">(Única opción disponible para este pago)</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Observaciones del Pago</label>
+                                        <textarea 
+                                            value={supplierNotes} 
+                                            onChange={e => setSupplierNotes(e.target.value)} 
+                                            className="w-full px-4 py-4 border-2 border-gray-100 rounded-2xl text-sm font-medium focus:outline-none focus:border-orange-500 transition-all min-h-[100px] resize-none bg-gray-50/50 focus:bg-white" 
+                                            placeholder="Detalles adicionales sobre el pago cruzado..." 
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* RIGHT COLUMN (SUMMARY) */}
+                        <div className="lg:col-span-4">
+                            <div className="bg-white border border-gray-200 rounded-3xl shadow-xl overflow-hidden sticky top-6">
+                                <div className="bg-gradient-to-br from-[#E87C00] to-[#FF9500] p-8 text-center text-white">
+                                    <p className="text-[10px] font-black uppercase tracking-widest mb-2 opacity-80">TOTAL RECIBIDO</p>
+                                    <div className="text-5xl font-black mb-2 flex items-center justify-center gap-2">
+                                        <span className="text-2xl opacity-60">$</span>
+                                        <span className="font-black tracking-tighter">{totalPagado.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</span>
+                                    </div>
+                                    <div className="inline-flex items-center gap-2 bg-black/10 px-3 py-1 rounded-full mt-2">
+                                        <Calendar size={12} className="opacity-60" />
+                                        <p className="text-[10px] font-bold uppercase tracking-wider">{new Date().toLocaleDateString('es-AR')}</p>
+                                    </div>
+                                </div>
+                                
+                                <div className="p-8 space-y-8">
+                                    <div className="space-y-4">
+                                        <div className="flex justify-between items-center text-sm">
+                                            <span className="font-bold text-gray-400 uppercase tracking-wider text-[10px]">Saldo Anterior</span>
+                                            <span className="font-black text-gray-800">$ {currentBalance.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center text-sm">
+                                            <span className="font-bold text-gray-400 uppercase tracking-wider text-[10px]">Abono Hoy</span>
+                                            <span className="font-black text-green-600">- $ {totalPagado.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</span>
+                                        </div>
+                                        <div className="pt-4 border-t border-gray-100">
+                                            <div className="flex justify-between items-center">
+                                                <span className="font-black text-gray-800 uppercase tracking-widest text-xs">Saldo Final</span>
+                                                <span className={`text-xl font-black ${(currentBalance - totalPagado) < 0 ? 'text-green-600' : 'text-orange-600'}`}>
+                                                    $ {(currentBalance - totalPagado).toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        <button 
+                                            onClick={handleSave}
+                                            disabled={isSaving || totalPagado <= 0}
+                                            className="w-full bg-[#E87C00] hover:bg-[#D67200] text-white font-black py-5 rounded-2xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-orange-500/30 disabled:opacity-50 disabled:cursor-not-allowed uppercase text-sm tracking-widest active:scale-95"
+                                        >
+                                            {isSaving ? <Loader2 size={20} className="animate-spin" /> : 'Confirmar Cobranza'}
+                                            {!isSaving && <CheckCircle2 size={20} />}
+                                        </button>
+                                        <button 
+                                            onClick={() => setSelectedClient(null)}
+                                            className="w-full bg-white border-2 border-gray-100 hover:bg-gray-50 text-gray-400 font-black py-4 rounded-2xl flex items-center justify-center gap-2 transition-all uppercase text-[10px] tracking-widest"
+                                        >
+                                            <ArrowLeft size={16} /> Cambiar Cliente
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
 
+                    {/* HISTORIAL DE COBRANZAS */}
+                    <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden mt-8">
+                        <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                            <h3 className="font-bold text-gray-800 flex items-center gap-2 uppercase text-sm tracking-wider">
+                                <Receipt size={18} className="text-primary" /> Historial de Recibos
+                            </h3>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse">
+                                <thead>
+                                    <tr className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                                        <th className="px-6 py-3">Fecha</th>
+                                        <th className="px-6 py-3">Monto</th>
+                                        <th className="px-6 py-3">Notas</th>
+                                        <th className="px-6 py-3 text-right">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-50">
+                                    {history.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={4} className="px-6 py-10 text-center text-gray-400 italic text-sm">No hay cobranzas registradas</td>
+                                        </tr>
+                                    ) : (
+                                        history.map(item => (
+                                            <tr key={item.id} className="hover:bg-gray-50 transition-colors group">
+                                                <td className="px-6 py-4 text-sm font-medium text-gray-600">
+                                                    {new Date(item.date).toLocaleDateString('es-AR')}
+                                                </td>
+                                                <td className="px-6 py-4 text-sm font-black text-gray-800">
+                                                    $ {item.amount.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                                                </td>
+                                                <td className="px-6 py-4 text-xs text-gray-500 max-w-xs truncate italic">
+                                                    {item.notes || '-'}
+                                                </td>
+                                                <td className="px-6 py-4 text-right">
+                                                    <div className="flex justify-end gap-2">
+                                                        <button 
+                                                            onClick={() => setShowReceipt(item)}
+                                                            className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                                                            title="Ver Recibo"
+                                                        >
+                                                            <Receipt size={18} />
+                                                        </button>
+                                                        <button 
+                                                            onClick={() => handleDelete(item.id)}
+                                                            className="p-2 text-red-400 hover:bg-red-50 rounded-lg transition-colors"
+                                                            title="Anular"
+                                                        >
+                                                            <Trash2 size={18} />
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* MODAL DE RECIBO */}
+            {showReceipt && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-300">
+                    <div className="bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
+                        <div className="p-8 border-b border-gray-100 relative">
+                            <button 
+                                onClick={() => setShowReceipt(null)}
+                                className="absolute right-6 top-6 text-gray-400 hover:text-gray-600 transition-colors"
+                            >
+                                <X size={24} />
+                            </button>
+                            <div className="text-center space-y-2">
+                                <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                                    <Receipt size={32} className="text-primary" />
+                                </div>
+                                <h3 className="text-2xl font-black text-gray-800 uppercase italic tracking-tight">Recibo de Pago</h3>
+                                <p className="text-xs font-bold text-gray-400 tracking-widest uppercase">Comprobante No Oficial</p>
+                            </div>
+                        </div>
+                        
+                        <div className="p-8 space-y-6">
+                            <div className="grid grid-cols-2 gap-6">
+                                <div>
+                                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Fecha</p>
+                                    <p className="text-sm font-bold text-gray-800">{new Date(showReceipt.date).toLocaleDateString('es-AR')}</p>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Cliente</p>
+                                    <p className="text-sm font-bold text-gray-800 uppercase">{selectedClient?.nombre}</p>
+                                </div>
+                            </div>
+
+                            <div className="bg-gray-50 rounded-2xl p-6 text-center border border-gray-100">
+                                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Monto Total Recibido</p>
+                                <p className="text-4xl font-black text-primary">$ {showReceipt.amount.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</p>
+                            </div>
+
+                            {showReceipt.notes && (
+                                <div>
+                                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Observaciones</p>
+                                    <p className="text-sm text-gray-600 italic bg-gray-50 p-4 rounded-xl border border-gray-100">{showReceipt.notes}</p>
+                                </div>
+                            )}
+
+                            <div className="pt-6 border-t border-gray-100 flex gap-3">
+                                <button 
+                                    onClick={() => window.print()}
+                                    className="flex-1 bg-gray-800 hover:bg-black text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-black/10 uppercase text-xs tracking-widest"
+                                >
+                                    <Receipt size={18} /> Imprimir
+                                </button>
+                                <button 
+                                    onClick={() => setShowReceipt(null)}
+                                    className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold py-4 rounded-2xl transition-all uppercase text-xs tracking-widest"
+                                >
+                                    Cerrar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>

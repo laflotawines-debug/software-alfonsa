@@ -240,7 +240,7 @@ export interface ClientCollection {
 
 export type WarehouseCode = 'LLERENA' | 'BETBEDER';
 export type InboundStatus = 'borrador' | 'enviado' | 'aprobado' | 'anulado';
-export type MovementType = 'ingreso' | 'ajuste' | 'transferencia' | 'reverso';
+export type MovementType = 'ingreso' | 'ajuste' | 'transferencia' | 'reverso' | 'venta' | 'nota de crédito';
 
 export interface WarehouseMapping {
     id: string;
@@ -439,7 +439,10 @@ export interface Order {
     history: HistoryEntry[];
     customerColor?: string;
     customerInitials?: string;
-    isReservation?: boolean; 
+    isReservation?: boolean;
+    isInterdeposito?: boolean;
+    interdepositoOrigin?: string;
+    interdepositoDestination?: string;
     scheduledDate?: string;
 }
 export interface DetailedOrder extends Order {

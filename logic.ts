@@ -198,6 +198,9 @@ export const getOrderOriginalTotal = (order: Order): number => {
  * Solo aplica si el pedido estuvo o está en reparto.
  */
 export const getOrderRefundTotal = (order: Order): number => {
+    // Si es un movimiento interdepósito, no hay "Notas de Crédito" (NC)
+    if (order.isInterdeposito) return 0;
+
     // Si no ha llegado a tránsito, no hay "devolución" monetaria aún, solo faltantes de stock.
     const hasBeenInTransit = [OrderStatus.EN_TRANSITO, OrderStatus.ENTREGADO, OrderStatus.PAGADO].includes(order.status);
     if (!hasBeenInTransit) return 0;
@@ -238,6 +241,11 @@ export const toggleProductCheck = (order: Order, code: string): Order => {
         if (p.code !== code) return p;
         return { ...p, isChecked: !p.isChecked };
     });
+    return { ...order, products };
+};
+
+export const toggleAllProductsCheck = (order: Order, check: boolean): Order => {
+    const products = order.products.map(p => ({ ...p, isChecked: check }));
     return { ...order, products };
 };
 

@@ -59,6 +59,7 @@ export const Presupuestador: React.FC = () => {
                 const { data, error } = await supabase
                     .from('master_products')
                     .select('*')
+                    .neq('familia', 'ELIMINADOS')
                     .gt('stock_llerena', 0) 
                     .order('desart', { ascending: true })
                     .range(from, from + PAGE_SIZE - 1);

@@ -92,6 +92,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 productCount: (o.order_items || []).length,
                 products: (o.order_items || []).map((i: any) => ({
                     code: i.code,
+                    name: i.name || (i.master_products?.desart) || 'S/N',
                     quantity: i.quantity,
                     originalQuantity: i.original_quantity,
                     shippedQuantity: i.shipped_quantity,

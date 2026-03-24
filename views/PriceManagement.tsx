@@ -60,6 +60,7 @@ export const PriceManagement: React.FC<PriceManagementProps> = ({ currentUser })
                 const { data, error } = await supabase
                     .from('master_products')
                     .select('*')
+                    .neq('familia', 'ELIMINADOS')
                     .order('desart', { ascending: true })
                     .range(from, from + PAGE_SIZE - 1);
                 
@@ -189,7 +190,8 @@ export const PriceManagement: React.FC<PriceManagementProps> = ({ currentUser })
         }
     };
 
-    if (currentUser.role !== 'vale') return <div className="p-20 text-center font-black uppercase opacity-20">Acceso Denegado</div>;
+    const hasAccess = currentUser.role === 'vale' || currentUser.permissions?.includes('tools.price_management');
+    if (!hasAccess) return <div className="p-20 text-center font-black uppercase opacity-20">Acceso Denegado</div>;
 
     const modifiedInFilterCount = filteredProposals.filter(p => p.isModified).length;
 

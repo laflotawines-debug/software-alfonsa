@@ -154,7 +154,7 @@ export const InventoryInbounds: React.FC<{ currentUser: UserType }> = ({ current
         }
 
         const words = trimmed.split(/\s+/).filter(w => w.length > 0);
-        let query = supabase.from('master_products').select('*');
+        let query = supabase.from('master_products').select('*').neq('familia', 'ELIMINADOS');
         words.forEach(word => {
             query = query.ilike('desart', `%${word}%`);
         });
@@ -728,7 +728,7 @@ const InboundDetailsModal: React.FC<{ inbound: StockInbound, onClose: () => void
     const handleSearch = async (val: string) => {
         setSearchProd(val);
         if (val.trim().length < 2) { setFoundProds([]); return; }
-        const { data } = await supabase.from('master_products').select('*').ilike('desart', `%${val}%`).limit(5);
+        const { data } = await supabase.from('master_products').select('*').neq('familia', 'ELIMINADOS').ilike('desart', `%${val}%`).limit(5);
         if (data) setFoundProds(data);
     };
 

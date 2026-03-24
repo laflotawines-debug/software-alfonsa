@@ -76,7 +76,7 @@ export const InventoryAdjustments: React.FC<{ currentUser: UserType }> = ({ curr
         
         // Búsqueda tipo Google para ajustes de stock
         const words = trimmed.split(/\s+/).filter(w => w.length > 0);
-        let query = supabase.from('master_products').select('*');
+        let query = supabase.from('master_products').select('*').neq('familia', 'ELIMINADOS');
         
         words.forEach(word => {
             query = query.ilike('desart', `%${word}%`);
