@@ -183,10 +183,10 @@ export const SuppliersMaster: React.FC<SuppliersMasterProps> = ({ currentUser })
                                 <tr><td colSpan={6} className="p-20 text-center"><Loader2 className="animate-spin text-primary mx-auto" /></td></tr>
                             ) : filteredSuppliers.map(s => (
                                 <tr key={s.codigo} className="hover:bg-primary/5 transition-colors group">
-                                    <td className="p-4 align-top">
+                                    <td className="p-4 align-top whitespace-nowrap">
                                         <span className="font-mono font-black text-primary bg-primary/10 px-2 py-1 rounded border border-primary/20">{s.codigo}</span>
                                     </td>
-                                    <td className="p-4 align-top">
+                                    <td className="p-4 align-top whitespace-nowrap">
                                         <div className="flex flex-col">
                                             <span className="font-bold text-text uppercase text-sm leading-tight">{s.razon_social}</span>
                                             {s.nombre_comercial && (
@@ -196,7 +196,7 @@ export const SuppliersMaster: React.FC<SuppliersMasterProps> = ({ currentUser })
                                             )}
                                         </div>
                                     </td>
-                                    <td className="p-4 align-top">
+                                    <td className="p-4 align-top whitespace-nowrap">
                                         <div className="flex flex-col gap-0.5">
                                             <span className="text-xs font-bold text-text uppercase">
                                                 {s.localidad || '-'}
@@ -211,7 +211,7 @@ export const SuppliersMaster: React.FC<SuppliersMasterProps> = ({ currentUser })
                                             )}
                                         </div>
                                     </td>
-                                    <td className="p-4 align-top">
+                                    <td className="p-4 align-top whitespace-nowrap">
                                         <div className="flex flex-col gap-1">
                                             <div className={`flex items-center gap-1.5 text-xs font-bold ${s.celular ? 'text-text' : 'text-muted opacity-30'}`}>
                                                 <Phone size={12} className="text-primary" /> {s.celular || '-'}

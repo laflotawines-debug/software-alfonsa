@@ -167,7 +167,7 @@ export interface SupplierOrder {
     supplier_code: string;
     supplier_name?: string;
     estimated_arrival: string;
-    status: 'pendiente' | 'confirmado';
+    status: 'pendiente' | 'solicitado' | 'confirmado';
     pdf_url?: string;
     created_at: string;
     created_by: string;
@@ -306,6 +306,8 @@ export interface MasterProduct {
     pventa_3: number;
     pventa_4: number;
     units_per_box?: number;
+    stock_minimo?: number;
+    stock_ideal?: number;
     unicom?: string;
     unidad?: string;
     coeficient?: number;

@@ -55,6 +55,8 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
         familia: product?.familia || '',
         nsubf: product?.nsubf || '',
         units_per_box: product?.units_per_box ?? 6, // Valor por defecto 6
+        stock_minimo: product?.stock_minimo ?? 0,
+        stock_ideal: product?.stock_ideal ?? 0,
         pventa_1: product?.pventa_1 || 0,
         pventa_2: product?.pventa_2 || 0,
         pventa_3: product?.pventa_3 || 0,
@@ -80,6 +82,8 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 familia: formData.familia?.toUpperCase() || null,
                 nsubf: formData.nsubf?.toUpperCase() || null,
                 units_per_box: formData.units_per_box,
+                stock_minimo: formData.stock_minimo,
+                stock_ideal: formData.stock_ideal,
                 pventa_1: formData.pventa_1,
                 pventa_2: formData.pventa_2,
                 pventa_3: formData.pventa_3,
@@ -340,6 +344,26 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                                         onChange={(e) => setFormData({...formData, units_per_box: parseInt(e.target.value) || 0})}
                                         className="w-full bg-background border border-surfaceHighlight rounded-xl py-3.5 px-5 text-sm font-black text-primary outline-none focus:border-primary shadow-inner"
                                         placeholder="Default: 6"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-primary uppercase tracking-widest ml-1">Stock Mínimo</label>
+                                    <input 
+                                        type="number" 
+                                        value={formData.stock_minimo}
+                                        onChange={(e) => setFormData({...formData, stock_minimo: parseInt(e.target.value) || 0})}
+                                        className="w-full bg-background border border-surfaceHighlight rounded-xl py-3.5 px-5 text-sm font-black text-primary outline-none focus:border-primary shadow-inner"
+                                        placeholder="0"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-primary uppercase tracking-widest ml-1">Stock Ideal</label>
+                                    <input 
+                                        type="number" 
+                                        value={formData.stock_ideal}
+                                        onChange={(e) => setFormData({...formData, stock_ideal: parseInt(e.target.value) || 0})}
+                                        className="w-full bg-background border border-surfaceHighlight rounded-xl py-3.5 px-5 text-sm font-black text-primary outline-none focus:border-primary shadow-inner"
+                                        placeholder="0"
                                     />
                                 </div>
                             </div>

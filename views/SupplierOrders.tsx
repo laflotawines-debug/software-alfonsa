@@ -39,7 +39,7 @@ interface SupplierOrdersProps {
 }
 
 export const SupplierOrders: React.FC<SupplierOrdersProps> = ({ currentUser }) => {
-    const [tab, setTab] = useState<'pendiente' | 'confirmado'>('pendiente');
+    const [tab, setTab] = useState<'pendiente' | 'solicitado' | 'confirmado'>('pendiente');
     const [orders, setOrders] = useState<SupplierOrder[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
@@ -105,6 +105,18 @@ export const SupplierOrders: React.FC<SupplierOrdersProps> = ({ currentUser }) =
         });
         return Object.entries(groups).sort((a, b) => a[1].name.localeCompare(b[1].name));
     }, [filteredOrders]);
+
+    const handleMarkAsRequested = async (orderId: string) => {
+        setIsLoading(true);
+        try {
+            const { error } = await supabase
+                .from('supplier_orders')
+                .update({ status: 'solicitado' })
+                .eq('id', orderId);
+            if (error) throw error;
+            await fetchOrders();
+        } catch (e: any) { alert(e.message); } finally { setIsLoading(false); }
+    };
 
     const handleConfirmArrival = async (orderId: string) => {
         setIsLoading(true);
@@ -185,7 +197,8 @@ export const SupplierOrders: React.FC<SupplierOrdersProps> = ({ currentUser }) =
             <div className="flex flex-col lg:flex-row justify-between items-center gap-4 bg-surface p-2 rounded-2xl border border-surfaceHighlight shadow-sm">
                 <div className="flex gap-1 w-full lg:w-auto">
                     {[
-                        { id: 'pendiente', label: 'Pendientes', icon: <Clock size={16}/> },
+                        { id: 'pendiente', label: 'Borradores', icon: <Clock size={16}/> },
+                        { id: 'solicitado', label: 'Solicitados', icon: <PackagePlus size={16}/> },
                         { id: 'confirmado', label: 'Confirmados', icon: <CheckCircle2 size={16}/> }
                     ].map(t => (
                         <button 
@@ -273,8 +286,16 @@ export const SupplierOrders: React.FC<SupplierOrdersProps> = ({ currentUser }) =
                                                     Ver Detalle
                                                 </button>
 
-                                                {/* Botón de Acción Principal (Solo en Pendientes) */}
+                                                {/* Botón de Acción Principal */}
                                                 {tab === 'pendiente' && (
+                                                    <button 
+                                                        onClick={() => handleMarkAsRequested(order.id)}
+                                                        className="flex-1 md:flex-none px-4 py-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 font-black text-[10px] uppercase shadow-lg shadow-blue-900/20 transition-all active:scale-95"
+                                                    >
+                                                        Pedido Solicitado
+                                                    </button>
+                                                )}
+                                                {tab === 'solicitado' && (
                                                     <button 
                                                         onClick={() => handleConfirmArrival(order.id)}
                                                         className="flex-1 md:flex-none px-4 py-2.5 rounded-xl bg-green-600 text-white hover:bg-green-700 font-black text-[10px] uppercase shadow-lg shadow-green-900/20 transition-all active:scale-95"
@@ -813,6 +834,16 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
     const [currentPdfUrl, setCurrentPdfUrl] = useState(order.pdf_url);
     const fileInputRef = useRef<HTMLInputElement>(null);
     
+    const [searchProd, setSearchProd] = useState('');
+    const [searchResults, setSearchResults] = useState<MasterProduct[]>([]);
+    const [isSearching, setIsSearching] = useState(false);
+    const [selectedIndex, setSelectedIndex] = useState(0);
+    const [activeProduct, setActiveProduct] = useState<MasterProduct | null>(null);
+    const [tempBoxes, setTempBoxes] = useState<string>('1');
+    const [tempUnitsPerBox, setTempUnitsPerBox] = useState<string>('');
+    const searchInputRef = useRef<HTMLInputElement>(null);
+    const boxesInputRef = useRef<HTMLInputElement>(null);
+
     useEffect(() => {
         if (order.items) setItems(order.items);
         setCurrentPdfUrl(order.pdf_url);
@@ -867,6 +898,116 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
             setHasChanges(true);
             setDeletingItemId(null);
         } catch (e: any) { alert(e.message); }
+    };
+
+    const handleSearchProd = async (val: string) => {
+        setSearchProd(val);
+        const trimmed = val.trim();
+        if (trimmed.length < 2) { 
+            setSearchResults([]); 
+            setIsSearching(false);
+            setSelectedIndex(0);
+            return; 
+        }
+        
+        setIsSearching(true);
+        try {
+            const tokens = trimmed.split(/\s+/).filter(t => t.length > 0);
+            let query = supabase.from('master_products').select('codart, desart, units_per_box').neq('familia', 'ELIMINADOS');
+            tokens.forEach(token => {
+                query = query.ilike('desart', `%${token}%`);
+            });
+            const { data, error } = await query.limit(10);
+            if (error) throw error;
+            setSearchResults(data || []);
+            setSelectedIndex(0);
+        } catch (e) {
+            console.error("Error en búsqueda:", e);
+        } finally {
+            setIsSearching(false);
+        }
+    };
+
+    const handleSearchKeyDown = (e: React.KeyboardEvent) => {
+        if (searchResults.length > 0) {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setSelectedIndex(prev => (prev + 1) % searchResults.length);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setSelectedIndex(prev => (prev - 1 + searchResults.length) % searchResults.length);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                handleSelectFromSearch(searchResults[selectedIndex]);
+            }
+        }
+    };
+
+    const handleSelectFromSearch = (p: MasterProduct) => {
+        setActiveProduct(p);
+        setTempBoxes('1');
+        setTempUnitsPerBox(String(p.units_per_box || 6));
+        setSearchResults([]);
+        setSearchProd('');
+        
+        setTimeout(() => {
+            boxesInputRef.current?.focus();
+            boxesInputRef.current?.select();
+        }, 10);
+    };
+
+    const handleCalculatorKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            handleAddItem();
+        } else if (e.key === 'Escape') {
+            setActiveProduct(null);
+            searchInputRef.current?.focus();
+        }
+    };
+
+    const handleAddItem = async () => {
+        if (!activeProduct) return;
+        const b = parseInt(tempBoxes) || 0;
+        const u = parseInt(tempUnitsPerBox) || 0;
+
+        if (b <= 0 && u <= 0) {
+            alert("Ingrese una cantidad válida.");
+            return;
+        }
+
+        const totalQty = b * u;
+
+        try {
+            const existing = items.find(i => i.codart === activeProduct.codart);
+            if (existing) {
+                alert("El producto ya está en el pedido. Puede modificar su cantidad.");
+                return;
+            }
+
+            const { data, error } = await supabase.from('supplier_order_items').insert({
+                order_id: order.id,
+                codart: activeProduct.codart,
+                quantity: totalQty
+            }).select('*, master_products(desart, units_per_box)').single();
+
+            if (error) throw error;
+
+            const newItem = {
+                ...data,
+                desart: data.master_products?.desart || activeProduct.desart,
+                units_per_box: data.master_products?.units_per_box || activeProduct.units_per_box || 6
+            };
+
+            setItems([...items, newItem]);
+            setHasChanges(true);
+            setActiveProduct(null);
+            setSearchProd('');
+            setTempBoxes('1');
+            searchInputRef.current?.focus();
+        } catch (e: any) {
+            alert(e.message);
+        }
     };
 
     const handleCopyOrder = () => {
@@ -985,7 +1126,7 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
                                 <tr>
                                     <th className="p-4">Artículo</th>
                                     <th className="p-4 text-center">Cantidad Total</th>
-                                    {tab === 'pendiente' && <th className="p-4 text-center w-24"></th>}
+                                    {tab !== 'confirmado' && <th className="p-4 text-center w-24"></th>}
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-surfaceHighlight">
@@ -1003,7 +1144,7 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
                                             </td>
                                             <td className="p-4">
                                                 <div className="flex flex-col items-center justify-center gap-1">
-                                                    {tab === 'pendiente' ? (
+                                                    {tab !== 'confirmado' ? (
                                                         <input 
                                                             type="number" 
                                                             value={item.quantity} 
@@ -1018,7 +1159,7 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
                                                     </span>
                                                 </div>
                                             </td>
-                                            {tab === 'pendiente' && (
+                                            {tab !== 'confirmado' && (
                                                 <td className="p-4 text-center">
                                                     {deletingItemId === item.id ? (
                                                         <div className="flex items-center justify-center gap-2 animate-in zoom-in">
@@ -1039,6 +1180,100 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
                             </tbody>
                         </table>
                     </div>
+
+                    {/* Add Product Section */}
+                    {tab !== 'confirmado' && (
+                        <div className="border border-surfaceHighlight rounded-2xl p-4 bg-surface space-y-4">
+                            <h4 className="text-xs font-black uppercase text-muted flex items-center gap-2"><Sparkles size={12}/> Buscar Artículo para Agregar</h4>
+                            
+                            <div className="space-y-2 relative">
+                                <div className="relative">
+                                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
+                                    <input 
+                                        ref={searchInputRef}
+                                        type="text"
+                                        value={searchProd}
+                                        onChange={e => handleSearchProd(e.target.value)}
+                                        onKeyDown={handleSearchKeyDown}
+                                        placeholder="Escribe para buscar... Ej: 'fer bran'"
+                                        className="w-full bg-background border border-surfaceHighlight rounded-2xl py-4 pl-12 pr-4 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase transition-all"
+                                    />
+                                    {isSearching && <div className="absolute right-4 top-1/2 -translate-y-1/2"><Loader2 size={16} className="animate-spin text-primary"/></div>}
+                                </div>
+                                {searchResults.length > 0 && (
+                                    <div className="absolute top-full left-0 w-full bg-surface border border-primary/30 rounded-2xl shadow-2xl mt-1 z-50 overflow-hidden">
+                                        {searchResults.map((p, idx) => (
+                                            <button 
+                                                key={p.codart} 
+                                                onClick={() => handleSelectFromSearch(p)} 
+                                                onMouseEnter={() => setSelectedIndex(idx)}
+                                                className={`w-full p-4 text-left border-b border-surfaceHighlight last:border-none flex justify-between items-center group transition-colors ${selectedIndex === idx ? 'bg-primary/10' : 'hover:bg-primary/5'}`}
+                                            >
+                                                <div className="flex flex-col">
+                                                    <span className={`text-xs font-black uppercase ${selectedIndex === idx ? 'text-primary' : 'text-text'}`}>{p.desart}</span>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-[9px] font-mono text-muted">#{p.codart}</span>
+                                                        <span className="text-[9px] font-bold text-primary/60 uppercase italic">Empaque: {p.units_per_box || 6} un.</span>
+                                                    </div>
+                                                </div>
+                                                {selectedIndex === idx && <Plus size={14} className="text-primary animate-in zoom-in" />}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {activeProduct && (
+                                <div className="p-6 bg-primary/5 border border-primary/20 rounded-3xl space-y-4 animate-in zoom-in-95">
+                                    <div className="flex justify-between items-start">
+                                        <h4 className="font-black text-primary uppercase text-sm leading-tight flex-1 pr-4">{activeProduct.desart}</h4>
+                                        <button onClick={() => setActiveProduct(null)} className="p-1 text-muted hover:text-red-500"><X size={18}/></button>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[9px] font-black text-muted uppercase ml-1">Cant. Cajas (Enter para agregar)</label>
+                                            <div className="relative">
+                                                <Calculator className="absolute left-3 top-1/2 -translate-y-1/2 text-primary/40" size={14} />
+                                                <input 
+                                                    ref={boxesInputRef}
+                                                    type="number" 
+                                                    value={tempBoxes} 
+                                                    onChange={e => setTempBoxes(e.target.value)} 
+                                                    onKeyDown={handleCalculatorKeyDown}
+                                                    className="w-full bg-background border border-surfaceHighlight rounded-xl p-3 pl-10 text-center font-black outline-none focus:border-primary shadow-sm" 
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[9px] font-black text-muted uppercase ml-1">Unidades por Caja</label>
+                                            <div className="relative">
+                                                <Boxes className="absolute left-3 top-1/2 -translate-y-1/2 text-primary/40" size={14} />
+                                                <input 
+                                                    type="number" 
+                                                    value={tempUnitsPerBox} 
+                                                    onChange={e => setTempUnitsPerBox(e.target.value)} 
+                                                    onKeyDown={handleCalculatorKeyDown}
+                                                    className="w-full bg-background border border-surfaceHighlight rounded-xl p-3 pl-10 text-center font-black outline-none focus:border-primary shadow-sm" 
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center justify-between pt-2 border-t border-primary/10">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[10px] font-black text-muted uppercase">Total a pedir:</span>
+                                            <span className="text-lg font-black text-primary">{(parseInt(tempBoxes)||0) * (parseInt(tempUnitsPerBox)||0)} un.</span>
+                                        </div>
+                                        <button 
+                                            onClick={handleAddItem}
+                                            className="bg-primary text-white px-6 py-3 rounded-xl font-black text-xs uppercase shadow-lg shadow-primary/20 hover:bg-primaryHover transition-all active:scale-95 flex items-center gap-2"
+                                        >
+                                            <Plus size={16}/> Agregar
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 <div className="p-6 bg-surface border-t border-surfaceHighlight">

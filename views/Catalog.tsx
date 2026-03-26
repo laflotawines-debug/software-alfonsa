@@ -7,16 +7,19 @@ import {
     Loader2, 
     Boxes, 
     ChevronRight, 
+    ChevronLeft,
     AlertCircle,
     Plus,
     ShieldCheck,
     Truck,
     Layers,
-    Building2
+    Building2,
+    Settings
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { MasterProduct, User, SupplierMaster } from '../types';
 import { ProductDetailModal } from '../components/ProductDetailModal';
+import { BulkEditStockModal } from '../components/BulkEditStockModal';
 
 interface CatalogProps {
     currentUser: User;
@@ -29,12 +32,16 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedProduct, setSelectedProduct] = useState<MasterProduct | null>(null);
     const [isCreating, setIsCreating] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [isBulkEditing, setIsBulkEditing] = useState(false);
     
     const [familyFilter, setFamilyFilter] = useState<string>('TODAS');
     const [subfamilyFilter, setSubfamilyFilter] = useState<string>('TODAS');
     const [providerFilter, setProviderFilter] = useState<string>('TODOS');
     const [showDeleted, setShowDeleted] = useState(false);
     const [showWithoutStock, setShowWithoutStock] = useState(false);
+    const [currentPage, setCurrentPage] = useState(1);
+    const ITEMS_PER_PAGE = 100;
 
     const fetchData = async () => {
         setIsLoading(true);
@@ -127,6 +134,17 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
         });
     }, [products, searchTerm, familyFilter, subfamilyFilter, providerFilter]);
 
+    // Resetear a la página 1 cuando cambian los filtros
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchTerm, familyFilter, subfamilyFilter, providerFilter, showDeleted, showWithoutStock]);
+
+    const totalPages = Math.ceil(filteredProducts.length / ITEMS_PER_PAGE);
+    const paginatedProducts = useMemo(() => {
+        const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+        return filteredProducts.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+    }, [filteredProducts, currentPage]);
+
     return (
         <div className="flex flex-col gap-6 pb-10 animate-in fade-in duration-500">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -138,6 +156,14 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
                     <p className="text-muted text-sm mt-1 font-medium italic">Base de datos de productos y proveedores vinculados.</p>
                 </div>
                 <div className="flex items-center gap-3 w-full md:w-auto">
+                    {selectedIds.length > 0 && (
+                        <button 
+                            onClick={() => setIsBulkEditing(true)}
+                            className="flex items-center gap-2 bg-surface border border-primary text-primary hover:bg-primary/10 px-4 py-4 rounded-2xl font-black text-sm uppercase transition-all shadow-sm"
+                        >
+                            <Settings size={20} /> Ajuste Masivo ({selectedIds.length})
+                        </button>
+                    )}
                     <button 
                         onClick={fetchData} 
                         disabled={isLoading}
@@ -238,6 +264,20 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
                     <table className="w-full text-left">
                         <thead className="bg-background/50 text-[10px] text-muted uppercase font-black tracking-widest border-b border-surfaceHighlight">
                             <tr>
+                                <th className="p-4 w-12 text-center">
+                                    <input 
+                                        type="checkbox" 
+                                        className="w-4 h-4 rounded border-surfaceHighlight text-primary focus:ring-primary"
+                                        checked={filteredProducts.length > 0 && selectedIds.length === filteredProducts.length}
+                                        onChange={(e) => {
+                                            if (e.target.checked) {
+                                                setSelectedIds(filteredProducts.map(p => p.codart));
+                                            } else {
+                                                setSelectedIds([]);
+                                            }
+                                        }}
+                                    />
+                                </th>
                                 <th className="p-4">Artículo / Clasificación</th>
                                 <th className="p-4 text-center">Betbeder</th>
                                 <th className="p-4 text-center">Llerena</th>
@@ -251,15 +291,29 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
                                 <tr><td colSpan={6} className="p-24 text-center"><Loader2 size={48} className="animate-spin text-primary mx-auto" /></td></tr>
                             ) : filteredProducts.length === 0 ? (
                                 <tr><td colSpan={6} className="p-20 text-center text-muted font-bold italic uppercase">No se encontraron artículos con los filtros aplicados.</td></tr>
-                            ) : filteredProducts.map((p) => {
+                            ) : paginatedProducts.map((p) => {
                                 const officialName = p.codprove ? suppliersMap.get(p.codprove) : null;
                                 return (
                                     <tr 
                                         key={p.codart} 
-                                        onClick={() => setSelectedProduct(p)}
-                                        className="group hover:bg-primary/5 transition-colors cursor-pointer"
+                                        className="group hover:bg-primary/5 transition-colors"
                                     >
-                                        <td className="p-4">
+                                        <td className="p-4 text-center">
+                                            <input 
+                                                type="checkbox" 
+                                                className="w-4 h-4 rounded border-surfaceHighlight text-primary focus:ring-primary cursor-pointer"
+                                                checked={selectedIds.includes(p.codart)}
+                                                onChange={(e) => {
+                                                    if (e.target.checked) {
+                                                        setSelectedIds([...selectedIds, p.codart]);
+                                                    } else {
+                                                        setSelectedIds(selectedIds.filter(id => id !== p.codart));
+                                                    }
+                                                }}
+                                                onClick={(e) => e.stopPropagation()}
+                                            />
+                                        </td>
+                                        <td className="p-4 cursor-pointer" onClick={() => setSelectedProduct(p)}>
                                             <div className="flex flex-col gap-1.5">
                                                 <div className="flex items-center gap-2">
                                                     <span className="text-[10px] font-black text-primary bg-primary/10 px-2 py-0.5 rounded">#{p.codart}</span>
@@ -295,7 +349,7 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
                                                 </div>
                                             </div>
                                         </td>
-                                        <td className="p-4 text-center">
+                                        <td className="p-4 text-center cursor-pointer" onClick={() => setSelectedProduct(p)}>
                                             <div className="flex flex-col items-center">
                                                 <span className={`text-sm font-black ${p.stock_betbeder && p.stock_betbeder > 0 ? 'text-orange-500' : 'text-muted opacity-30'}`}>
                                                     {p.stock_betbeder || 0}
@@ -303,7 +357,7 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
                                                 <span className="text-[7px] font-black text-muted uppercase">BBD</span>
                                             </div>
                                         </td>
-                                        <td className="p-4 text-center">
+                                        <td className="p-4 text-center cursor-pointer" onClick={() => setSelectedProduct(p)}>
                                             <div className="flex flex-col items-center">
                                                 <span className={`text-sm font-black ${p.stock_llerena && p.stock_llerena > 0 ? 'text-blue-500' : 'text-muted opacity-30'}`}>
                                                     {p.stock_llerena || 0}
@@ -311,13 +365,13 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
                                                 <span className="text-[7px] font-black text-muted uppercase">LLE</span>
                                             </div>
                                         </td>
-                                        <td className="p-4 text-right">
+                                        <td className="p-4 text-right cursor-pointer" onClick={() => setSelectedProduct(p)}>
                                             <span className="text-sm font-black text-text">$ {(p.pventa_1 || 0).toLocaleString('es-AR')}</span>
                                         </td>
-                                        <td className="p-4 text-right">
+                                        <td className="p-4 text-right cursor-pointer" onClick={() => setSelectedProduct(p)}>
                                             <span className="text-sm font-black text-primary">$ {(p.pventa_4 || 0).toLocaleString('es-AR')}</span>
                                         </td>
-                                        <td className="p-4">
+                                        <td className="p-4 cursor-pointer" onClick={() => setSelectedProduct(p)}>
                                             <ChevronRight size={18} className="text-muted group-hover:text-primary transition-all" />
                                         </td>
                                     </tr>
@@ -326,6 +380,34 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
                         </tbody>
                     </table>
                 </div>
+                
+                {/* Paginación */}
+                {totalPages > 1 && (
+                    <div className="p-4 border-t border-surfaceHighlight bg-background/50 flex items-center justify-between">
+                        <div className="text-xs font-bold text-muted uppercase tracking-widest">
+                            Mostrando {(currentPage - 1) * ITEMS_PER_PAGE + 1} a {Math.min(currentPage * ITEMS_PER_PAGE, filteredProducts.length)} de {filteredProducts.length}
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                                disabled={currentPage === 1}
+                                className="p-2 rounded-xl bg-surface border border-surfaceHighlight text-text hover:bg-surfaceHighlight transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <ChevronLeft size={18} />
+                            </button>
+                            <span className="text-sm font-black text-text px-4">
+                                {currentPage} / {totalPages}
+                            </span>
+                            <button
+                                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                                disabled={currentPage === totalPages}
+                                className="p-2 rounded-xl bg-surface border border-surfaceHighlight text-text hover:bg-surfaceHighlight transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <ChevronRight size={18} />
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {(selectedProduct || isCreating) && (
@@ -340,6 +422,18 @@ export const Catalog: React.FC<CatalogProps> = ({ currentUser }) => {
                     }} 
                     currentUser={currentUser}
                     masterSuppliers={masterSuppliers}
+                />
+            )}
+
+            {isBulkEditing && (
+                <BulkEditStockModal
+                    selectedIds={selectedIds}
+                    onClose={() => setIsBulkEditing(false)}
+                    onSuccess={() => {
+                        setIsBulkEditing(false);
+                        setSelectedIds([]);
+                        fetchData();
+                    }}
                 />
             )}
         </div>
