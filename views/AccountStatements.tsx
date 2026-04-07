@@ -22,7 +22,8 @@ import {
     Eye,
     Activity,
     LogOut,
-    Printer
+    Printer,
+    Upload
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { ClientMaster, AccountMovement, MasterProduct, User } from '../types';
@@ -284,6 +285,96 @@ export const AccountStatements: React.FC<{ currentUser: User }> = ({ currentUser
         }).sort((a, b) => b.balance - a.balance);
     }, [clientsList, listSearchTerm]);
 
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const handleImportInitialBalances = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async (evt) => {
+            try {
+                const bstr = evt.target?.result;
+                const wb = XLSX.read(bstr, { type: 'binary' });
+                const wsname = wb.SheetNames[0];
+                const ws = wb.Sheets[wsname];
+                const data = XLSX.utils.sheet_to_json(ws);
+
+                const movementsToInsert = [];
+                for (const row of data as any[]) {
+                    let code = row['Código'];
+                    if (!code) continue;
+                    
+                    code = String(code).trim();
+                    if (code.length < 4) {
+                        code = code.padStart(4, '0');
+                    }
+
+                    let saldoStr = row['Saldo'];
+                    if (saldoStr === undefined || saldoStr === null) continue;
+                    
+                    let saldo = 0;
+                    if (typeof saldoStr === 'number') {
+                        saldo = saldoStr;
+                    } else if (typeof saldoStr === 'string') {
+                        saldo = parseFloat(saldoStr.replace(',', '.'));
+                    }
+
+                    if (isNaN(saldo)) continue;
+
+                    const debit = saldo > 0 ? saldo : 0;
+                    const credit = saldo < 0 ? Math.abs(saldo) : 0;
+
+                    movementsToInsert.push({
+                        client_code: code,
+                        date: new Date().toISOString().split('T')[0],
+                        concept: 'Saldo Inicial',
+                        debit: debit,
+                        credit: credit,
+                        created_by: currentUser.id
+                    });
+                }
+
+                if (movementsToInsert.length > 0) {
+                    const clientCodes = movementsToInsert.map(m => m.client_code);
+                    
+                    // Delete existing "Saldo Inicial" for these clients to allow re-importing
+                    await supabase.from('client_account_movements')
+                        .delete()
+                        .in('client_code', clientCodes)
+                        .eq('concept', 'Saldo Inicial');
+
+                    const { error } = await supabase.from('client_account_movements').insert(movementsToInsert);
+                    if (error) throw error;
+                    
+                    alert(`Se importaron ${movementsToInsert.length} saldos iniciales correctamente.`);
+                    fetchClientsWithBalances();
+                } else {
+                    alert("No se encontraron datos válidos para importar.");
+                }
+            } catch (err: any) {
+                alert("Error al importar: " + err.message);
+            }
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
+        };
+        reader.readAsBinaryString(file);
+    };
+
+    const exportClientsListToExcel = () => {
+        const data = filteredClients.map(c => ({
+            'Código': c.codigo,
+            'Cliente / Razón Social': c.nombre,
+            'Localidad': c.localidad || '',
+            'Saldo': c.balance
+        }));
+        const ws = XLSX.utils.json_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Saldos Clientes");
+        XLSX.writeFile(wb, `Saldos_Clientes_${new Date().toISOString().split('T')[0]}.xlsx`);
+    };
+
     return (
         <div className="flex flex-col gap-6 pb-20 animate-in fade-in duration-500 max-w-7xl mx-auto w-full">
             <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
@@ -350,6 +441,27 @@ export const AccountStatements: React.FC<{ currentUser: User }> = ({ currentUser
                                 className="w-full bg-background border border-surfaceHighlight rounded-xl py-3.5 pl-12 pr-4 text-sm font-bold text-text outline-none focus:border-primary transition-all shadow-inner uppercase"
                             />
                         </div>
+                        <input 
+                            type="file" 
+                            accept=".xlsx, .xls" 
+                            className="hidden" 
+                            ref={fileInputRef}
+                            onChange={handleImportInitialBalances}
+                        />
+                        <button 
+                            onClick={() => fileInputRef.current?.click()}
+                            className="flex-shrink-0 flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-600 hover:bg-blue-500 hover:text-white transition-all font-black text-[10px] uppercase shadow-sm"
+                            title="Importar Saldos Iniciales"
+                        >
+                            <Upload size={18} /> Importar Saldos
+                        </button>
+                        <button 
+                            onClick={exportClientsListToExcel}
+                            className="flex-shrink-0 flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-green-500/10 border border-green-500/20 text-green-600 hover:bg-green-500 hover:text-white transition-all font-black text-[10px] uppercase shadow-sm"
+                            title="Exportar a Excel"
+                        >
+                            <FileSpreadsheet size={18} /> Exportar
+                        </button>
                     </div>
 
                     <div className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm">
@@ -377,7 +489,7 @@ export const AccountStatements: React.FC<{ currentUser: User }> = ({ currentUser
                                             <td className="p-4">
                                                 <div className="flex flex-col">
                                                     <span className="text-sm font-black text-text uppercase leading-tight truncate max-w-[300px] group-hover:text-primary transition-colors">
-                                                        {c.nombre || 'SIN NOMBRE'}
+                                                        {c.nombre || 'SIN NOMBRE'} {c.activo === false && <span className="text-[10px] text-red-500 ml-2">(INACTIVO)</span>}
                                                     </span>
                                                     <span className="text-[10px] font-bold text-muted mt-0.5 uppercase">
                                                         {c.localidad || '-'}

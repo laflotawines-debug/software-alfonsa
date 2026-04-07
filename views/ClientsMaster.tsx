@@ -19,11 +19,13 @@ import {
     CheckCircle2,
     Edit2,
     Trash2,
-    AlertTriangle
+    AlertTriangle,
+    Wand2
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { ClientMaster, User } from '../types';
 import * as XLSX from 'xlsx';
+import { ClientModal } from '../components/ClientModal';
 
 interface ClientsMasterProps {
     currentUser: User;
@@ -34,6 +36,7 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [showInactive, setShowInactive] = useState(false); // New state for filtering active/inactive
+    const [classificationFilter, setClassificationFilter] = useState<string>('TODAS'); // New state for classification filter
     
     // Modales y Estados
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -45,6 +48,7 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
     
     // Estado para Eliminación
     const [clientToDelete, setClientToDelete] = useState<ClientMaster | null>(null);
+    const [classifications, setClassifications] = useState<any[]>([]);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -64,10 +68,23 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
                 query = query.neq('activo', false);
             }
 
+            if (classificationFilter !== 'TODAS') {
+                if (classificationFilter === 'SIN_CLASIFICAR') {
+                    query = query.is('classification_id', null);
+                } else {
+                    query = query.eq('classification_id', classificationFilter);
+                }
+            }
+
             const { data, error } = await query;
 
             if (error) throw error;
             setClients(data || []);
+            
+            const { data: classData, error: classError } = await supabase.from('client_classifications').select('*');
+            if (!classError && classData) {
+                setClassifications(classData);
+            }
         } catch (err: any) {
             console.error("Error cargando clientes:", err);
         } finally {
@@ -77,7 +94,7 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
 
     useEffect(() => {
         fetchData();
-    }, [showInactive]);
+    }, [showInactive, classificationFilter]);
 
     // --- LÓGICA DE ELIMINACIÓN ---
     const executeDelete = async () => {
@@ -195,6 +212,97 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
         reader.readAsArrayBuffer(file);
     };
 
+    const exportToExcel = () => {
+        const data = filteredClients.map(c => ({
+            'Código': c.codigo,
+            'Nombre': c.nombre,
+            'Localidad': c.localidad || '',
+            'Provincia': c.provincia || '',
+            'Dirección': c.domicilio || '',
+            'Teléfono/Celular': c.celular || '',
+            'Email': c.email || '',
+            'Contacto': c.contacto || '',
+            'Lista de Precios': c.price_list || 1,
+            'Estado': c.activo ? 'Activo' : 'Inactivo'
+        }));
+        const ws = XLSX.utils.json_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Clientes");
+        XLSX.writeFile(wb, `Maestro_Clientes_${new Date().toISOString().split('T')[0]}.xlsx`);
+    };
+
+    const optimizeClients = async () => {
+        if (!window.confirm("¿Desea optimizar la cartera de clientes? Esto marcará como INACTIVOS a los clientes que no hayan tenido movimientos en su estado de cuenta en los últimos 30 días.")) return;
+        
+        setIsProcessing(true);
+        try {
+            // 1. Obtener todos los clientes activos
+            const { data: activeClients, error: clientsErr } = await supabase
+                .from('clients_master')
+                .select('codigo, nombre, created_at')
+                .neq('activo', false);
+                
+            if (clientsErr) throw clientsErr;
+            if (!activeClients || activeClients.length === 0) {
+                alert("No hay clientes activos para optimizar.");
+                return;
+            }
+
+            // 2. Obtener la fecha límite (hace 30 días)
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            const thresholdDate = thirtyDaysAgo.toISOString();
+
+            // 3. Obtener el último movimiento de cada cliente en los últimos 30 días
+            const { data: recentMovements, error: movErr } = await supabase
+                .from('client_account_movements')
+                .select('client_code')
+                .gte('date', thresholdDate);
+                
+            if (movErr) throw movErr;
+
+            const activeClientCodes = new Set(recentMovements?.map(m => m.client_code) || []);
+
+            // 4. Determinar cuáles clientes desactivar
+            const clientsToDeactivate = activeClients.filter(c => {
+                // Si tuvo movimientos recientes, no se desactiva
+                if (activeClientCodes.has(c.codigo)) return false;
+                
+                // Si no tuvo movimientos, pero fue creado hace menos de 30 días, tampoco se desactiva
+                if (c.created_at && new Date(c.created_at) > thirtyDaysAgo) return false;
+                
+                return true;
+            });
+
+            if (clientsToDeactivate.length === 0) {
+                alert("Todos los clientes activos han tenido movimientos en los últimos 30 días o son nuevos. No hay nada que optimizar.");
+                return;
+            }
+
+            // 5. Desactivar esos clientes
+            const codesToDeactivate = clientsToDeactivate.map(c => c.codigo);
+            
+            const chunkSize = 100;
+            for (let i = 0; i < codesToDeactivate.length; i += chunkSize) {
+                const chunk = codesToDeactivate.slice(i, i + chunkSize);
+                const { error: updErr } = await supabase
+                    .from('clients_master')
+                    .update({ activo: false })
+                    .in('codigo', chunk);
+                    
+                if (updErr) throw updErr;
+            }
+
+            alert(`Optimización completada. Se han marcado ${clientsToDeactivate.length} clientes como inactivos.`);
+            fetchData();
+        } catch (err: any) {
+            console.error("Error en optimización:", err);
+            alert("Error al optimizar: " + err.message);
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
     const filteredClients = useMemo(() => {
         const keywords = searchTerm.toLowerCase().split(/\s+/).filter(k => k.length > 0);
         return clients.filter(c => {
@@ -227,6 +335,21 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
                 </div>
                 <div className="flex items-center gap-3 w-full md:w-auto">
                     <button 
+                        onClick={optimizeClients}
+                        disabled={isProcessing}
+                        className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-4 rounded-2xl bg-orange-500/10 border border-orange-500/20 text-orange-600 hover:bg-orange-500 hover:text-white transition-all font-black text-[10px] uppercase shadow-sm disabled:opacity-50"
+                        title="Desactiva clientes sin movimientos en 30 días"
+                    >
+                        {isProcessing ? <Loader2 size={18} className="animate-spin" /> : <Wand2 size={18} />} Optimizar
+                    </button>
+                    <button 
+                        onClick={exportToExcel}
+                        className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-4 rounded-2xl bg-green-500/10 border border-green-500/20 text-green-600 hover:bg-green-500 hover:text-white transition-all font-black text-[10px] uppercase shadow-sm"
+                        title="Exportar a Excel"
+                    >
+                        <FileSpreadsheet size={18} /> Exportar
+                    </button>
+                    <button 
                         onClick={() => setIsImportModalOpen(true)}
                         className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-4 rounded-2xl bg-surface border border-surfaceHighlight text-muted hover:text-primary transition-all font-black text-[10px] uppercase shadow-sm"
                     >
@@ -256,6 +379,19 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
                     >
                         Inactivos
                     </button>
+                </div>
+                <div className="w-full md:w-48 relative">
+                    <select 
+                        value={classificationFilter} 
+                        onChange={(e) => setClassificationFilter(e.target.value)} 
+                        className="w-full bg-background border border-surfaceHighlight rounded-xl py-3.5 px-4 text-sm font-black text-muted outline-none cursor-pointer appearance-none uppercase"
+                    >
+                        <option value="TODAS">Todas las clasif.</option>
+                        <option value="SIN_CLASIFICAR">Sin clasificar</option>
+                        {classifications.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                    </select>
                 </div>
                 <div className="relative flex-1 w-full">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
@@ -307,9 +443,16 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
                                             <span className="text-sm font-black text-text uppercase leading-tight truncate max-w-[300px]">
                                                 {c.nombre || 'SIN NOMBRE'}
                                             </span>
-                                            <span className="text-[10px] font-bold text-muted mt-0.5 flex items-center gap-1">
-                                                <MapPin size={10} className="text-primary" /> {c.domicilio || 'SIN DOMICILIO'}
-                                            </span>
+                                            <div className="flex items-center gap-2 mt-0.5">
+                                                <span className="text-[10px] font-bold text-muted flex items-center gap-1">
+                                                    <MapPin size={10} className="text-primary" /> {c.domicilio || 'SIN DOMICILIO'}
+                                                </span>
+                                                {c.classification_id && (
+                                                    <span className="text-[9px] font-black text-white bg-primary/80 px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                                        {classifications.find(cl => cl.id === c.classification_id)?.name || ''}
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
                                     </td>
                                     <td className="p-4">
@@ -468,210 +611,4 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
     );
 };
 
-// --- SUB-COMPONENTE: MODAL CLIENTE ---
-const ClientModal: React.FC<{ initialData: ClientMaster | null, onClose: () => void, onSuccess: () => void }> = ({ initialData, onClose, onSuccess }) => {
-    const [isSaving, setIsSaving] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [formData, setFormData] = useState({
-        codigo: initialData?.codigo || '',
-        nombre: initialData?.nombre || '',
-        domicilio: initialData?.domicilio || '',
-        localidad: initialData?.localidad || '',
-        provincia: initialData?.provincia || '',
-        celular: initialData?.celular || '',
-        email: initialData?.email || '',
-        price_list: initialData?.price_list || 2, // Default to List 2
-        contacto: initialData?.contacto || '',
-        activo: initialData?.activo !== false // Default to true
-    });
 
-    const isEdit = !!initialData;
-
-    const handleSave = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!formData.codigo || !formData.nombre) return setError("Código y Nombre son obligatorios.");
-        
-        setIsSaving(true);
-        setError(null);
-        try {
-            const payload = {
-                codigo: formData.codigo.trim().toUpperCase(),
-                nombre: formData.nombre.trim().toUpperCase(),
-                domicilio: formData.domicilio?.trim().toUpperCase() || null,
-                localidad: formData.localidad?.trim().toUpperCase() || null,
-                provincia: formData.provincia?.trim().toUpperCase() || null,
-                celular: formData.celular?.trim() || null,
-                email: formData.email?.trim().toLowerCase() || null,
-                price_list: formData.price_list,
-                contacto: formData.contacto?.trim().toUpperCase() || null,
-                activo: formData.activo
-            };
-
-            if (isEdit) {
-                const { error: updError } = await supabase
-                    .from('clients_master')
-                    .update(payload)
-                    .eq('codigo', initialData.codigo);
-                if (updError) throw updError;
-            } else {
-                const { error: insError } = await supabase.from('clients_master').insert([payload]);
-                if (insError) {
-                    if (insError.code === '23505') throw new Error("El código de cliente ya existe.");
-                    throw insError;
-                }
-            }
-            onSuccess();
-        } catch (err: any) {
-            if (err.message?.includes("Could not find the 'price_list' column")) {
-                setError("⚠️ Error de Base de Datos: Falta la columna 'price_list'. Por favor solicite al administrador ejecutar el script de actualización.");
-            } else if (err.message?.includes("Could not find the 'contacto' column")) {
-                setError("⚠️ Error de Base de Datos: Falta la columna 'contacto'. Por favor solicite al administrador ejecutar el script de actualización.");
-            } else if (err.message?.includes("Could not find the 'activo' column")) {
-                setError("⚠️ Error de Base de Datos: Falta la columna 'activo'. Por favor solicite al administrador ejecutar el script de actualización.");
-            } else {
-                setError(err.message);
-            }
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-            <div className="bg-surface w-full max-w-2xl rounded-3xl border border-surfaceHighlight shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-                <div className="p-6 border-b border-surfaceHighlight flex justify-between items-center bg-background/30 shrink-0">
-                    <h3 className="text-xl font-black text-text uppercase italic">
-                        {isEdit ? `Editando: ${initialData.nombre}` : 'Ficha de Nuevo Cliente'}
-                    </h3>
-                    <button onClick={onClose} className="p-2 hover:bg-surfaceHighlight rounded-full text-muted transition-colors"><X size={24}/></button>
-                </div>
-                
-                <div className="overflow-y-auto p-8">
-                    <form onSubmit={handleSave} className="space-y-6">
-                        {error && (
-                            <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-2xl text-red-600 text-xs font-bold flex items-center gap-3 animate-in shake">
-                                <AlertCircle size={18} /> {error}
-                            </div>
-                        )}
-
-                        <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-                            <div className="md:col-span-12 flex justify-end">
-                                <label className="flex items-center gap-3 cursor-pointer group select-none">
-                                    <span className={`text-xs font-black uppercase transition-colors ${formData.activo ? 'text-primary' : 'text-muted'}`}>
-                                        {formData.activo ? 'Cliente Activo' : 'Cliente Inactivo'}
-                                    </span>
-                                    <div className="relative w-12 h-7">
-                                        <input 
-                                            type="checkbox" 
-                                            checked={formData.activo} 
-                                            onChange={e => setFormData({...formData, activo: e.target.checked})} 
-                                            className="sr-only" 
-                                        />
-                                        <div className={`absolute inset-0 rounded-full transition-all shadow-inner ${formData.activo ? 'bg-primary' : 'bg-surfaceHighlight'}`}></div>
-                                        <div className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow-md transition-all ${formData.activo ? 'translate-x-5' : 'translate-x-0'}`}></div>
-                                    </div>
-                                </label>
-                            </div>
-
-                            <div className="md:col-span-12 space-y-2">
-                                <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Lista de Precios Predeterminada</label>
-                                <div className="flex gap-4 p-4 bg-surfaceHighlight/30 rounded-2xl border border-surfaceHighlight overflow-x-auto">
-                                    {[1, 2, 3, 4].map((listNum) => (
-                                        <label key={listNum} className={`flex-1 min-w-[80px] flex items-center justify-center gap-2 p-3 rounded-xl border cursor-pointer transition-all ${formData.price_list === listNum ? 'bg-primary/10 border-primary text-primary shadow-sm' : 'bg-background border-surfaceHighlight text-muted hover:border-primary/30'}`}>
-                                            <input 
-                                                type="radio" 
-                                                name="price_list" 
-                                                value={listNum} 
-                                                checked={formData.price_list === listNum} 
-                                                onChange={() => setFormData({...formData, price_list: listNum})} 
-                                                className="hidden" 
-                                            />
-                                            <span className="text-xs font-black uppercase">Lista {listNum}</span>
-                                            {formData.price_list === listNum && <CheckCircle2 size={14} />}
-                                        </label>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div className="md:col-span-4 space-y-2">
-                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Código Único *</label>
-                            <div className="relative">
-                                <Hash className={`absolute left-4 top-1/2 -translate-y-1/2 ${isEdit ? 'text-muted/30' : 'text-muted'}`} size={16} />
-                                <input 
-                                    required 
-                                    type="text" 
-                                    disabled={isEdit}
-                                    value={formData.codigo} 
-                                    onChange={e => setFormData({...formData, codigo: e.target.value})} 
-                                    className={`w-full bg-background border border-surfaceHighlight rounded-2xl py-3.5 pl-11 text-sm font-black text-text outline-none focus:border-primary shadow-inner uppercase ${isEdit ? 'opacity-50 cursor-not-allowed' : ''}`} 
-                                    placeholder="0000" 
-                                />
-                            </div>
-                            {isEdit && <p className="text-[8px] font-bold text-muted uppercase ml-1">El código no puede cambiarse en edición.</p>}
-                        </div>
-                        <div className="md:col-span-8 space-y-2">
-                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Nombre / Razón Social *</label>
-                            <div className="relative">
-                                <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={16} />
-                                <input required type="text" value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} className="w-full bg-background border border-surfaceHighlight rounded-2xl py-3.5 pl-11 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase" placeholder="NOMBRE COMPLETO" />
-                            </div>
-                        </div>
-
-                        <div className="md:col-span-12 space-y-2">
-                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Contacto Principal</label>
-                            <div className="relative">
-                                <Contact2 className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={16} />
-                                <input type="text" value={formData.contacto} onChange={e => setFormData({...formData, contacto: e.target.value})} className="w-full bg-background border border-surfaceHighlight rounded-2xl py-3.5 pl-11 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase" placeholder="NOMBRE DEL ENCARGADO" />
-                            </div>
-                        </div>
-
-                        <div className="md:col-span-12 space-y-2">
-                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Dirección de Entrega</label>
-                            <div className="relative">
-                                <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={16} />
-                                <input type="text" value={formData.domicilio} onChange={e => setFormData({...formData, domicilio: e.target.value})} className="w-full bg-background border border-surfaceHighlight rounded-2xl py-3.5 pl-11 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase" placeholder="CALLE Y NÚMERO" />
-                            </div>
-                        </div>
-
-                        <div className="md:col-span-6 space-y-2">
-                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Localidad</label>
-                            <input type="text" value={formData.localidad} onChange={e => setFormData({...formData, localidad: e.target.value})} className="w-full bg-background border border-surfaceHighlight rounded-2xl py-3.5 px-5 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase" placeholder="V. MERCEDES" />
-                        </div>
-                        <div className="md:col-span-6 space-y-2">
-                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Provincia</label>
-                            <input type="text" value={formData.provincia} onChange={e => setFormData({...formData, provincia: e.target.value})} className="w-full bg-background border border-surfaceHighlight rounded-2xl py-3.5 px-5 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase" placeholder="SAN LUIS" />
-                        </div>
-
-                        <div className="md:col-span-6 space-y-2">
-                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Celular / WhatsApp</label>
-                            <div className="relative">
-                                <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={16} />
-                                <input type="text" value={formData.celular} onChange={e => setFormData({...formData, celular: e.target.value})} className="w-full bg-background border border-surfaceHighlight rounded-2xl py-3.5 pl-11 text-sm font-bold text-text outline-none focus:border-primary shadow-inner" placeholder="2657 000000" />
-                            </div>
-                        </div>
-                        <div className="md:col-span-6 space-y-2">
-                            <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Correo Electrónico</label>
-                            <div className="relative">
-                                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={16} />
-                                <input type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full bg-background border border-surfaceHighlight rounded-2xl py-3.5 pl-11 text-sm font-bold text-text outline-none focus:border-primary shadow-inner" placeholder="ejemplo@email.com" />
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="flex gap-4 pt-6">
-                        <button type="button" onClick={onClose} className="flex-1 py-4 text-text font-black text-xs hover:bg-surfaceHighlight rounded-2xl border border-surfaceHighlight uppercase transition-all">Cancelar</button>
-                        <button 
-                            type="submit" 
-                            disabled={isSaving}
-                            className="flex-1 py-4 bg-primary text-white font-black rounded-2xl shadow-xl shadow-primary/20 hover:bg-primaryHover uppercase text-xs flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-70"
-                        >
-                            {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
-                            {isEdit ? 'Actualizar Ficha' : 'Guardar Cliente'}
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-);
-};

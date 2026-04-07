@@ -95,10 +95,17 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
         setIsModalOpen(true);
     };
 
-    const filteredProviders = (providers || []).filter(p => 
-        p.status !== 'Desactivado' &&
-        p.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filteredProviders = (providers || []).filter(p => {
+        if (p.status === 'Desactivado') return false;
+        
+        const searchLower = searchTerm.toLowerCase();
+        if (p.name.toLowerCase().includes(searchLower)) return true;
+        
+        return p.accounts?.some(acc => 
+            (acc.identifierAlias && acc.identifierAlias.toLowerCase().includes(searchLower)) ||
+            (acc.holder && acc.holder.toLowerCase().includes(searchLower))
+        );
+    });
 
     const pendingConfirmations = (transfers || []).filter(t => t.status === 'Pendiente');
 
@@ -165,7 +172,7 @@ export const PaymentsOverview: React.FC<PaymentsOverviewProps> = ({
                     </button>
                     <div className="relative w-full md:w-80">
                         <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
-                        <input type="text" placeholder="Buscar proveedor..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl py-2.5 pl-11 pr-4 text-sm text-text outline-none focus:border-primary transition-all shadow-sm font-bold uppercase" />
+                        <input type="text" placeholder="Buscar proveedor, titular o alias..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-surface border border-surfaceHighlight rounded-xl py-2.5 pl-11 pr-4 text-sm text-text outline-none focus:border-primary transition-all shadow-sm font-bold uppercase" />
                     </div>
                 </div>
             </div>

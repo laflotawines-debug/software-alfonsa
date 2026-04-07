@@ -122,8 +122,10 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
 
     const isVale = currentUser?.role === 'vale';
     
-    // PERMISO EXTENDIDO: 'vale' siempre puede, o quien tenga el permiso específico
-    const canViewPerformance = isVale || (currentUser && hasPermission(currentUser, 'tools.attendance'));
+    // PERMISO EXTENDIDO: 'vale' siempre puede ver rendimiento.
+    const canViewPerformance = isVale;
+    // Quien tenga permiso de asistencia puede guardar el rendimiento
+    const canSavePerformance = isVale || (currentUser && hasPermission(currentUser, 'tools.attendance'));
 
     const loadData = async () => {
         setIsLoading(true);
@@ -462,20 +464,37 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                 hours = (exitMins! - entryMins!) / 60;
                 diffMinutes = entryMins! - targetEntry;
 
-                if (diffMinutes < 0) isEarly = true;
+                if (diffMinutes <= 0) isEarly = true;
 
                 if (diffMinutes > 0) {
                     isLate = true;
-                    if (diffMinutes <= 10) {
-                        status = "TARDE (TOLERANCIA)"; 
-                    } else {
-                        totalLateCount++; 
-                        if (diffMinutes >= 120) { 
-                            penaltyHours = 4; status = "TARDE (>2H) -4Hs";
-                        } else if (diffMinutes >= 60) { 
-                            penaltyHours = 2; status = "TARDE (>1H) -2Hs";
+                    if (currentConfig.location === 'LLERENA') {
+                        if (diffMinutes <= 10) {
+                            status = "TARDE (SIN BONO)"; 
                         } else {
-                            penaltyHours = 1; status = "TARDE (>10m) -1Hs";
+                            totalLateCount++; 
+                            if (diffMinutes >= 120) { 
+                                penaltyHours = 4; status = "TARDE (>2H) -4Hs";
+                            } else if (diffMinutes >= 60) { 
+                                penaltyHours = 2; status = "TARDE (>1H) -2Hs";
+                            } else if (diffMinutes > 30) {
+                                penaltyHours = 1; status = "TARDE (>30m) -1Hs";
+                            } else {
+                                penaltyHours = 1; status = "TARDE (11-30m) -1Hs";
+                            }
+                        }
+                    } else {
+                        if (diffMinutes <= 10) {
+                            status = "TARDE (TOLERANCIA)"; 
+                        } else {
+                            totalLateCount++; 
+                            if (diffMinutes >= 120) { 
+                                penaltyHours = 4; status = "TARDE (>2H) -4Hs";
+                            } else if (diffMinutes >= 60) { 
+                                penaltyHours = 2; status = "TARDE (>1H) -2Hs";
+                            } else {
+                                penaltyHours = 1; status = "TARDE (>10m) -1Hs";
+                            }
                         }
                     }
                 } else {
@@ -920,7 +939,7 @@ export const Attendance: React.FC<{ currentUser?: User }> = ({ currentUser }) =>
                                     <p className="text-muted text-sm font-medium mt-2 uppercase tracking-wide italic">Resumen del Periodo — {selectedWorker?.name}</p>
                                 </div>
                                 <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
-                                    {isVale && (
+                                    {canSavePerformance && (
                                         <button onClick={handleSavePeriodAndPerformance} disabled={perfSaveStatus === 'saving'} className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-black text-xs transition-all shadow-lg ${perfSaveStatus === 'success' ? 'bg-green-600 text-white shadow-green-900/20' : 'bg-primary text-white shadow-primary/20 hover:bg-primaryHover'}`}>
                                             {perfSaveStatus === 'saving' ? <Loader2 size={16} className="animate-spin"/> : perfSaveStatus === 'success' ? <CheckCircle2 size={16}/> : <Save size={16}/>}
                                             {perfSaveStatus === 'success' ? 'Guardado' : 'Guardar Rendimiento'}

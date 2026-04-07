@@ -29,9 +29,12 @@ export const hasPermission = (user: User, permissionKey: string): boolean => {
 export const SYSTEM_NAV_STRUCTURE = [
   { 
     id: View.DASHBOARD, 
-    label: 'Tablero', 
-    permission: 'dashboard.view',
-    module: 'General'
+    label: 'Métricas', 
+    module: 'General',
+    subItems: [
+        { id: View.DASHBOARD, label: 'Tablero', permission: 'dashboard.view' },
+        { id: View.METRICS_REPLENISHMENT, label: 'Reposición', permission: 'dashboard.view' }
+    ]
   },
   { 
     id: View.CASH_COUNT,
@@ -131,7 +134,8 @@ export const EXTRA_PERMISSIONS = [
     { key: 'orders.print_and_price', label: 'Imprimir y Ver Precios (Armador)', module: 'Pedidos' },
     { key: 'tools.attendance', label: 'Asistencia', module: 'Herramientas' },
     { key: 'catalog.clients', label: 'Gestión de Clientes', module: 'Clientes' },
-    { key: 'catalog.collections', label: 'Cobranzas Clientes', module: 'Clientes' }
+    { key: 'catalog.collections', label: 'Cobranzas Clientes', module: 'Clientes' },
+    { key: 'global.stock_queries', label: 'Permitir Consultas de Stock', module: 'General' }
 ];
 
 export const roundToCommercial = (val: number): number => {
@@ -227,18 +231,20 @@ export const getReturnedProducts = (order: Order) => {
     return order.products.filter(p => p.shippedQuantity && p.shippedQuantity > p.quantity);
 };
 
-export const applyQuantityChange = (order: Order, code: string, qty: number): Order => {
+export const applyQuantityChange = (order: Order, code: string, qty: number, unitPrice?: number): Order => {
     const products = order.products.map(p => {
         if (p.code !== code) return p;
+        if (unitPrice !== undefined && p.unitPrice !== unitPrice) return p;
         return { ...p, quantity: qty, subtotal: qty * p.unitPrice };
     });
     const total = products.reduce((acc, p) => acc + p.subtotal, 0);
     return { ...order, products, total };
 };
 
-export const toggleProductCheck = (order: Order, code: string): Order => {
+export const toggleProductCheck = (order: Order, code: string, unitPrice?: number): Order => {
     const products = order.products.map(p => {
         if (p.code !== code) return p;
+        if (unitPrice !== undefined && p.unitPrice !== unitPrice) return p;
         return { ...p, isChecked: !p.isChecked };
     });
     return { ...order, products };
@@ -260,22 +266,31 @@ export const advanceOrderStatus = (order: Order): Order => {
 };
 
 export const addProductToOrder = (order: Order, product: Product): Order => {
+    const exists = order.products.find(p => p.code === product.code && p.unitPrice === product.unitPrice);
+    if (exists) {
+        return order; // Do not add if a product with the exact same code and price already exists
+    }
     const products = [...order.products, product];
     const total = products.reduce((acc, p) => acc + p.subtotal, 0);
     return { ...order, products, total };
 };
 
-export const updateProductPrice = (order: Order, code: string, price: number): Order => {
+export const updateProductPrice = (order: Order, code: string, price: number, oldUnitPrice?: number): Order => {
     const products = order.products.map(p => {
         if (p.code !== code) return p;
+        if (oldUnitPrice !== undefined && p.unitPrice !== oldUnitPrice) return p;
         return { ...p, unitPrice: price, subtotal: p.quantity * price };
     });
     const total = products.reduce((acc, p) => acc + p.subtotal, 0);
     return { ...order, products, total };
 };
 
-export const removeProductFromOrder = (order: Order, code: string): Order => {
-    const products = order.products.filter(p => p.code !== code);
+export const removeProductFromOrder = (order: Order, code: string, unitPrice?: number): Order => {
+    const products = order.products.filter(p => {
+        if (p.code !== code) return true;
+        if (unitPrice !== undefined && p.unitPrice !== unitPrice) return true;
+        return false;
+    });
     const total = products.reduce((acc, p) => acc + p.subtotal, 0);
     return { ...order, products, total };
 };

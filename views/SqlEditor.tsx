@@ -5,34 +5,35 @@ import { User } from '../types';
 
 export const SqlEditor: React.FC<{ currentUser: User }> = ({ currentUser }) => {
     const [query, setQuery] = useState(`-- ========================================================
--- SCRIPT: FUNCIÓN PARA REVERTIR STOCK DE NOTA DE CRÉDITO (CORREGIDA)
+-- SCRIPT: FUNCIÓN PARA REVERTIR STOCK DE VENTA (INDEPENDIENTE DE LA CARD)
 -- ========================================================
 
-CREATE OR REPLACE FUNCTION revertir_nota_credito(
+CREATE OR REPLACE FUNCTION revertir_venta(
     p_order_id UUID,
     p_user_id UUID,
-    p_reason TEXT DEFAULT 'Anulación de nota de crédito'
+    p_reason TEXT DEFAULT 'Anulación de factura'
 ) RETURNS JSONB AS $$
 DECLARE
     v_movement RECORD;
     v_movements_found BOOLEAN := false;
 BEGIN
-    -- Verificar si ya se revirtió
+    -- Verificar si ya se revirtió (si existe un movimiento positivo de venta para este pedido)
     IF EXISTS (
         SELECT 1 FROM stock_movements 
-        WHERE reference_id = p_order_id AND type::text = 'nota de crédito' AND quantity < 0
+        WHERE reference_id = p_order_id AND type::text = 'venta' AND quantity > 0
     ) THEN
-        RETURN jsonb_build_object('success', false, 'message', 'La nota de crédito ya fue revertida anteriormente');
+        RETURN jsonb_build_object('success', false, 'message', 'La venta ya fue revertida anteriormente');
     END IF;
 
-    -- Revertir exactamente los movimientos de stock que se crearon para esta nota de crédito
+    -- Revertir exactamente los movimientos de stock que se crearon para esta venta
+    -- Buscamos los movimientos negativos (salidas) y creamos su inverso (entradas)
     FOR v_movement IN 
         SELECT * FROM stock_movements 
-        WHERE reference_id = p_order_id AND type::text = 'nota de crédito' AND quantity > 0
+        WHERE reference_id = p_order_id AND type::text = 'venta' AND quantity < 0
     LOOP
         v_movements_found := true;
         
-        -- Insertar movimiento de stock inverso (negativo)
+        -- Insertar movimiento de stock inverso (positivo)
         INSERT INTO stock_movements (
             codart,
             warehouse_id,
@@ -44,8 +45,8 @@ BEGIN
         ) VALUES (
             v_movement.codart,
             v_movement.warehouse_id,
-            -v_movement.quantity, -- Negativo porque es una salida (reversión)
-            'nota de crédito',
+            -v_movement.quantity, -- Positivo porque el original era negativo
+            'venta',
             p_order_id,
             p_reason,
             p_user_id

@@ -142,7 +142,7 @@ export const ClientCollections: React.FC<ClientCollectionsProps> = ({ currentUse
         setIsSearching(true);
         try {
             const words = trimmed.split(/\s+/).filter(w => w.length > 0);
-            let query = supabase.from('clients_master').select('*');
+            let query = supabase.from('clients_master').select('*').neq('activo', false);
             
             // Búsqueda tipo Google: cada palabra debe coincidir en nombre o código
             words.forEach(word => {

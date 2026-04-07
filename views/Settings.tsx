@@ -59,7 +59,7 @@ interface SettingsProps {
     onLogout: () => void;
 }
 
-type Tab = 'profile' | 'catalog_prices' | 'catalog_stock' | 'permissions' | 'zones';
+type Tab = 'profile' | 'catalog_prices' | 'catalog_stock' | 'permissions' | 'zones' | 'client_classifications';
 
 export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile, isDarkMode, onToggleTheme, onLogout }) => {
     const [name, setName] = useState(currentUser.name);
@@ -92,6 +92,11 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
     const [newZoneName, setNewZoneName] = useState('');
     const [isZoneLoading, setIsZoneLoading] = useState(false);
 
+    // --- CLIENT CLASSIFICATIONS STATE ---
+    const [classifications, setClassifications] = useState<any[]>([]);
+    const [newClassificationName, setNewClassificationName] = useState('');
+    const [isClassificationLoading, setIsClassificationLoading] = useState(false);
+
     const isVale = currentUser.role === 'vale';
 
     useEffect(() => {
@@ -101,7 +106,52 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
         if (activeTab === 'zones' && isVale) {
             fetchZones();
         }
+        if (activeTab === 'client_classifications' && isVale) {
+            fetchClassifications();
+        }
     }, [activeTab, isVale]);
+
+    const fetchClassifications = async () => {
+        setIsClassificationLoading(true);
+        try {
+            const { data, error } = await supabase.from('client_classifications').select('*').order('name');
+            if (error) throw error;
+            setClassifications(data || []);
+        } catch (e) {
+            console.error("Error fetching classifications", e);
+        } finally {
+            setIsClassificationLoading(false);
+        }
+    };
+
+    const handleAddClassification = async () => {
+        if (!newClassificationName.trim()) return;
+        setIsClassificationLoading(true);
+        try {
+            const { error } = await supabase.from('client_classifications').insert({ name: newClassificationName.trim() });
+            if (error) throw error;
+            setNewClassificationName('');
+            await fetchClassifications();
+        } catch (e: any) {
+            alert("Error al agregar clasificación: " + e.message);
+        } finally {
+            setIsClassificationLoading(false);
+        }
+    };
+
+    const handleDeleteClassification = async (id: string) => {
+        if (!confirm("¿Eliminar esta clasificación?")) return;
+        setIsClassificationLoading(true);
+        try {
+            const { error } = await supabase.from('client_classifications').delete().eq('id', id);
+            if (error) throw error;
+            await fetchClassifications();
+        } catch (e: any) {
+            alert("Error al eliminar: " + e.message);
+        } finally {
+            setIsClassificationLoading(false);
+        }
+    };
 
     const fetchZones = async () => {
         setIsZoneLoading(true);
@@ -494,6 +544,9 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                             <button onClick={() => { setActiveTab('zones'); }} className={`w-full flex items-center gap-3 px-5 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest text-left transition-all border ${activeTab === 'zones' ? 'bg-primary text-white border-primary shadow-lg' : 'text-muted border-surfaceHighlight bg-surface hover:bg-surfaceHighlight'}`}>
                                 <MapPin size={16} /> Zonas de Entrega
                             </button>
+                            <button onClick={() => { setActiveTab('client_classifications'); }} className={`w-full flex items-center gap-3 px-5 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest text-left transition-all border ${activeTab === 'client_classifications' ? 'bg-primary text-white border-primary shadow-lg' : 'text-muted border-surfaceHighlight bg-surface hover:bg-surfaceHighlight'}`}>
+                                <Users size={16} /> Clasificación Clientes
+                            </button>
                             <button onClick={() => { setActiveTab('permissions'); setPermSearch(''); }} className={`w-full flex items-center gap-3 px-5 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest text-left transition-all border ${activeTab === 'permissions' ? 'bg-primary text-white border-primary shadow-lg' : 'text-muted border-surfaceHighlight bg-surface hover:bg-surfaceHighlight'}`}>
                                 <ShieldCheck size={16} /> Permisos (Global)
                             </button>
@@ -757,6 +810,71 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
                                     </div>
                                 </div>
                             )}
+                        </section>
+                    )}
+
+                    {activeTab === 'client_classifications' && isVale && (
+                        <section className="bg-surface border border-surfaceHighlight rounded-3xl p-8 shadow-sm animate-in fade-in">
+                            <div className="flex items-center justify-between mb-8">
+                                <h3 className="text-xl font-black text-text flex items-center gap-3 uppercase tracking-tight italic">
+                                    <Users size={24} className="text-primary" /> Clasificación de Clientes
+                                </h3>
+                            </div>
+                            <div className="space-y-6">
+                                <div className="flex gap-4">
+                                    <input 
+                                        type="text" 
+                                        value={newClassificationName} 
+                                        onChange={(e) => setNewClassificationName(e.target.value)} 
+                                        placeholder="NUEVA CLASIFICACIÓN..." 
+                                        className="flex-1 bg-background border border-surfaceHighlight rounded-2xl py-3 px-5 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase"
+                                        onKeyDown={(e) => e.key === 'Enter' && handleAddClassification()}
+                                    />
+                                    <button 
+                                        onClick={handleAddClassification} 
+                                        disabled={isClassificationLoading || !newClassificationName.trim()} 
+                                        className="bg-primary text-white px-6 py-3 rounded-2xl font-black text-sm uppercase tracking-widest shadow-lg hover:bg-primaryHover transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2"
+                                    >
+                                        {isClassificationLoading ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
+                                        Agregar
+                                    </button>
+                                </div>
+
+                                <div className="bg-background rounded-2xl border border-surfaceHighlight overflow-hidden shadow-inner">
+                                    <table className="w-full text-left border-collapse">
+                                        <thead>
+                                            <tr className="bg-surfaceHighlight/30 text-[10px] uppercase tracking-widest text-muted border-b border-surfaceHighlight">
+                                                <th className="p-4 font-black">Nombre</th>
+                                                <th className="p-4 font-black w-24 text-center">Acciones</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {classifications.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={2} className="p-8 text-center text-muted font-bold text-sm uppercase">
+                                                        No hay clasificaciones creadas
+                                                    </td>
+                                                </tr>
+                                            ) : (
+                                                classifications.map(c => (
+                                                    <tr key={c.id} className="border-b border-surfaceHighlight/50 last:border-none hover:bg-surfaceHighlight/20 transition-colors">
+                                                        <td className="p-4 font-black text-sm text-text uppercase">{c.name}</td>
+                                                        <td className="p-4 text-center">
+                                                            <button 
+                                                                onClick={() => handleDeleteClassification(c.id)}
+                                                                className="p-2 text-red-500 hover:bg-red-500/10 rounded-xl transition-colors"
+                                                                title="Eliminar"
+                                                            >
+                                                                <Trash2 size={18} />
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
                         </section>
                     )}
 

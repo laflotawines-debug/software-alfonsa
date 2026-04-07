@@ -34,7 +34,9 @@ import {
   Send, 
   Users, 
   CalendarClock,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Pencil,
+  Save
 } from 'lucide-react';
 import { DetailedOrder, View, OrderStatus, User, DeliveryZone } from '../types';
 import { 
@@ -58,6 +60,7 @@ interface OrderListProps {
   onDeleteOrders: (orderIds: string[]) => void;
   onAdvanceOrder: (order: DetailedOrder, notes?: string) => void;
   onToggleLock: (order: DetailedOrder) => void;
+  onUpdateOrderTotal: (orderId: string, newTotal: number) => Promise<void>;
   onRefresh: () => Promise<void>;
   
   // Deprecated/Optional props kept for compatibility
@@ -84,6 +87,7 @@ export const OrderList: React.FC<OrderListProps> = ({
     onDeleteOrders,
     onAdvanceOrder,
     onToggleLock,
+    onUpdateOrderTotal,
     onRefresh
 }) => {
   const [currentTab, setCurrentTab] = useState<TabType>('active');
@@ -491,6 +495,7 @@ export const OrderList: React.FC<OrderListProps> = ({
                   onDeleteOrder={handleInternalDelete} 
                   onAdvanceOrder={requestAdvanceOrder} 
                   onToggleLock={onToggleLock}
+                  onUpdateOrderTotal={onUpdateOrderTotal}
               />
           ))}
           
@@ -576,8 +581,10 @@ const DetailedOrderCard: React.FC<{
     onDeleteOrder: any; 
     onAdvanceOrder: any;
     onToggleLock: any; 
-}> = ({ order, currentUser, onOpenAssembly, onClaimOrder, onDeleteOrder, onAdvanceOrder, onToggleLock }) => {
+    onUpdateOrderTotal: (orderId: string, newTotal: number) => Promise<void>;
+}> = ({ order, currentUser, onOpenAssembly, onClaimOrder, onDeleteOrder, onAdvanceOrder, onToggleLock, onUpdateOrderTotal }) => {
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+
   const badgeStyle = getStatusColor(order.status);
   const zoneStyles = getZoneStyles(order.zone);
   
@@ -876,7 +883,11 @@ const DetailedOrderCard: React.FC<{
                 <div className="flex justify-between items-center">
                     <span className="text-[11px] text-muted font-bold">Total Neto:</span>
                     <div className="flex flex-col items-end">
-                        <span className="text-lg text-green-600 dark:text-green-400 font-black tracking-tighter leading-none">$ {(order.total || 0).toLocaleString('es-AR')}</span>
+                        <div className="flex items-center gap-2 group/price">
+                            <span className="text-lg text-green-600 dark:text-green-400 font-black tracking-tighter leading-none">
+                                $ {(order.total || 0).toLocaleString('es-AR')}
+                            </span>
+                        </div>
                         {refundAmount > 0 && <span className="text-[8px] font-black text-red-500 uppercase tracking-tighter">NC: -$ {refundAmount.toLocaleString('es-AR')}</span>}
                     </div>
                 </div>

@@ -44,7 +44,7 @@ export const Login: React.FC<LoginProps> = ({ isDarkMode, onToggleTheme }) => {
                     <div className="flex items-center justify-center h-24 w-24 rounded-3xl bg-gradient-to-br from-orange-400 to-orange-600 mb-6 shadow-2xl shadow-orange-500/30 overflow-hidden p-5 transform hover:scale-105 transition-transform duration-500 border border-white/20 backdrop-blur-sm">
                         <img src="icon.png" alt="Alfonsa Logo" className="w-full h-full object-contain brightness-0 invert drop-shadow-md" />
                     </div>
-                    <h1 className="text-4xl font-black text-slate-900 dark:text-white tracking-tight mb-2 drop-shadow-sm">Alfonsa <span className="text-orange-500">4.0</span></h1>
+                    <h1 className="text-4xl font-black text-slate-900 dark:text-white tracking-tight mb-2 drop-shadow-sm">Alfonsa <span className="text-orange-500">4.1</span></h1>
                     <p className="text-slate-600 dark:text-slate-400 text-sm font-medium tracking-wide uppercase">Gestión comercial inteligente</p>
                 </div>
 
@@ -114,7 +114,7 @@ export const Login: React.FC<LoginProps> = ({ isDarkMode, onToggleTheme }) => {
                         &copy; 2026 Alfonsa. Todos los derechos reservados.
                     </p>
                     <p className="text-[10px] font-black text-orange-500 mt-2 opacity-80 tracking-[0.2em] uppercase">
-                        Versión 4.0
+                        Versión 4.1
                     </p>
                 </div>
             </div>

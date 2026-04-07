@@ -5,6 +5,7 @@ import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { Login } from './views/Login';
 import { Dashboard } from './views/Dashboard';
+import { MetricsReplenishment } from './views/MetricsReplenishment';
 import { Annotations } from './views/Annotations';
 import { OrderList } from './views/OrderList';
 import { CreateBudget } from './views/CreateBudget';
@@ -37,6 +38,7 @@ import { CashMovements } from './views/CashMovements';
 import { DailyCashSheet } from './views/DailyCashSheet';
 import { BankMovements } from './views/BankMovements';
 import { OrderAssemblyModal } from './components/OrderAssemblyModal';
+import { StockQueryModal } from './components/StockQueryModal';
 import { 
     View, User, DetailedOrder, OrderStatus, Trip, Provider, Transfer, 
     AppNotification, ProductExpiration, Product, HistoryEntry 
@@ -100,6 +102,8 @@ export default function App() {
     const [historyFilter, setHistoryFilter] = useState({ month: new Date().getMonth(), year: new Date().getFullYear(), search: '' });
     const [hasMoreHistory, setHasMoreHistory] = useState(false);
 
+    const [isStockQueryOpen, setIsStockQueryOpen] = useState(false);
+
     useEffect(() => {
         supabase.auth.getSession().then(({ data: { session }, error }) => {
             if (error) {
@@ -144,6 +148,20 @@ export default function App() {
             localStorage.setItem(VIEW_STORAGE_KEY, currentView);
         }
     }, [currentView, currentUser]);
+
+    // F12 key listener for Stock Query
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'F12') {
+                if (currentUser && hasPermission(currentUser, 'global.stock_queries')) {
+                    e.preventDefault();
+                    setIsStockQueryOpen(prev => !prev);
+                }
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [currentUser]);
 
     const fetchProfile = async (userId: string) => {
         const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
@@ -842,11 +860,52 @@ export default function App() {
         fetchTransfers();
     };
 
+    const handleUpdateOrderTotal = async (orderId: string, newTotal: number) => {
+        if (!currentUser) return;
+        
+        try {
+            const { data: orderData, error: fetchError } = await supabase
+                .from('orders')
+                .select('total, history, status')
+                .eq('id', orderId)
+                .single();
+            
+            if (fetchError) throw fetchError;
+
+            const historyEntry: HistoryEntry = {
+                timestamp: new Date().toISOString(),
+                userId: currentUser.id,
+                userName: currentUser.name,
+                action: 'PRICE_UPDATE',
+                details: `Modificó el total de $${orderData.total} a $${newTotal}`,
+                previousState: orderData.status,
+                newState: orderData.status
+            };
+
+            const updatedHistory = [...(orderData.history || []), historyEntry];
+
+            const { error: updateError } = await supabase
+                .from('orders')
+                .update({ 
+                    total: newTotal, 
+                    history: updatedHistory,
+                    updated_by: currentUser.id
+                })
+                .eq('id', orderId);
+
+            if (updateError) throw updateError;
+            
+            fetchActiveOrders();
+        } catch (err: any) {
+            alert("Error al actualizar el precio: " + err.message);
+        }
+    };
+
     const handleReleaseOrder = (order: DetailedOrder) => {
         setActiveOrder(null);
     };
 
-    const handleUpdateProductQuantity = (code: string, newQty: number) => {
+    const handleUpdateProductQuantity = (code: string, newQty: number, unitPrice?: number) => {
         if (!activeOrder) return;
         const historyEntry: HistoryEntry = {
             timestamp: new Date().toISOString(),
@@ -858,7 +917,7 @@ export default function App() {
             newState: activeOrder.status
         };
 
-        let updatedOrder = applyQuantityChange(activeOrder, code, newQty);
+        let updatedOrder = applyQuantityChange(activeOrder, code, newQty, unitPrice);
         updatedOrder = { ...updatedOrder, history: [...(updatedOrder.history || []), historyEntry] };
         setActiveOrder(updatedOrder as DetailedOrder);
     };
@@ -867,24 +926,42 @@ export default function App() {
         try {
             const { data: existingDbItems } = await supabase
                 .from('order_items')
-                .select('code')
+                .select('code, unit_price')
                 .eq('order_id', updatedOrder.id);
             
-            const existingCodes = new Set(existingDbItems?.map((i: any) => i.code));
+            const existingKeys = new Set(existingDbItems?.map((i: any) => `${i.code}-${i.unit_price}`));
+            const currentKeys = new Set(updatedOrder.products.map((p: any) => `${p.code}-${p.unit_price !== undefined ? p.unit_price : p.unitPrice}`));
+            
             const isPostShippingStatus = [OrderStatus.FACTURADO, OrderStatus.FACTURA_CONTROLADA, OrderStatus.EN_TRANSITO, OrderStatus.ENTREGADO, OrderStatus.PAGADO].includes(updatedOrder.status);
+
+            // Delete removed items or items whose price was changed
+            if (existingDbItems) {
+                for (const item of existingDbItems) {
+                    if (!currentKeys.has(`${item.code}-${item.unit_price}`)) {
+                        await supabase.from('order_items').delete().eq('order_id', updatedOrder.id).eq('code', item.code).eq('unit_price', item.unit_price);
+                    }
+                }
+            }
 
             for (const p of updatedOrder.products) {
                  let finalShippedQuantity = p.shippedQuantity;
                  if (!isPostShippingStatus) { finalShippedQuantity = p.quantity; } 
                  else { finalShippedQuantity = p.shippedQuantity ?? p.quantity; }
 
+                 const unitPrice = p.unit_price !== undefined ? p.unit_price : p.unitPrice;
+                 const key = `${p.code}-${unitPrice}`;
+
                  const payload = {
                      order_id: updatedOrder.id, code: p.code, name: p.name, quantity: p.quantity, original_quantity: p.originalQuantity,
-                     shipped_quantity: finalShippedQuantity, unit_price: p.unit_price || p.unitPrice, subtotal: p.subtotal, is_checked: shouldAdvance ? false : p.isChecked
+                     shipped_quantity: finalShippedQuantity, unit_price: unitPrice, subtotal: p.subtotal, is_checked: shouldAdvance ? false : p.isChecked
                  };
 
-                 if (existingCodes.has(p.code)) { await supabase.from('order_items').update(payload).eq('order_id', updatedOrder.id).eq('code', p.code); } 
-                 else { await supabase.from('order_items').insert(payload); }
+                 if (existingKeys.has(key)) { 
+                     await supabase.from('order_items').update(payload).eq('order_id', updatedOrder.id).eq('code', p.code).eq('unit_price', unitPrice); 
+                 } 
+                 else { 
+                     await supabase.from('order_items').insert(payload); 
+                 }
             }
 
             let nextStatus = updatedOrder.status;
@@ -965,6 +1042,7 @@ export default function App() {
 
                 <main className="flex-1 overflow-y-auto p-4 md:p-8 relative">
                     {currentView === View.DASHBOARD && <Dashboard orders={orders} expirations={expirations} onNavigate={setCurrentView} />}
+                    {currentView === View.METRICS_REPLENISHMENT && <MetricsReplenishment />}
                     {currentView === View.ANOTACIONES && <Annotations currentUser={currentUser} />}
                     {currentView === View.ORDERS && (
                         <OrderList 
@@ -981,6 +1059,7 @@ export default function App() {
                             onDeleteOrders={handleDeleteOrders}
                             onAdvanceOrder={handleAdvanceOrder}
                             onToggleLock={handleToggleLock}
+                            onUpdateOrderTotal={handleUpdateOrderTotal}
                             onRefresh={async () => {
                                 await fetchActiveOrders();
                                 await fetchNotifications();
@@ -1066,7 +1145,7 @@ export default function App() {
                         onClose={() => handleReleaseOrder(activeOrder)}
                         onSave={handleSaveAssembly}
                         onUpdateProduct={handleUpdateProductQuantity}
-                        onToggleCheck={(code) => setActiveOrder(toggleProductCheck(activeOrder, code) as DetailedOrder)}
+                        onToggleCheck={(code, unitPrice) => setActiveOrder(toggleProductCheck(activeOrder, code, unitPrice) as DetailedOrder)}
                         onToggleAllChecks={(check) => setActiveOrder(toggleAllProductsCheck(activeOrder, check) as DetailedOrder)}
                         onUpdateObservations={(text) => setActiveOrder(updateObservations(activeOrder, text) as DetailedOrder)}
                         onAddProduct={(prod) => {
@@ -1083,9 +1162,9 @@ export default function App() {
                             const detailed = { ...updatedOrder, productCount: updatedOrder.products.length } as DetailedOrder;
                             setActiveOrder(detailed);
                         }}
-                        onUpdatePrice={(code, price) => setActiveOrder(updateProductPrice(activeOrder, code, price) as DetailedOrder)}
-                        onRemoveProduct={(code) => {
-                            const updatedOrder = removeProductFromOrder(activeOrder, code);
+                        onUpdatePrice={(code, price, oldUnitPrice) => setActiveOrder(updateProductPrice(activeOrder, code, price, oldUnitPrice) as DetailedOrder)}
+                        onRemoveProduct={(code, unitPrice) => {
+                            const updatedOrder = removeProductFromOrder(activeOrder, code, unitPrice);
                             const detailed = { ...updatedOrder, productCount: updatedOrder.products.length } as DetailedOrder;
                             setActiveOrder(detailed);
                         }}
@@ -1124,6 +1203,26 @@ export default function App() {
                             </div>
                         </div>
                     </div>
+                )}
+
+                {/* Stock Query Modal */}
+                <StockQueryModal 
+                    isOpen={isStockQueryOpen} 
+                    onClose={() => setIsStockQueryOpen(false)} 
+                />
+
+                {/* Floating Stock Button */}
+                {currentUser && hasPermission(currentUser, 'global.stock_queries') && (
+                    <button
+                        onClick={() => setIsStockQueryOpen(true)}
+                        className="fixed bottom-6 right-6 z-40 bg-primary text-white p-3 rounded-full shadow-lg hover:bg-primaryHover hover:scale-105 transition-all flex items-center justify-center group"
+                        title="Consultar Stock (F12)"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+                        <span className="absolute right-full mr-3 bg-surface text-text text-xs font-bold px-2 py-1 rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                            Stock (F12)
+                        </span>
+                    </button>
                 )}
             </div>
         </div>

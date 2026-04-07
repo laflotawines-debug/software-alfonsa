@@ -4,6 +4,7 @@ import React from 'react';
 // --- UI / NAVIGATION TYPES ---
 export enum View {
     DASHBOARD = 'DASHBOARD',
+    METRICS_REPLENISHMENT = 'METRICS_REPLENISHMENT',
     ORDERS = 'ORDERS',
     ORDER_SHEET = 'ORDER_SHEET', 
     CREATE_BUDGET = 'CREATE_BUDGET',
@@ -118,6 +119,12 @@ export interface DeliveryZone {
     active: boolean;
 }
 
+export interface ClientClassification {
+    id: string;
+    name: string;
+    active: boolean;
+}
+
 export interface AccountMovement {
     id: string;
     client_code: string;
@@ -167,7 +174,7 @@ export interface SupplierOrder {
     supplier_code: string;
     supplier_name?: string;
     estimated_arrival: string;
-    status: 'pendiente' | 'solicitado' | 'confirmado';
+    status: 'pendiente' | 'enviado' | 'confirmado';
     pdf_url?: string;
     created_at: string;
     created_by: string;
@@ -227,6 +234,7 @@ export interface ClientMaster {
     price_list?: number;
     contacto?: string;
     activo?: boolean;
+    classification_id?: string;
 }
 
 export interface ClientCollection {

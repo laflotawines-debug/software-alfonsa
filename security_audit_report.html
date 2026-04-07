@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Audit Report — Alfonsa Software v4.0</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --surface-highlight: #334155;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+            --primary: #e47c00;
+            --red: #ef4444;
+            --red-bg: rgba(239, 68, 68, 0.1);
+            --orange: #f97316;
+            --orange-bg: rgba(249, 115, 22, 0.1);
+            --green: #22c55e;
+            --green-bg: rgba(34, 197, 94, 0.1);
+            --yellow: #eab308;
+            --yellow-bg: rgba(234, 179, 8, 0.1);
+            --blue: #3b82f6;
+            --blue-bg: rgba(59, 130, 246, 0.1);
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            padding: 3rem 2rem;
+            background: linear-gradient(135deg, rgba(228, 124, 0, 0.15), rgba(239, 68, 68, 0.1));
+            border-radius: 24px;
+            border: 1px solid var(--surface-highlight);
+            margin-bottom: 2rem;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            font-weight: 900;
+            background: linear-gradient(135deg, var(--primary), var(--red));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .header .meta {
+            color: var(--muted);
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        .header .meta span {
+            margin: 0 0.75rem;
+        }
+
+        /* Risk Badge */
+        .risk-total {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 2rem;
+            border-radius: 16px;
+            font-weight: 900;
+            font-size: 1.25rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-top: 1.5rem;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+        }
+
+        .risk-critical { background: var(--red-bg); color: var(--red); border: 2px solid rgba(239, 68, 68, 0.3); }
+        .risk-medium { background: var(--orange-bg); color: var(--orange); border: 2px solid rgba(249, 115, 22, 0.3); }
+        .risk-low { background: var(--green-bg); color: var(--green); border: 2px solid rgba(34, 197, 94, 0.3); }
+
+        .deploy-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1.5rem;
+            border-radius: 12px;
+            font-weight: 800;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-top: 1rem;
+        }
+
+        .deploy-no { background: rgba(239, 68, 68, 0.15); color: var(--red); border: 1px solid rgba(239, 68, 68, 0.3); }
+
+        /* Summary Grid */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .summary-card {
+            background: var(--surface);
+            border: 1px solid var(--surface-highlight);
+            border-radius: 16px;
+            padding: 1.25rem;
+            text-align: center;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .summary-card:hover {
+            transform: translateY(-2px);
+        }
+
+        .summary-card.critical { border-left: 4px solid var(--red); }
+        .summary-card.medium { border-left: 4px solid var(--orange); }
+        .summary-card.ok { border-left: 4px solid var(--green); }
+
+        .summary-card .icon { font-size: 1.5rem; margin-bottom: 0.5rem; }
+        .summary-card .label {
+            font-size: 0.65rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--muted);
+            margin-bottom: 0.25rem;
+        }
+        .summary-card .status {
+            font-size: 0.85rem;
+            font-weight: 900;
+            text-transform: uppercase;
+        }
+
+        .status-critical { color: var(--red); }
+        .status-medium { color: var(--orange); }
+        .status-ok { color: var(--green); }
+
+        /* Phase Cards */
+        .phase {
+            background: var(--surface);
+            border: 1px solid var(--surface-highlight);
+            border-radius: 20px;
+            margin-bottom: 1.5rem;
+            overflow: hidden;
+        }
+
+        .phase-header {
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--surface-highlight);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+        }
+
+        .phase-header:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .phase-title {
+            font-size: 1rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .phase-body {
+            padding: 1.5rem;
+        }
+
+        /* Findings Table */
+        .findings-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+
+        .findings-table th {
+            text-align: left;
+            padding: 0.75rem 1rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-size: 0.65rem;
+            color: var(--muted);
+            background: rgba(0, 0, 0, 0.2);
+            border-bottom: 1px solid var(--surface-highlight);
+        }
+
+        .findings-table td {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+            vertical-align: top;
+        }
+
+        .findings-table tr:hover td {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .findings-table code {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-family: 'Courier New', monospace;
+            color: var(--blue);
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.2rem 0.6rem;
+            border-radius: 8px;
+            font-weight: 800;
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .badge-critical { background: var(--red-bg); color: var(--red); }
+        .badge-medium { background: var(--orange-bg); color: var(--orange); }
+        .badge-ok { background: var(--green-bg); color: var(--green); }
+        .badge-info { background: var(--blue-bg); color: var(--blue); }
+
+        /* Alert Boxes */
+        .alert {
+            padding: 1rem 1.25rem;
+            border-radius: 12px;
+            margin-bottom: 1rem;
+            font-size: 0.8rem;
+            font-weight: 500;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+        }
+
+        .alert-critical {
+            background: var(--red-bg);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            color: var(--red);
+        }
+
+        .alert-warning {
+            background: var(--orange-bg);
+            border: 1px solid rgba(249, 115, 22, 0.2);
+            color: var(--orange);
+        }
+
+        .alert-success {
+            background: var(--green-bg);
+            border: 1px solid rgba(34, 197, 94, 0.2);
+            color: var(--green);
+        }
+
+        .alert-info {
+            background: var(--blue-bg);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            color: var(--blue);
+        }
+
+        .alert-icon { font-size: 1.2rem; flex-shrink: 0; margin-top: 0.1rem; }
+
+        /* Priority Matrix */
+        .priority-matrix {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+
+        .priority-matrix th {
+            text-align: left;
+            padding: 0.75rem 1rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            font-size: 0.65rem;
+            color: var(--muted);
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        .priority-matrix td {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+        }
+
+        .code-block {
+            background: #0d1117;
+            border: 1px solid var(--surface-highlight);
+            border-radius: 12px;
+            padding: 1rem;
+            margin: 1rem 0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.75rem;
+            color: #79c0ff;
+            overflow-x: auto;
+            white-space: pre;
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 2rem;
+            color: var(--muted);
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .header h1 { font-size: 1.5rem; }
+            .summary-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        h3 {
+            font-size: 0.9rem;
+            font-weight: 800;
+            margin-bottom: 1rem;
+            color: var(--text);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        p, li {
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin-bottom: 0.5rem;
+        }
+
+        ul { list-style: none; padding-left: 0; }
+        ul li::before { content: "→ "; color: var(--primary); font-weight: 700; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- HEADER -->
+        <div class="header">
+            <h1>🔐 Security Audit Report</h1>
+            <p style="font-size: 1.1rem; font-weight: 700; color: var(--text); margin-bottom: 0.5rem;">Alfonsa Software v4.0</p>
+            <div class="meta">
+                <span>📅 2026-03-27</span>
+                <span>🏗️ Supabase + React/Vite</span>
+                <span>🤖 Antigravity AI Auditor</span>
+            </div>
+            <div>
+                <div class="risk-total risk-critical">🔴 RIESGO TOTAL: ALTO</div>
+            </div>
+            <div>
+                <div class="deploy-badge deploy-no">❌ DEPLOY NO RECOMENDADO</div>
+            </div>
+        </div>
+
+        <!-- SUMMARY GRID -->
+        <div class="summary-grid">
+            <div class="summary-card critical">
+                <div class="icon">🔑</div>
+                <div class="label">Credenciales</div>
+                <div class="status status-critical">🔴 CRÍTICO</div>
+            </div>
+            <div class="summary-card medium">
+                <div class="icon">🗄️</div>
+                <div class="label">Supabase DB</div>
+                <div class="status status-medium">🟠 MEDIO</div>
+            </div>
+            <div class="summary-card medium">
+                <div class="icon">🏛️</div>
+                <div class="label">Arquitectura</div>
+                <div class="status status-medium">🟠 MEDIO</div>
+            </div>
+            <div class="summary-card medium">
+                <div class="icon">🛡️</div>
+                <div class="label">Auth / Authz</div>
+                <div class="status status-medium">🟠 MEDIO</div>
+            </div>
+            <div class="summary-card ok">
+                <div class="icon">⚡</div>
+                <div class="label">APIs / RPCs</div>
+                <div class="status status-ok">🟢 OK</div>
+            </div>
+            <div class="summary-card medium">
+                <div class="icon">📦</div>
+                <div class="label">Dependencias</div>
+                <div class="status status-medium">🟠 MEDIO</div>
+            </div>
+        </div>
+
+        <!-- FASE 1 -->
+        <div class="phase">
+            <div class="phase-header">
+                <span class="phase-title">🔑 Fase 1 — Credenciales y Secretos</span>
+                <span class="badge badge-critical">CRÍTICO</span>
+            </div>
+            <div class="phase-body">
+                <div class="alert alert-critical">
+                    <span class="alert-icon">⛔</span>
+                    <div><strong>ALERTA:</strong> Credenciales de Supabase hardcodeadas en el código fuente, visibles en texto plano y comprometidas en Git.</div>
+                </div>
+
+                <table class="findings-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Archivo</th>
+                            <th>Línea</th>
+                            <th>Tipo</th>
+                            <th>Severidad</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>1</td>
+                            <td><code>supabase.ts</code></td>
+                            <td>4-5</td>
+                            <td>URL + Anon Key hardcodeadas</td>
+                            <td><span class="badge badge-critical">CRÍTICO</span></td>
+                        </tr>
+                        <tr>
+                            <td>2</td>
+                            <td><code>test-sql.js</code></td>
+                            <td>4-5</td>
+                            <td>URL + Anon Key hardcodeadas</td>
+                            <td><span class="badge badge-critical">CRÍTICO</span></td>
+                        </tr>
+                        <tr>
+                            <td>3</td>
+                            <td><code>test-alter.js</code></td>
+                            <td>3-4</td>
+                            <td>URL + Anon Key hardcodeadas</td>
+                            <td><span class="badge badge-critical">CRÍTICO</span></td>
+                        </tr>
+                        <tr>
+                            <td>4</td>
+                            <td><code>test-types.js</code></td>
+                            <td>3-4</td>
+                            <td>URL + Anon Key hardcodeadas</td>
+                            <td><span class="badge badge-critical">CRÍTICO</span></td>
+                        </tr>
+                        <tr>
+                            <td>5</td>
+                            <td><code>sql users.txt</code></td>
+                            <td>1-11</td>
+                            <td>Email real y SQL de roles</td>
+                            <td><span class="badge badge-medium">MEDIO</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="code-block">URL: https://krormkbttwsrqsklvdtx.supabase.co
+Key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9... (JWT completo visible)</div>
+
+                <div class="alert alert-success">
+                    <span class="alert-icon">✅</span>
+                    <div><strong>POSITIVO:</strong> No se detectó uso del <code>service_role</code> en ningún archivo del frontend.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- FASE 2 -->
+        <div class="phase">
+            <div class="phase-header">
+                <span class="phase-title">🗄️ Fase 2 — Seguridad de Base de Datos (Supabase)</span>
+                <span class="badge badge-medium">MEDIO</span>
+            </div>
+            <div class="phase-body">
+                <div class="alert alert-warning">
+                    <span class="alert-icon">⚠️</span>
+                    <div><strong>NOTA:</strong> No fue posible verificar las políticas de RLS directamente (falta token de acceso al MCP de Supabase). El análisis se basa en el código del frontend.</div>
+                </div>
+
+                <table class="findings-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Observación</th>
+                            <th>Riesgo</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>1</td>
+                            <td>Todas las consultas usan <code>anon key</code> — dependen 100% de RLS servidor</td>
+                            <td><span class="badge badge-medium">MEDIO</span></td>
+                        </tr>
+                        <tr>
+                            <td>2</td>
+                            <td>Queries sin filtro por <code>user_id</code> o <code>tenant_id</code> en tablas como <code>profiles</code>, <code>master_products</code>, <code>orders</code></td>
+                            <td><span class="badge badge-critical">CRÍTICO*</span></td>
+                        </tr>
+                        <tr>
+                            <td>3</td>
+                            <td>Operaciones masivas de <code>DELETE</code> en Settings.tsx (borrado de productos en batch)</td>
+                            <td><span class="badge badge-medium">MEDIO</span></td>
+                        </tr>
+                        <tr>
+                            <td>4</td>
+                            <td>RPC <code>execute_sql</code> detectado — permite ejecutar SQL arbitrario si existe en producción</td>
+                            <td><span class="badge badge-critical">CRÍTICO</span></td>
+                        </tr>
+                        <tr>
+                            <td>5</td>
+                            <td>Operaciones de <code>insert/update/delete</code> sin protección server-side verificable</td>
+                            <td><span class="badge badge-medium">MEDIO</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p style="font-size: 0.7rem; color: var(--muted);">* Dependiente de la configuración real de RLS en Supabase</p>
+            </div>
+        </div>
+
+        <!-- FASE 3 -->
+        <div class="phase">
+            <div class="phase-header">
+                <span class="phase-title">🏛️ Fase 3 — Arquitectura</span>
+                <span class="badge badge-medium">MEDIO</span>
+            </div>
+            <div class="phase-body">
+                <div class="alert alert-warning">
+                    <span class="alert-icon">⚠️</span>
+                    <div><strong>La mayor parte de la lógica de negocio y validaciones se ejecuta en el frontend</strong>, que es manipulable por el usuario.</div>
+                </div>
+
+                <table class="findings-table">
+                    <thead>
+                        <tr><th>#</th><th>Hallazgo</th><th>Archivo</th><th>Riesgo</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>1</td><td>Cálculo de totales de pedido en frontend</td><td><code>logic.ts:230</code></td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+                        <tr><td>2</td><td>Actualización de precios sin validación server-side</td><td><code>App.tsx:886</code></td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+                        <tr><td>3</td><td>Control de roles solo en capa de UI</td><td>Múltiples</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+                        <tr><td>4</td><td>Avance de estado de pedido sin validación backend</td><td><code>App.tsx:565-702</code></td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+                        <tr><td>5</td><td>Importación Excel sin sanitización server-side</td><td><code>Settings.tsx:354</code></td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+                        <tr><td>6</td><td>Verificación de stock negativo solo en frontend</td><td><code>App.tsx:591</code></td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- FASE 4 -->
+        <div class="phase">
+            <div class="phase-header">
+                <span class="phase-title">🛡️ Fase 4 — Autenticación y Autorización</span>
+                <span class="badge badge-medium">MEDIO</span>
+            </div>
+            <div class="phase-body">
+                <div class="alert alert-success">
+                    <span class="alert-icon">✅</span>
+                    <div><strong>Autenticación correcta:</strong> Login usa <code>supabase.auth.signInWithPassword</code>, sesión persistida con auto-refresh, guard <code>if (!session)</code> protege el render principal.</div>
+                </div>
+
+                <table class="findings-table">
+                    <thead>
+                        <tr><th>#</th><th>Hallazgo</th><th>Riesgo</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>1</td><td>Sistema de permisos verificado SOLO en frontend</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+                        <tr><td>2</td><td>Rol <code>vale</code> = acceso total sin second factor</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+                        <tr><td>3</td><td>Sin headers de seguridad detectados (CSP, HSTS)</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+                        <tr><td>4</td><td>Sin rate limiting explícito en login</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- FASE 5 -->
+        <div class="phase">
+            <div class="phase-header">
+                <span class="phase-title">⚡ Fase 5 — APIs / Functions / Endpoints</span>
+                <span class="badge badge-ok">OK</span>
+            </div>
+            <div class="phase-body">
+                <div class="alert alert-success">
+                    <span class="alert-icon">✅</span>
+                    <div><strong>Funciones RPC bien implementadas:</strong> <code>facturar_pedido</code>, <code>transferir_stock</code>, <code>aprobar_ingreso_stock</code>, <code>ajustar_stock</code>, <code>revertir_nota_credito</code> — Todas garantizan atomicidad.</div>
+                </div>
+
+                <div class="alert alert-critical">
+                    <span class="alert-icon">⛔</span>
+                    <div><strong>EXCEPCIÓN CRÍTICA:</strong> Se detectó RPC <code>execute_sql</code> en <code>test-alter.js</code>. Si esta función existe en producción, cualquier usuario autenticado podría ejecutar SQL arbitrario.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- FASE 6 -->
+        <div class="phase">
+            <div class="phase-header">
+                <span class="phase-title">📦 Fase 6 — Dependencias y Código Externo</span>
+                <span class="badge badge-medium">MEDIO</span>
+            </div>
+            <div class="phase-body">
+                <table class="findings-table">
+                    <thead>
+                        <tr><th>#</th><th>Hallazgo</th><th>Riesgo</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>1</td><td>TailwindCSS cargado desde CDN en producción (<code>cdn.tailwindcss.com</code>)</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+                        <tr><td>2</td><td>Import maps con <code>esm.sh</code> — Todas las dependencias desde CDN tercero</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+                        <tr><td>3</td><td>Inconsistencia de versiones entre <code>package.json</code> e <code>index.html</code> import maps</td><td><span class="badge badge-medium">MEDIO</span></td></tr>
+                        <tr><td>4</td><td><code>@supabase/supabase-js: 2.39.7</code> — Verificar actualizaciones</td><td><span class="badge badge-info">INFO</span></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- PRIORITY MATRIX -->
+        <div class="phase">
+            <div class="phase-header">
+                <span class="phase-title">📋 Matriz de Priorización</span>
+            </div>
+            <div class="phase-body">
+                <table class="priority-matrix">
+                    <thead>
+                        <tr><th>Prioridad</th><th>Acción</th><th>Esfuerzo</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="badge badge-critical">🔴 1</span></td>
+                            <td>Migrar credenciales a <code>.env</code></td>
+                            <td>Bajo</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-critical">🔴 2</span></td>
+                            <td>Eliminar archivos test del repositorio</td>
+                            <td>Bajo</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-critical">🔴 3</span></td>
+                            <td>Verificar/eliminar RPC <code>execute_sql</code></td>
+                            <td>Bajo</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-medium">🟠 4</span></td>
+                            <td>Auditar RLS en TODAS las tablas Supabase</td>
+                            <td>Medio</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-medium">🟠 5</span></td>
+                            <td>Implementar RLS para permisos por rol</td>
+                            <td>Alto</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-medium">🟠 6</span></td>
+                            <td>Mover validaciones financieras a funciones RPC</td>
+                            <td>Alto</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-medium">🟠 7</span></td>
+                            <td>Usar build de producción (sin CDN)</td>
+                            <td>Medio</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-ok">🟢 8</span></td>
+                            <td>Agregar headers de seguridad (CSP, HSTS)</td>
+                            <td>Bajo</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-ok">🟢 9</span></td>
+                            <td>Ejecutar <code>npm audit</code></td>
+                            <td>Bajo</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- FOOTER -->
+        <div class="footer">
+            <p>⚠️ Deploy No Recomendado hasta resolver hallazgos 🔴 CRÍTICO (prioridades 1, 2 y 3)</p>
+            <p style="margin-top: 0.5rem;">Reporte generado por Antigravity AI Security Auditor — 2026-03-27</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -17,10 +17,12 @@ import {
     MapPin,
     Phone,
     Mail,
-    Store
+    Store,
+    FileSpreadsheet
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { SupplierMaster, User as UserType } from '../types';
+import * as XLSX from 'xlsx';
 
 interface SuppliersMasterProps {
     currentUser: UserType;
@@ -82,6 +84,27 @@ export const SuppliersMaster: React.FC<SuppliersMasterProps> = ({ currentUser })
         }
     };
 
+    const exportToExcel = () => {
+        const data = filteredSuppliers.map(s => ({
+            'Código': s.codigo,
+            'Razón Social': s.razon_social,
+            'Nombre Comercial': s.nombre_comercial || '',
+            'CUIT': s.cuit || '',
+            'Condición IVA': s.condicion_iva || '',
+            'Dirección': s.direccion || '',
+            'Localidad': s.localidad || '',
+            'Provincia': s.provincia || '',
+            'Teléfono': s.telefono || '',
+            'Email': s.email || '',
+            'Días Vencimiento': s.dias_vencimiento || 0,
+            'Estado': s.is_active ? 'Activo' : 'Inactivo'
+        }));
+        const ws = XLSX.utils.json_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Proveedores");
+        XLSX.writeFile(wb, `Maestro_Proveedores_${new Date().toISOString().split('T')[0]}.xlsx`);
+    };
+
     const handleSave = async (data: Partial<SupplierMaster>) => {
         try {
             const payload = {
@@ -130,12 +153,21 @@ export const SuppliersMaster: React.FC<SuppliersMasterProps> = ({ currentUser })
                     </h2>
                     <p className="text-muted text-sm mt-1 font-medium">Fuente de verdad para el catálogo de artículos.</p>
                 </div>
-                <button 
-                    onClick={() => { setEditingSupplier(null); setIsModalOpen(true); }} 
-                    className="bg-primary hover:bg-primaryHover text-white px-8 py-4 rounded-2xl font-black text-sm uppercase transition-all shadow-xl shadow-primary/20 active:scale-95 flex items-center gap-2"
-                >
-                    <Plus size={20} /> Nuevo Proveedor
-                </button>
+                <div className="flex items-center gap-3 w-full md:w-auto">
+                    <button 
+                        onClick={exportToExcel}
+                        className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-4 rounded-2xl bg-green-500/10 border border-green-500/20 text-green-600 hover:bg-green-500 hover:text-white transition-all font-black text-[10px] uppercase shadow-sm"
+                        title="Exportar a Excel"
+                    >
+                        <FileSpreadsheet size={18} /> Exportar
+                    </button>
+                    <button 
+                        onClick={() => { setEditingSupplier(null); setIsModalOpen(true); }} 
+                        className="bg-primary hover:bg-primaryHover text-white px-8 py-4 rounded-2xl font-black text-sm uppercase transition-all shadow-xl shadow-primary/20 active:scale-95 flex items-center gap-2"
+                    >
+                        <Plus size={20} /> Nuevo Proveedor
+                    </button>
+                </div>
             </div>
 
             <div className="bg-surface border border-surfaceHighlight rounded-3xl p-6 shadow-sm flex flex-col md:flex-row items-center gap-4">

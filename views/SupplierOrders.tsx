@@ -39,7 +39,7 @@ interface SupplierOrdersProps {
 }
 
 export const SupplierOrders: React.FC<SupplierOrdersProps> = ({ currentUser }) => {
-    const [tab, setTab] = useState<'pendiente' | 'solicitado' | 'confirmado'>('pendiente');
+    const [tab, setTab] = useState<'pendiente' | 'enviado' | 'confirmado'>('pendiente');
     const [orders, setOrders] = useState<SupplierOrder[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
@@ -111,7 +111,7 @@ export const SupplierOrders: React.FC<SupplierOrdersProps> = ({ currentUser }) =
         try {
             const { error } = await supabase
                 .from('supplier_orders')
-                .update({ status: 'solicitado' })
+                .update({ status: 'enviado' })
                 .eq('id', orderId);
             if (error) throw error;
             await fetchOrders();
@@ -198,7 +198,7 @@ export const SupplierOrders: React.FC<SupplierOrdersProps> = ({ currentUser }) =
                 <div className="flex gap-1 w-full lg:w-auto">
                     {[
                         { id: 'pendiente', label: 'Borradores', icon: <Clock size={16}/> },
-                        { id: 'solicitado', label: 'Solicitados', icon: <PackagePlus size={16}/> },
+                        { id: 'enviado', label: 'Solicitados', icon: <PackagePlus size={16}/> },
                         { id: 'confirmado', label: 'Confirmados', icon: <CheckCircle2 size={16}/> }
                     ].map(t => (
                         <button 
@@ -295,7 +295,7 @@ export const SupplierOrders: React.FC<SupplierOrdersProps> = ({ currentUser }) =
                                                         Pedido Solicitado
                                                     </button>
                                                 )}
-                                                {tab === 'solicitado' && (
+                                                {tab === 'enviado' && (
                                                     <button 
                                                         onClick={() => handleConfirmArrival(order.id)}
                                                         className="flex-1 md:flex-none px-4 py-2.5 rounded-xl bg-green-600 text-white hover:bg-green-700 font-black text-[10px] uppercase shadow-lg shadow-green-900/20 transition-all active:scale-95"
@@ -826,7 +826,7 @@ const CreateSupplierOrderModal: React.FC<{ onClose: () => void, onSuccess: () =>
 };
 
 // --- MODAL DE DETALLE ---
-const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => void, onUpdate: () => void, tab: string }> = ({ order, onClose, onUpdate, tab }) => {
+const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => void, onUpdate: () => void, tab: 'pendiente' | 'enviado' | 'confirmado' }> = ({ order, onClose, onUpdate, tab }) => {
     const [items, setItems] = useState<SupplierOrderItem[]>(order.items || []);
     const [hasChanges, setHasChanges] = useState(false);
     const [deletingItemId, setDeletingItemId] = useState<string | null>(null);

@@ -60,7 +60,6 @@ export const Presupuestador: React.FC = () => {
                     .from('master_products')
                     .select('*')
                     .neq('familia', 'ELIMINADOS')
-                    .gt('stock_llerena', 0) 
                     .order('desart', { ascending: true })
                     .range(from, from + PAGE_SIZE - 1);
 
@@ -103,7 +102,7 @@ export const Presupuestador: React.FC = () => {
         try {
             // Lógica de búsqueda tipo Google: separar por palabras y buscar que el nombre contenga todas
             const words = trimmed.split(/\s+/).filter(w => w.length > 0);
-            let query = supabase.from('clients_master').select('*');
+            let query = supabase.from('clients_master').select('*').neq('activo', false);
             
             words.forEach(word => {
                 query = query.ilike('nombre', `%${word}%`);
@@ -148,16 +147,13 @@ export const Presupuestador: React.FC = () => {
     const addToCart = (codart: string, qty: number) => {
         const product = products.find(p => p.codart === codart);
         if (!product) return;
-        const maxStock = product.stock_llerena || 0;
         setCart(prev => {
             const existing = prev.find(item => item.codart === codart);
             if (existing) {
                 const newTotalQty = existing.qty + qty;
-                const limitedQty = Math.min(newTotalQty, maxStock);
-                return prev.map(item => item.codart === codart ? { ...item, qty: limitedQty } : item);
+                return prev.map(item => item.codart === codart ? { ...item, qty: newTotalQty } : item);
             }
-            const safeQty = Math.min(qty, maxStock);
-            return [...prev, { codart: codart, qty: safeQty }];
+            return [...prev, { codart: codart, qty: qty }];
         });
     };
 
@@ -168,10 +164,8 @@ export const Presupuestador: React.FC = () => {
     const updateCartQty = (codart: string, newQty: number) => {
         const product = products.find(p => p.codart === codart);
         if (!product) return;
-        const maxStock = product.stock_llerena || 0;
         if (newQty <= 0) { removeFromCart(codart); return; }
-        const safeQty = Math.min(newQty, maxStock);
-        setCart(prev => prev.map(item => item.codart === codart ? { ...item, qty: safeQty } : item));
+        setCart(prev => prev.map(item => item.codart === codart ? { ...item, qty: newQty } : item));
     };
 
     const cartDetails = useMemo(() => {
@@ -289,7 +283,7 @@ export const Presupuestador: React.FC = () => {
                         <div className="h-full flex flex-col items-center justify-center opacity-50"><Loader2 className="animate-spin text-primary mb-2" size={32} /><p className="font-black text-[10px] uppercase tracking-widest">Sincronizando Stock Llerena...</p></div>
                     ) : filteredProducts.length > 0 ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                            {filteredProducts.map((product) => (
+                            {filteredProducts.slice(0, 100).map((product) => (
                                 <ProductCard 
                                     key={product.codart} 
                                     product={product} 
@@ -301,7 +295,7 @@ export const Presupuestador: React.FC = () => {
                             ))}
                         </div>
                     ) : (
-                        <div className="h-full flex flex-col items-center justify-center text-center opacity-40"><AlertTriangle size={32} className="text-muted mb-4" /><p className="text-xs font-bold text-muted">Sin stock en Llerena para este filtro.</p></div>
+                        <div className="h-full flex flex-col items-center justify-center text-center opacity-40"><AlertTriangle size={32} className="text-muted mb-4" /><p className="text-xs font-bold text-muted">No se encontraron artículos.</p></div>
                     )}
                 </div>
             </div>
@@ -335,7 +329,6 @@ export const Presupuestador: React.FC = () => {
                                             <input 
                                                 type="number" 
                                                 value={item.qty} 
-                                                max={item.stock_llerena}
                                                 onChange={(e) => updateCartQty(item.codart, parseInt(e.target.value) || 0)} 
                                                 className="w-10 bg-transparent text-center text-[11px] font-black outline-none" 
                                             />
@@ -414,15 +407,14 @@ const ProductCard: React.FC<{
     const [qty, setQty] = useState(1);
     const stock = product.stock_llerena || 0;
     const currentPrice = getPrice(product, activeList);
-    const availableToOrder = Math.max(0, stock - currentInCart);
 
     return (
-        <div className={`bg-surface border border-surfaceHighlight rounded-2xl p-4 flex flex-col gap-3 hover:shadow-lg transition-all group relative overflow-hidden ${availableToOrder <= 0 ? 'opacity-70' : ''}`}>
+        <div className={`bg-surface border border-surfaceHighlight rounded-2xl p-4 flex flex-col gap-3 hover:shadow-lg transition-all group relative overflow-hidden`}>
             <div className="flex items-center justify-between gap-2 mb-1">
                 <span className="text-[9px] font-black text-primary uppercase truncate flex-1">
                     {product.familia || 'Sin Familia'}
                 </span>
-                <span className={`px-2 py-0.5 rounded text-[8px] font-black border shrink-0 ${availableToOrder <= 0 ? 'bg-red-500/10 text-red-500 border-red-500/20' : 'bg-green-500/10 text-green-500 border-green-500/20'}`}>
+                <span className={`px-2 py-0.5 rounded text-[8px] font-black border shrink-0 ${stock <= 0 ? 'bg-red-500/10 text-red-500 border-red-500/20' : 'bg-green-500/10 text-green-500 border-green-500/20'}`}>
                     {stock} LLE
                 </span>
             </div>
@@ -447,26 +439,22 @@ const ProductCard: React.FC<{
                     type="number" 
                     value={qty} 
                     min={1} 
-                    max={availableToOrder}
-                    disabled={availableToOrder <= 0}
                     onChange={(e) => {
                         const val = parseInt(e.target.value) || 0;
-                        setQty(Math.min(val, availableToOrder));
+                        setQty(val);
                     }} 
-                    className="w-16 bg-background border border-surfaceHighlight rounded-xl py-2.5 text-center text-xs font-black outline-none focus:border-primary shadow-inner disabled:opacity-50" 
+                    className="w-16 bg-background border border-surfaceHighlight rounded-xl py-2.5 text-center text-xs font-black outline-none focus:border-primary shadow-inner" 
                 />
                 <button 
                     onClick={() => { 
-                        if (qty > 0 && availableToOrder > 0) { 
+                        if (qty > 0) { 
                             onAdd(product.codart, qty); 
                             setQty(1); 
                         } 
                     }} 
-                    disabled={availableToOrder <= 0}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-black text-[10px] uppercase transition-all active:scale-95 disabled:bg-muted disabled:cursor-not-allowed ${availableToOrder <= 0 ? 'text-muted' : 'bg-primary text-white'}`}
+                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-black text-[10px] uppercase transition-all active:scale-95 bg-primary text-white`}
                 >
-                    <Plus size={14} /> 
-                    {availableToOrder <= 0 ? 'S/S' : 'Agregar'}
+                    <Plus size={18} /> 
                 </button>
             </div>
         </div>

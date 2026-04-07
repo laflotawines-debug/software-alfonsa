@@ -81,6 +81,79 @@ interface CashCountRecord {
     cheques_detail: ChequeItem[];
 }
 
+const MathInput = ({ value, onChange, placeholder }: { value: number, onChange: (val: number) => void, placeholder?: string }) => {
+    const [localValue, setLocalValue] = useState(value === 0 ? '' : value.toLocaleString('es-AR'));
+
+    // Sync from parent if changed externally (e.g. loaded from DB)
+    useEffect(() => {
+        // Only override if we are not currently typing an expression
+        if (!/[+\-*/]/.test(localValue)) {
+            setLocalValue(value === 0 ? '' : value.toLocaleString('es-AR'));
+        }
+    }, [value]);
+
+    const evaluateExpression = (expr: string): number | null => {
+        try {
+            // Remove dots (thousands separators), equals signs, and spaces
+            const cleanExpr = expr.replace(/[=.\s]/g, '');
+            if (/^[\d+\-*/]+$/.test(cleanExpr)) {
+                // eslint-disable-next-line no-new-func
+                const result = new Function('return ' + cleanExpr)();
+                if (!isNaN(result) && isFinite(result)) {
+                    return Math.round(result);
+                }
+            }
+        } catch (e) {
+            // ignore
+        }
+        return null;
+    };
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value;
+        
+        if (val.includes('=')) {
+            const result = evaluateExpression(val);
+            if (result !== null) {
+                onChange(result);
+                setLocalValue(result.toLocaleString('es-AR'));
+                return;
+            }
+        }
+        
+        setLocalValue(val);
+        
+        // If it's just a number (can include dots), update parent immediately
+        if (!/[+\-*/=]/.test(val)) {
+            const num = parseInt(val.replace(/\./g, '')) || 0;
+            onChange(num);
+        }
+    };
+
+    const handleBlur = () => {
+        const result = evaluateExpression(localValue);
+        if (result !== null) {
+            onChange(result);
+            setLocalValue(result === 0 ? '' : result.toLocaleString('es-AR'));
+        } else {
+            const num = parseInt(localValue.replace(/\./g, '')) || 0;
+            onChange(num);
+            setLocalValue(num === 0 ? '' : num.toLocaleString('es-AR'));
+        }
+    };
+
+    return (
+        <input 
+            type="text" 
+            value={localValue}
+            onChange={handleChange}
+            onBlur={handleBlur}
+            placeholder={placeholder}
+            className="w-32 bg-surface border border-surfaceHighlight rounded-xl py-2 px-3 text-right font-black text-text outline-none focus:border-primary shadow-inner"
+        />
+    );
+};
+
 export const CashCount: React.FC<{ currentUser: User }> = ({ currentUser }) => {
     const [view, setView] = useState<'new' | 'history'>('new');
     const [history, setHistory] = useState<CashCountRecord[]>([]);
@@ -407,15 +480,10 @@ export const CashCount: React.FC<{ currentUser: User }> = ({ currentUser }) => {
                                 <span className="text-sm font-bold uppercase text-text">CAMBIO INICIAL</span>
                                 <div className="flex items-center gap-4">
                                     <span className="text-sm font-black text-text hidden sm:block">$ {initialChange.toLocaleString('es-AR')}</span>
-                                    <input 
-                                        type="text" 
-                                        value={initialChange === 0 ? '' : initialChange.toLocaleString('es-AR')}
-                                        onChange={e => {
-                                            const val = parseInt(e.target.value.replace(/\./g, '')) || 0;
-                                            setInitialChange(val);
-                                        }}
+                                    <MathInput 
+                                        value={initialChange}
+                                        onChange={setInitialChange}
                                         placeholder="0"
-                                        className="w-32 bg-surface border border-surfaceHighlight rounded-xl py-2 px-3 text-right font-black text-text outline-none focus:border-primary shadow-inner"
                                     />
                                 </div>
                             </div>
@@ -423,15 +491,10 @@ export const CashCount: React.FC<{ currentUser: User }> = ({ currentUser }) => {
                                 <span className="text-sm font-bold uppercase text-text">POPURRÍ (Sueltos)</span>
                                 <div className="flex items-center gap-4">
                                     <span className="text-sm font-black text-text hidden sm:block">$ {looseCash.toLocaleString('es-AR')}</span>
-                                    <input 
-                                        type="text" 
-                                        value={looseCash === 0 ? '' : looseCash.toLocaleString('es-AR')}
-                                        onChange={e => {
-                                            const val = parseInt(e.target.value.replace(/\./g, '')) || 0;
-                                            setLooseCash(val);
-                                        }}
+                                    <MathInput 
+                                        value={looseCash}
+                                        onChange={setLooseCash}
                                         placeholder="0"
-                                        className="w-32 bg-surface border border-surfaceHighlight rounded-xl py-2 px-3 text-right font-black text-text outline-none focus:border-primary shadow-inner"
                                     />
                                 </div>
                             </div>

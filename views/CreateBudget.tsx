@@ -26,6 +26,7 @@ import {
 import { View, Product, OrderStatus, DetailedOrder, User, OrderZone, ClientMaster, SavedBudget, MasterProduct, DeliveryZone } from '../types';
 import { parseOrderText } from '../logic';
 import { supabase } from '../supabase';
+import { ClientModal } from '../components/ClientModal';
 
 interface CreateBudgetProps {
   onNavigate: (view: View) => void;
@@ -39,34 +40,17 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
   const [phone, setPhone] = useState('');
   
   const [showNewClientModal, setShowNewClientModal] = useState(false);
-  const [newClientData, setNewClientData] = useState({ codigo: '', nombre: '', domicilio: '', celular: '' });
-  const [isSavingClient, setIsSavingClient] = useState(false);
+  const [selectedPriceList, setSelectedPriceList] = useState<number>(2); // Default to list 2
 
-  const handleSaveNewClient = async () => {
-      if (!newClientData.codigo || !newClientData.nombre) {
-          alert("El código y nombre son obligatorios.");
-          return;
+  const handleSaveNewClient = (client?: ClientMaster) => {
+      if (client) {
+          setClientName(client.nombre);
+          setAddress(client.domicilio || '');
+          setPhone(client.celular || '');
+          setSelectedClient(client);
+          setSelectedPriceList(client.price_list || 2);
       }
-      setIsSavingClient(true);
-      const { data, error } = await supabase.from('clients_master').insert([{
-          codigo: newClientData.codigo.toUpperCase(),
-          nombre: newClientData.nombre.toUpperCase(),
-          domicilio: newClientData.domicilio,
-          celular: newClientData.celular,
-          activo: true
-      }]).select();
-      
-      setIsSavingClient(false);
-      if (error) {
-          alert("Error al guardar cliente: " + error.message);
-      } else if (data && data.length > 0) {
-          setShowNewClientModal(false);
-          setClientName(data[0].nombre);
-          setAddress(data[0].domicilio || '');
-          setPhone(data[0].celular || '');
-          setSelectedClient(data[0]);
-          setNewClientData({ codigo: '', nombre: '', domicilio: '', celular: '' });
-      }
+      setShowNewClientModal(false);
   };
 
   const [selectedZone, setSelectedZone] = useState<string>('');
@@ -96,6 +80,7 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
   const [productSearchResults, setProductSearchResults] = useState<MasterProduct[]>([]);
   const [isSearchingProduct, setIsSearchingProduct] = useState(false);
   const [showProductDropdown, setShowProductDropdown] = useState(false);
+  const [isAddingSinCargo, setIsAddingSinCargo] = useState(false);
 
   // Presupuestos guardados
   const [savedBudgets, setSavedBudgets] = useState<SavedBudget[]>([]);
@@ -136,6 +121,53 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const productsRef = useRef(products);
+  useEffect(() => {
+      productsRef.current = products;
+  }, [products]);
+
+  useEffect(() => {
+      const updatePrices = async () => {
+          const currentProducts = productsRef.current;
+          if (currentProducts.length === 0) return;
+          
+          const productCodes = currentProducts.map(p => p.code);
+          const { data, error } = await supabase
+              .from('master_products')
+              .select('codart, pventa_1, pventa_2, pventa_3, pventa_4')
+              .in('codart', productCodes);
+              
+          if (error || !data) return;
+          
+          const priceMap = new Map();
+          data.forEach(p => {
+              let newPrice = p.pventa_2;
+              switch (selectedPriceList) {
+                  case 1: newPrice = p.pventa_1; break;
+                  case 2: newPrice = p.pventa_2; break;
+                  case 3: newPrice = p.pventa_3; break;
+                  case 4: newPrice = p.pventa_4; break;
+              }
+              priceMap.set(p.codart, newPrice);
+          });
+          
+          setProducts(prev => prev.map(p => {
+              if (p.unitPrice === 0) return p; // Sin cargo
+              const updatedPrice = priceMap.get(p.code);
+              if (updatedPrice !== undefined && updatedPrice !== p.unitPrice) {
+                  return {
+                      ...p,
+                      unitPrice: updatedPrice,
+                      subtotal: p.quantity * updatedPrice
+                  };
+              }
+              return p;
+          }));
+      };
+      
+      updatePrices();
+  }, [selectedPriceList]);
+
   const fetchSavedBudgets = async (clientCode: string) => {
       const { data, error } = await supabase
         .from('saved_budgets')
@@ -166,7 +198,7 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
 
     try {
       const words = trimmed.split(/\s+/).filter(w => w.length > 0);
-      let query = supabase.from('clients_master').select('*');
+      let query = supabase.from('clients_master').select('*').neq('activo', false);
       
       words.forEach(word => {
         query = query.ilike('nombre', `%${word}%`);
@@ -186,6 +218,7 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
   const selectClient = (client: ClientMaster) => {
     setClientName(client.nombre);
     setSelectedClient(client);
+    setSelectedPriceList(client.price_list || 2);
     
     // Auto-completar datos extra si existen
     if (client.domicilio) setAddress(client.domicilio);
@@ -236,17 +269,19 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
   };
 
   const addManualProduct = (masterProd: MasterProduct) => {
-      // Determine price based on selected client's price list
+      // Determine price based on selected price list
       let selectedPrice = masterProd.pventa_2; // Default to List 2
       
-      if (selectedClient?.price_list) {
-          switch (selectedClient.price_list) {
-              case 1: selectedPrice = masterProd.pventa_1; break;
-              case 2: selectedPrice = masterProd.pventa_2; break;
-              case 3: selectedPrice = masterProd.pventa_3; break;
-              case 4: selectedPrice = masterProd.pventa_4; break;
-              default: selectedPrice = masterProd.pventa_2;
-          }
+      switch (selectedPriceList) {
+          case 1: selectedPrice = masterProd.pventa_1; break;
+          case 2: selectedPrice = masterProd.pventa_2; break;
+          case 3: selectedPrice = masterProd.pventa_3; break;
+          case 4: selectedPrice = masterProd.pventa_4; break;
+          default: selectedPrice = masterProd.pventa_2;
+      }
+
+      if (isAddingSinCargo) {
+          selectedPrice = 0;
       }
 
       const newProduct: Product = {
@@ -260,9 +295,9 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
       };
 
       // Verificar si ya existe para bloquear duplicados
-      const exists = products.find(p => p.code === masterProd.codart);
+      const exists = products.find(p => p.code === masterProd.codart && p.unitPrice === newProduct.unitPrice);
       if (exists) {
-          alert("No se puede agregar un producto que ya fue agregado");
+          alert("No se puede agregar un producto que ya fue agregado con el mismo precio.");
           return;
       }
 
@@ -270,6 +305,7 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
 
       setProductSearchTerm('');
       setShowProductDropdown(false);
+      setIsAddingSinCargo(false);
   };
 
   const useSavedBudget = (budget: SavedBudget) => {
@@ -377,21 +413,22 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
                 alert("No se detectaron productos. Verifique que el texto tenga el formato correcto.");
             } else {
                 // Verificar duplicados contra los ya existentes y dentro del nuevo lote
-                const existingCodes = new Set(products.map(p => p.code));
+                const existingKeys = new Set(products.map(p => `${p.code}-${p.unitPrice}`));
                 const uniqueNewProducts: Product[] = [];
                 let hasDuplicates = false;
 
                 for (const p of parsedProducts) {
-                    if (existingCodes.has(p.code)) {
+                    const key = `${p.code}-${p.unitPrice}`;
+                    if (existingKeys.has(key)) {
                         hasDuplicates = true;
                     } else {
                         uniqueNewProducts.push(p);
-                        existingCodes.add(p.code);
+                        existingKeys.add(key);
                     }
                 }
 
                 if (hasDuplicates) {
-                    alert("No se puede agregar un producto que ya fue agregado");
+                    alert("No se puede agregar un producto que ya fue agregado con el mismo precio.");
                 }
 
                 if (uniqueNewProducts.length > 0) {
@@ -669,16 +706,28 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
          <div className="flex flex-col gap-4">
              {/* BÚSQUEDA MANUAL */}
              <div className="relative z-20" ref={productDropdownRef}>
-                 <div className="relative">
-                    <Package className="absolute left-4 top-1/2 -translate-y-1/2 text-primary" size={18} />
-                    <input 
-                        type="text" 
-                        value={productSearchTerm} 
-                        onChange={(e) => handleSearchProduct(e.target.value)}
-                        placeholder="Buscar producto por nombre para agregar..." 
-                        className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3.5 pl-12 pr-4 text-sm text-text focus:border-primary outline-none transition-colors shadow-sm font-bold uppercase" 
-                    />
-                    {isSearchingProduct && <div className="absolute right-4 top-1/2 -translate-y-1/2"><Loader2 className="animate-spin text-primary" size={16} /></div>}
+                 <div className="relative flex gap-2">
+                    <div className="relative flex-1">
+                        <Package className="absolute left-4 top-1/2 -translate-y-1/2 text-primary" size={18} />
+                        <input 
+                            type="text" 
+                            value={productSearchTerm} 
+                            onChange={(e) => handleSearchProduct(e.target.value)}
+                            placeholder="Buscar producto por nombre para agregar..." 
+                            className="w-full bg-surface border border-surfaceHighlight rounded-xl py-3.5 pl-12 pr-4 text-sm text-text focus:border-primary outline-none transition-colors shadow-sm font-bold uppercase" 
+                        />
+                        {isSearchingProduct && <div className="absolute right-4 top-1/2 -translate-y-1/2"><Loader2 className="animate-spin text-primary" size={16} /></div>}
+                    </div>
+                    <button 
+                        onClick={() => setIsAddingSinCargo(!isAddingSinCargo)}
+                        className={`px-4 py-2 rounded-xl border text-xs font-black uppercase transition-all flex items-center gap-2 ${isAddingSinCargo ? 'bg-purple-500 text-white border-purple-600 shadow-lg' : 'bg-surface border-surfaceHighlight text-muted hover:text-text'}`}
+                        title="Agregar con costo 0"
+                    >
+                        <div className={`w-4 h-4 rounded border flex items-center justify-center ${isAddingSinCargo ? 'border-white' : 'border-muted'}`}>
+                            {isAddingSinCargo && <Check size={12} className="text-white"/>}
+                        </div>
+                        Sin Cargo
+                    </button>
                  </div>
                  {showProductDropdown && productSearchResults.length > 0 && (
                      <div className="absolute top-full left-0 w-full mt-2 bg-surface border border-primary/30 rounded-2xl shadow-2xl max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2">
@@ -719,13 +768,30 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
       </section>
 
       <section className="bg-surface rounded-2xl border border-surfaceHighlight shadow-sm overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-500">
-         <div className="p-6 border-b border-surfaceHighlight flex items-center justify-between bg-surface">
+         <div className="p-6 border-b border-surfaceHighlight flex items-center justify-between bg-surface flex-wrap gap-4">
             <h3 className="text-text text-lg font-bold">Productos en el pedido ({products.length})</h3>
-            {selectedBudgetId && (
-                <div className="flex items-center gap-2 text-primary font-black text-[10px] uppercase bg-primary/10 px-3 py-1.5 rounded-full border border-primary/20">
-                    <CheckCircle2 size={14}/> Usando Presupuesto Guardado
+            <div className="flex items-center gap-4 flex-wrap">
+                {selectedBudgetId && (
+                    <div className="flex items-center gap-2 text-primary font-black text-[10px] uppercase bg-primary/10 px-3 py-1.5 rounded-full border border-primary/20">
+                        <CheckCircle2 size={14}/> Usando Presupuesto Guardado
+                    </div>
+                )}
+                <div className="flex bg-surfaceHighlight/30 rounded-xl border border-surfaceHighlight overflow-hidden">
+                    {[1, 2, 3, 4].map((listNum) => (
+                        <button
+                            key={listNum}
+                            onClick={() => setSelectedPriceList(listNum)}
+                            className={`px-4 py-2 text-[10px] font-black uppercase transition-colors ${
+                                selectedPriceList === listNum 
+                                    ? 'bg-primary text-white shadow-sm' 
+                                    : 'text-muted hover:bg-surfaceHighlight hover:text-text'
+                            }`}
+                        >
+                            Lista {listNum}
+                        </button>
+                    ))}
                 </div>
-            )}
+            </div>
          </div>
 
          <div className="overflow-x-auto">
@@ -750,7 +816,16 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
                     ) : products.map((product, index) => (
                         <tr key={`${product.code}-${index}`} className="hover:bg-background/20 transition-colors">
                             <td className="py-4 px-6"><div className="px-3 py-1.5 rounded bg-surface border border-surfaceHighlight text-text text-sm font-mono text-center">{product.code}</div></td>
-                            <td className="py-4 px-6"><span className="text-sm text-text font-bold uppercase">{product.name}</span></td>
+                            <td className="py-4 px-6">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-sm text-text font-bold uppercase">{product.name}</span>
+                                    {product.unitPrice === 0 && (
+                                        <span className="text-[10px] font-black uppercase bg-purple-500 text-white px-2 py-0.5 rounded shadow-sm">
+                                            Sin Cargo
+                                        </span>
+                                    )}
+                                </div>
+                            </td>
                             <td className="py-4 px-6 text-center">
                                 <input 
                                     type="number" 
@@ -795,67 +870,11 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
 
       {/* NEW CLIENT MODAL */}
       {showNewClientModal && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-              <div className="bg-surface rounded-2xl shadow-xl max-w-md w-full overflow-hidden flex flex-col">
-                  <div className="p-6 border-b border-surfaceHighlight">
-                      <h3 className="text-lg font-bold text-text">Agregar Nuevo Cliente</h3>
-                  </div>
-                  <div className="p-6 flex flex-col gap-4">
-                      <div className="flex flex-col gap-1">
-                          <label className="text-xs font-bold text-muted uppercase">Código *</label>
-                          <input 
-                              type="text" 
-                              value={newClientData.codigo} 
-                              onChange={e => setNewClientData({...newClientData, codigo: e.target.value})}
-                              className="w-full bg-background border border-surfaceHighlight rounded-lg p-3 text-sm font-bold uppercase focus:border-primary outline-none"
-                          />
-                      </div>
-                      <div className="flex flex-col gap-1">
-                          <label className="text-xs font-bold text-muted uppercase">Nombre *</label>
-                          <input 
-                              type="text" 
-                              value={newClientData.nombre} 
-                              onChange={e => setNewClientData({...newClientData, nombre: e.target.value})}
-                              className="w-full bg-background border border-surfaceHighlight rounded-lg p-3 text-sm font-bold uppercase focus:border-primary outline-none"
-                          />
-                      </div>
-                      <div className="flex flex-col gap-1">
-                          <label className="text-xs font-bold text-muted uppercase">Domicilio</label>
-                          <input 
-                              type="text" 
-                              value={newClientData.domicilio} 
-                              onChange={e => setNewClientData({...newClientData, domicilio: e.target.value})}
-                              className="w-full bg-background border border-surfaceHighlight rounded-lg p-3 text-sm focus:border-primary outline-none"
-                          />
-                      </div>
-                      <div className="flex flex-col gap-1">
-                          <label className="text-xs font-bold text-muted uppercase">Celular</label>
-                          <input 
-                              type="text" 
-                              value={newClientData.celular} 
-                              onChange={e => setNewClientData({...newClientData, celular: e.target.value})}
-                              className="w-full bg-background border border-surfaceHighlight rounded-lg p-3 text-sm focus:border-primary outline-none"
-                          />
-                      </div>
-                  </div>
-                  <div className="p-4 bg-surfaceHighlight/30 flex justify-end gap-3">
-                      <button 
-                          onClick={() => setShowNewClientModal(false)}
-                          className="px-4 py-2 text-sm font-bold text-text/70 hover:text-text transition-colors"
-                      >
-                          Cancelar
-                      </button>
-                      <button 
-                          onClick={handleSaveNewClient}
-                          disabled={isSavingClient}
-                          className="px-4 py-2 text-sm font-bold bg-primary text-white rounded-xl hover:bg-primaryHover transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2"
-                      >
-                          {isSavingClient ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                          Guardar
-                      </button>
-                  </div>
-              </div>
-          </div>
+          <ClientModal 
+              initialData={null} 
+              onClose={() => setShowNewClientModal(false)} 
+              onSuccess={handleSaveNewClient} 
+          />
       )}
     </div>
   );

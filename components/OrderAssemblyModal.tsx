@@ -38,7 +38,8 @@ import {
     Send, 
     User, 
     FilePlus,
-    Circle
+    Circle,
+    Pencil
 } from 'lucide-react';
 import { Order, Product, User as UserType, OrderStatus, PaymentMethod, MasterProduct, HistoryEntry } from '../types';
 import { updatePaymentMethod } from '../logic';
@@ -50,12 +51,12 @@ interface OrderAssemblyModalProps {
     currentUser: UserType;
     onClose: () => void;
     onSave: (updatedOrder: Order, shouldAdvance: boolean, notes?: string) => Promise<void>;
-    onUpdateProduct: (productCode: string, quantity: number) => void;
-    onToggleCheck: (productCode: string) => void;
+    onUpdateProduct: (productCode: string, quantity: number, unitPrice?: number) => void;
+    onToggleCheck: (productCode: string, unitPrice?: number) => void;
     onUpdateObservations: (text: string) => void;
     onAddProduct?: (product: Product) => void;
-    onUpdatePrice?: (productCode: string, newPrice: number) => void;
-    onRemoveProduct?: (productCode: string) => void;
+    onUpdatePrice?: (productCode: string, newPrice: number, oldUnitPrice?: number) => void;
+    onRemoveProduct?: (productCode: string, unitPrice?: number) => void;
     onDeleteOrder?: (orderId: string) => void;
     onToggleAllChecks?: (check: boolean) => void;
 }
@@ -75,8 +76,8 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     onToggleAllChecks
 }) => {
     const [activeTab, setActiveTab] = useState<'products' | 'history'>('products');
-    const [editingProductCode, setEditingProductCode] = useState<string | null>(null);
-    const [editingPriceCode, setEditingPriceCode] = useState<string | null>(null);
+    const [editingProductKey, setEditingProductKey] = useState<string | null>(null);
+    const [editingPriceKey, setEditingPriceKey] = useState<string | null>(null);
     const [tempValue, setTempValue] = useState<string>("");
     const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
     const [isGeneratingInvoice, setIsGeneratingInvoice] = useState(false);
@@ -94,6 +95,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     const [newProdName, setNewProdName] = useState('');
     const [newProdQty, setNewProdQty] = useState('1');
     const [newProdPrice, setNewProdPrice] = useState('0');
+    const [isAddingSinCargo, setIsAddingSinCargo] = useState(false);
 
     // Estado para modal de transición
     const [showTransitionModal, setShowTransitionModal] = useState(false);
@@ -184,6 +186,9 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         isInvoiceControlStep ||
         isReadyForTransit
     );
+
+    // Permiso para editar precios (solo admin o con permiso, hasta antes de facturar)
+    const canEditPrice = hasAdminPrivileges && [OrderStatus.EN_ARMADO, OrderStatus.ARMADO, OrderStatus.ARMADO_CONTROLADO].includes(order.status);
 
     // Metadata editable si tiene privilegios
     const canEditMetadata = hasAdminPrivileges; 
@@ -439,28 +444,28 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
 
     const handleEditQtyClick = (product: Product) => {
         if (!canEditProducts) return;
-        setEditingProductCode(product.code);
+        setEditingProductKey(`${product.code}-${product.unitPrice}`);
         setTempValue(product.quantity.toString());
-        setEditingPriceCode(null);
+        setEditingPriceKey(null);
     };
 
     const handleQtySave = (product: Product) => {
         const qty = parseInt(tempValue);
-        if (!isNaN(qty) && qty >= 0) { onUpdateProduct(product.code, qty); }
-        setEditingProductCode(null);
+        if (!isNaN(qty) && qty >= 0) { onUpdateProduct(product.code, qty, product.unitPrice); }
+        setEditingProductKey(null);
     };
 
     const handleEditPriceClick = (product: Product) => {
-        if (!canEditProducts || !hasAdminPrivileges) return;
-        setEditingPriceCode(product.code);
+        if (!canEditPrice) return;
+        setEditingPriceKey(`${product.code}-${product.unitPrice}`);
         setTempValue(product.unitPrice.toString());
-        setEditingProductCode(null);
+        setEditingProductKey(null);
     };
 
     const handlePriceSave = (product: Product) => {
         const price = parseFloat(tempValue);
-        if (!isNaN(price) && price >= 0 && onUpdatePrice) { onUpdatePrice(product.code, price); }
-        setEditingPriceCode(null);
+        if (!isNaN(price) && price >= 0 && onUpdatePrice) { onUpdatePrice(product.code, price, product.unitPrice); }
+        setEditingPriceKey(null);
     };
 
     const handleKeyDown = (e: React.KeyboardEvent, product: Product, type: 'qty' | 'price') => {
@@ -470,7 +475,14 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
     const handleSaveNewProduct = () => {
         if (!newProdCode || !newProdName || !onAddProduct) return;
         const qty = parseInt(newProdQty) || 1;
-        const price = parseFloat(newProdPrice) || 0;
+        const price = isAddingSinCargo ? 0 : (parseFloat(newProdPrice) || 0);
+
+        const exists = order.products.find(p => p.code === newProdCode && p.unitPrice === price);
+        if (exists) {
+            alert("No se puede agregar un producto que ya fue agregado con el mismo precio.");
+            return;
+        }
+
         // FLAG NEGATIVO: Se usa el valor negativo para identificarlo como agregado y tener línea de base para faltantes
         onAddProduct({ 
             code: newProdCode, 
@@ -487,6 +499,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         setNewProdQty('1'); 
         setNewProdPrice('0'); 
         setSearchProdTerm('');
+        setIsAddingSinCargo(false);
     };
 
     const handleSafeSave = async (orderToSave: Order, shouldAdvance: boolean, notes?: string) => {
@@ -495,7 +508,7 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
         try {
             // Deduplicate products to prevent race conditions
             const uniqueProductsMap = new Map();
-            orderToSave.products.forEach(p => uniqueProductsMap.set(p.code, p));
+            orderToSave.products.forEach(p => uniqueProductsMap.set(`${p.code}-${p.unitPrice}`, p));
             const uniqueProducts = Array.from(uniqueProductsMap.values());
             const cleanOrder = { ...orderToSave, products: uniqueProducts };
             
@@ -869,8 +882,20 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                                     <input className="col-span-3 p-2 rounded bg-surface border border-surfaceHighlight text-xs" placeholder="Cód" value={newProdCode} onChange={e => setNewProdCode(e.target.value)} />
                                                     <input className="col-span-5 p-2 rounded bg-surface border border-surfaceHighlight text-xs" placeholder="Nombre" value={newProdName} onChange={e => setNewProdName(e.target.value)}/>
                                                     <input className="col-span-2 p-2 rounded bg-surface border border-surfaceHighlight text-xs text-center" placeholder="Cant" type="number" value={newProdQty} onChange={e => setNewProdQty(e.target.value)}/>
-                                                    {showFinancials && <input className="col-span-2 p-2 rounded bg-surface border border-surfaceHighlight text-xs text-right" placeholder="Precio" type="number" value={newProdPrice} onChange={e => setNewProdPrice(e.target.value)}/>}
-                                                    <button onClick={handleSaveNewProduct} className="col-span-12 mt-2 py-2 bg-primary text-white font-bold rounded text-xs hover:bg-primaryHover transition-colors">Insertar</button>
+                                                    {showFinancials && <input className="col-span-2 p-2 rounded bg-surface border border-surfaceHighlight text-xs text-right" placeholder="Precio" type="number" value={newProdPrice} onChange={e => setNewProdPrice(e.target.value)} disabled={isAddingSinCargo}/>}
+                                                    <div className="col-span-12 flex gap-2 mt-2">
+                                                        <button 
+                                                            onClick={() => setIsAddingSinCargo(!isAddingSinCargo)}
+                                                            className={`px-3 py-2 rounded border text-[10px] font-black uppercase transition-all flex items-center gap-2 ${isAddingSinCargo ? 'bg-purple-500 text-white border-purple-600 shadow-sm' : 'bg-surface border-surfaceHighlight text-muted hover:text-text'}`}
+                                                            title="Agregar con costo 0"
+                                                        >
+                                                            <div className={`w-3 h-3 rounded border flex items-center justify-center ${isAddingSinCargo ? 'border-white' : 'border-muted'}`}>
+                                                                {isAddingSinCargo && <Check size={10} className="text-white"/>}
+                                                            </div>
+                                                            Sin Cargo
+                                                        </button>
+                                                        <button onClick={handleSaveNewProduct} className="flex-1 py-2 bg-primary text-white font-bold rounded text-xs hover:bg-primaryHover transition-colors">Insertar</button>
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
@@ -878,12 +903,13 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                     
                                     <div className="flex flex-col gap-3">
                                         {order.products.map((product) => {
-                                            const isEditingQty = editingProductCode === product.code;
-                                            const isEditingPrice = editingPriceCode === product.code;
+                                            const isEditingQty = editingProductKey === `${product.code}-${product.unitPrice}`;
+                                            const isEditingPrice = editingPriceKey === `${product.code}-${product.unitPrice}`;
                                             const isPostShipping = [OrderStatus.FACTURADO, OrderStatus.FACTURA_CONTROLADA, OrderStatus.EN_TRANSITO, OrderStatus.ENTREGADO, OrderStatus.PAGADO].includes(order.status);
                                             
                                             // DETERMINACIÓN DE PRODUCTO AGREGADO (originalQuantity <= 0 indica agregado a posteriori)
                                             const isAddedNew = product.originalQuantity <= 0;
+                                            const isSinCargo = product.unitPrice === 0;
                                             const absOriginal = Math.abs(product.originalQuantity);
 
                                             // Faltante: Original (Absoluto) - Cantidad Actual.
@@ -900,15 +926,15 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                             const displayChecked = isAutoCheckStep ? true : product.isChecked;
 
                                             return (
-                                                <div key={product.code} className={`flex items-start md:items-center gap-3 p-4 rounded-xl border transition-all 
-                                                    ${isAddedNew ? 'bg-orange-50/70 dark:bg-orange-900/10 border-orange-200' : (displayChecked && !isFinishedStep ? 'bg-green-50/5 border-green-500/20' : 'bg-surface border-surfaceHighlight shadow-sm')}
+                                                <div key={`${product.code}-${product.unitPrice}`} className={`flex items-start md:items-center gap-3 p-4 rounded-xl border transition-all 
+                                                    ${isSinCargo ? 'bg-purple-50/70 dark:bg-purple-900/10 border-purple-200' : (isAddedNew ? 'bg-orange-50/70 dark:bg-orange-900/10 border-orange-200' : (displayChecked && !isFinishedStep ? 'bg-green-50/5 border-green-500/20' : 'bg-surface border-surfaceHighlight shadow-sm'))}
                                                 `}>
                                                     {!isFinishedStep && (
                                                         <input 
                                                             type="checkbox"
                                                             checked={displayChecked}
                                                             onChange={() => {
-                                                                if (canEditProducts && !isAutoCheckStep) onToggleCheck(product.code);
+                                                                if (canEditProducts && !isAutoCheckStep) onToggleCheck(product.code, product.unitPrice);
                                                             }}
                                                             disabled={!canEditProducts || isAutoCheckStep}
                                                             className={`w-5 h-5 rounded border-surfaceHighlight text-primary focus:ring-primary cursor-pointer accent-primary ${isAutoCheckStep ? 'opacity-50' : ''}`}
@@ -918,7 +944,11 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                                     <div className="flex-1 min-w-0">
                                                         <div className="flex items-center gap-2">
                                                             <p className="font-bold text-sm leading-tight text-text uppercase">{product.name}</p>
-                                                            {isAddedNew && (
+                                                            {isSinCargo ? (
+                                                                <span className="text-[7px] font-black uppercase bg-purple-500 text-white px-1.5 py-0.5 rounded shadow-sm flex items-center gap-0.5 animate-in fade-in zoom-in">
+                                                                    Sin Cargo
+                                                                </span>
+                                                            ) : isAddedNew && (
                                                                 <span className="text-[7px] font-black uppercase bg-orange-500 text-white px-1.5 py-0.5 rounded shadow-sm flex items-center gap-0.5 animate-in fade-in zoom-in">
                                                                     Agregado
                                                                 </span>
@@ -950,8 +980,8 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                                         ) : (
                                                             <div className="flex flex-col items-center">
                                                                 <div className="flex items-center gap-2">
-                                                                    <span className={`text-lg font-black ${isAddedNew ? 'text-orange-600' : 'text-text'}`}>{product.quantity}</span>
-                                                                    {canEditProducts && <button onClick={() => handleEditQtyClick(product)} className="p-1 text-muted hover:text-primary"><Edit2 size={14} /></button>}
+                                                                    <span className={`text-lg font-black ${isSinCargo ? 'text-purple-600' : (isAddedNew ? 'text-orange-600' : 'text-text')}`}>{product.quantity}</span>
+                                                                    {canEditProducts && <button onClick={() => handleEditQtyClick(product)} className="p-1 text-muted hover:text-primary"><Pencil size={14} /></button>}
                                                                 </div>
                                                                 {isShortage && !isPostShipping && (
                                                                     <span className="text-[9px] text-muted font-bold uppercase tracking-tighter">de {absOriginal}</span>
@@ -961,9 +991,48 @@ export const OrderAssemblyModal: React.FC<OrderAssemblyModalProps> = ({
                                                     </div>
 
                                                     {showFinancials && (
-                                                        <div className="hidden md:block w-32 text-right">
-                                                            <p className="text-xs font-bold text-green-600">$ {product.subtotal.toLocaleString('es-AR')}</p>
-                                                            <p className="text-[9px] text-muted italic">$ {product.unitPrice.toLocaleString('es-AR')} un.</p>
+                                                        <div className="w-28 md:w-32 text-right">
+                                                            {isEditingPrice ? (
+                                                                <div className="flex items-center justify-end gap-1 animate-in slide-in-from-right-2">
+                                                                    <span className="text-[10px] text-muted font-bold">$</span>
+                                                                    <input 
+                                                                        type="number" 
+                                                                        value={tempValue} 
+                                                                        onChange={e => setTempValue(e.target.value)} 
+                                                                        onKeyDown={e => handleKeyDown(e, product, 'price')} 
+                                                                        className="w-16 md:w-20 px-1 md:px-2 py-1 rounded bg-background border border-primary text-xs font-bold text-right outline-none" 
+                                                                        autoFocus 
+                                                                    />
+                                                                    <button 
+                                                                        onClick={() => handlePriceSave(product)} 
+                                                                        className="p-1 text-green-500 hover:bg-green-500/10 rounded transition-colors"
+                                                                    >
+                                                                        <Check size={14}/>
+                                                                    </button>
+                                                                    <button 
+                                                                        onClick={() => setEditingPriceKey(null)} 
+                                                                        className="p-1 text-muted hover:bg-surfaceHighlight rounded transition-colors"
+                                                                    >
+                                                                        <X size={14}/>
+                                                                    </button>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="group/price relative">
+                                                                    <p className="text-xs font-bold text-green-600 tracking-tighter">$ {product.subtotal.toLocaleString('es-AR')}</p>
+                                                                    <div className="flex items-center justify-end gap-1.5">
+                                                                        <p className="text-[9px] text-muted italic">$ {product.unitPrice.toLocaleString('es-AR')} un.</p>
+                                                                        {canEditPrice && (
+                                                                            <button 
+                                                                                onClick={() => handleEditPriceClick(product)} 
+                                                                                className="p-1 text-muted hover:text-primary transition-all"
+                                                                                title="Editar precio unitario"
+                                                                            >
+                                                                                <Pencil size={10} />
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     )}
                                                 </div>

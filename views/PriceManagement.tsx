@@ -44,6 +44,7 @@ export const PriceManagement: React.FC<PriceManagementProps> = ({ currentUser })
     const [searchTerm, setSearchTerm] = useState('');
     const [providerFilter, setProviderFilter] = useState('TODOS');
     const [percentages, setPercentages] = useState<{ [key: number]: string }>({ 1: '0', 2: '0', 3: '0' });
+    const [list4Percentage, setList4Percentage] = useState<string>('-8');
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
     const [pendingPayload, setPendingPayload] = useState<any[]>([]);
@@ -76,6 +77,7 @@ export const PriceManagement: React.FC<PriceManagementProps> = ({ currentUser })
             setDbProducts(allProducts);
             setWorkingProducts(allProducts);
             setPercentages({ 1: '0', 2: '0', 3: '0' });
+            setList4Percentage('-8');
             setSelectedIds(new Set());
         } catch (err: any) {
             console.error("Error cargando maestro:", err);
@@ -113,13 +115,14 @@ export const PriceManagement: React.FC<PriceManagementProps> = ({ currentUser })
                 }
             });
 
-            const rawL4 = proposed[1] * 0.92; 
+            const l4Pct = parseFloat(list4Percentage) || 0;
+            const rawL4 = proposed[1] * (1 + l4Pct / 100); 
             proposed[3] = roundToCommercial(rawL4);
             const isModified = proposed.some((val, idx) => Math.round(val) !== Math.round(dbOriginal[idx]));
 
             return { codart: p.codart, desart: p.desart, dbOriginal, proposed, isModified };
         });
-    }, [dbProducts, workingProducts, percentages]);
+    }, [dbProducts, workingProducts, percentages, list4Percentage]);
 
     const filteredProposals = useMemo(() => {
         // Lógica de búsqueda tipo Google
@@ -222,10 +225,16 @@ export const PriceManagement: React.FC<PriceManagementProps> = ({ currentUser })
                         </div>
                     </div>
                 ))}
-                <div className="bg-primary/5 border border-primary/20 rounded-3xl p-6 shadow-sm flex flex-col justify-center items-center gap-2 group">
-                    <div className="flex items-center gap-2 text-primary"><Zap size={18} className="animate-pulse" /><span className="text-[10px] font-black uppercase tracking-widest">Lista 4 Automatizada</span></div>
-                    <p className="text-[11px] font-bold text-text text-center leading-tight uppercase">L4 se calcula como:<br/>L2 Propuesta - 8%</p>
-                    <p className="text-[9px] font-bold text-muted uppercase text-center tracking-tighter italic mt-1">Redondeo final a 50 incluido</p>
+                <div className="bg-primary/5 border border-primary/20 rounded-3xl p-6 shadow-sm flex flex-col gap-3">
+                    <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2 text-primary"><Zap size={14} className="animate-pulse" /><span className="text-[10px] font-black uppercase tracking-widest">Lista 4 Automatizada</span></div>
+                        <Percent size={14} className="text-primary" />
+                    </div>
+                    <div className="relative">
+                        <input type="number" value={list4Percentage} onChange={e => setList4Percentage(e.target.value)} className="w-full bg-background border border-primary/30 rounded-2xl py-4 px-6 text-2xl font-black text-primary outline-none focus:border-primary transition-all shadow-inner" />
+                        <span className="absolute right-6 top-1/2 -translate-y-1/2 font-black text-primary">%</span>
+                    </div>
+                    <p className="text-[9px] font-bold text-muted uppercase text-center tracking-tighter italic mt-1">Calculado sobre Lista 2</p>
                 </div>
             </div>
 
@@ -253,7 +262,7 @@ export const PriceManagement: React.FC<PriceManagementProps> = ({ currentUser })
                                 <th className="p-4 text-right">Lista 1 (x50)</th>
                                 <th className="p-4 text-right">Lista 2</th>
                                 <th className="p-4 text-right">Lista 3</th>
-                                <th className="p-4 text-right">Lista 4 (-8%)</th>
+                                <th className="p-4 text-right">Lista 4 ({list4Percentage}%)</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-surfaceHighlight">

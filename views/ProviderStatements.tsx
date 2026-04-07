@@ -252,6 +252,18 @@ export const ProviderStatements: React.FC<{ currentUser: User }> = ({ currentUse
         }).sort((a, b) => b.balance - a.balance);
     }, [providersList, listSearchTerm]);
 
+    const exportProvidersListToExcel = () => {
+        const data = filteredProviders.map(p => ({
+            'Código': p.codigo,
+            'Proveedor / Razón Social': p.razon_social,
+            'Saldo': p.balance
+        }));
+        const ws = XLSX.utils.json_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Saldos Proveedores");
+        XLSX.writeFile(wb, `Saldos_Proveedores_${new Date().toISOString().split('T')[0]}.xlsx`);
+    };
+
     return (
         <div className="flex flex-col gap-6 pb-20 animate-in fade-in duration-500 max-w-7xl mx-auto w-full">
             <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
@@ -321,6 +333,13 @@ export const ProviderStatements: React.FC<{ currentUser: User }> = ({ currentUse
                                 className="w-full bg-background border border-surfaceHighlight rounded-xl py-3.5 pl-12 pr-4 text-sm font-bold text-text outline-none focus:border-primary transition-all shadow-inner uppercase"
                             />
                         </div>
+                        <button 
+                            onClick={exportProvidersListToExcel}
+                            className="flex-shrink-0 flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-green-500/10 border border-green-500/20 text-green-600 hover:bg-green-500 hover:text-white transition-all font-black text-[10px] uppercase shadow-sm"
+                            title="Exportar a Excel"
+                        >
+                            <FileSpreadsheet size={18} /> Exportar
+                        </button>
                     </div>
 
                     <div className="bg-surface border border-surfaceHighlight rounded-3xl overflow-hidden shadow-sm">
