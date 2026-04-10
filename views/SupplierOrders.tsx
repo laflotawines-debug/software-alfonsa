@@ -174,7 +174,7 @@ export const SupplierOrders: React.FC<SupplierOrdersProps> = ({ currentUser }) =
                     </h2>
                     <p className="text-muted text-sm mt-1 font-medium flex items-center gap-2">
                         <Info size={14} className="text-primary" />
-                        Registro organizativo. <span className="font-bold text-orange-500">No afecta el stock real.</span>
+                        Registro organizativo para <span className="font-bold text-primary uppercase">Llerena</span>. <span className="font-bold text-orange-500">No afecta el stock real.</span>
                     </p>
                 </div>
                 <div className="flex gap-3 w-full md:w-auto">
@@ -433,7 +433,7 @@ const CreateSupplierOrderModal: React.FC<{ onClose: () => void, onSuccess: () =>
         setIsSearching(true);
         try {
             const tokens = trimmed.split(/\s+/).filter(t => t.length > 0);
-            let query = supabase.from('master_products').select('codart, desart, units_per_box').neq('familia', 'ELIMINADOS');
+            let query = supabase.from('master_products').select('codart, desart, units_per_box, stock_llerena, stock_ideal').neq('familia', 'ELIMINADOS');
             tokens.forEach(token => {
                 query = query.ilike('desart', `%${token}%`);
             });
@@ -603,7 +603,9 @@ const CreateSupplierOrderModal: React.FC<{ onClose: () => void, onSuccess: () =>
                             </div>
                             {searchResults.length > 0 && (
                                 <div className="absolute top-full left-0 w-full bg-surface border border-primary/30 rounded-2xl shadow-2xl mt-1 z-50 overflow-hidden">
-                                    {searchResults.map((p, idx) => (
+                                    {searchResults.map((p, idx) => {
+                                        const suggested = (p.stock_ideal || 0) - (p.stock_llerena || 0);
+                                        return (
                                         <button 
                                             key={p.codart} 
                                             onClick={() => handleSelectFromSearch(p)} 
@@ -611,15 +613,21 @@ const CreateSupplierOrderModal: React.FC<{ onClose: () => void, onSuccess: () =>
                                             className={`w-full p-4 text-left border-b border-surfaceHighlight last:border-none flex justify-between items-center group transition-colors ${selectedIndex === idx ? 'bg-primary/10' : 'hover:bg-primary/5'}`}
                                         >
                                             <div className="flex flex-col">
-                                                <span className={`text-xs font-black uppercase ${selectedIndex === idx ? 'text-primary' : 'text-text'}`}>{p.desart}</span>
-                                                <div className="flex items-center gap-2">
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <span className={`text-xs font-black uppercase ${selectedIndex === idx ? 'text-primary' : 'text-text'}`}>{p.desart}</span>
+                                                    {suggested > 0 && (
+                                                        <span className="text-[9px] font-black text-orange-500 bg-orange-500/10 px-1.5 py-0.5 rounded uppercase whitespace-nowrap">Sug: {suggested} un.</span>
+                                                    )}
+                                                    <span className="text-[9px] font-black text-blue-500 bg-blue-500/10 px-1.5 py-0.5 rounded uppercase whitespace-nowrap">Sto: {p.stock_llerena || 0} un.</span>
+                                                </div>
+                                                <div className="flex items-center gap-2 mt-1">
                                                     <span className="text-[9px] font-mono text-muted">#{p.codart}</span>
                                                     <span className="text-[9px] font-bold text-primary/60 uppercase italic">Empaque: {p.units_per_box || 6} un.</span>
                                                 </div>
                                             </div>
-                                            {selectedIndex === idx && <Plus size={14} className="text-primary animate-in zoom-in" />}
+                                            {selectedIndex === idx && <Plus size={14} className="text-primary animate-in zoom-in shrink-0" />}
                                         </button>
-                                    ))}
+                                    )})}
                                 </div>
                             )}
                         </div>
@@ -864,30 +872,61 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
             if (uploadErr) throw uploadErr;
             const { data: { publicUrl } } = supabase.storage.from('supplier-orders').getPublicUrl(fileName);
             
+            const newUrls = currentPdfUrl ? currentPdfUrl.split(',').filter(Boolean) : [];
+            newUrls.push(publicUrl);
+            const newPdfUrl = newUrls.join(',');
+
             const { error: updateErr } = await supabase
                 .from('supplier_orders')
-                .update({ pdf_url: publicUrl })
+                .update({ pdf_url: newPdfUrl })
                 .eq('id', order.id);
             
             if (updateErr) throw updateErr;
             
-            setCurrentPdfUrl(publicUrl);
+            setCurrentPdfUrl(newPdfUrl);
             setHasChanges(true);
         } catch (e: any) {
             alert("Error al subir PDF: " + e.message);
         } finally {
             setIsUploading(false);
+            if (fileInputRef.current) fileInputRef.current.value = '';
         }
     };
 
-    const handleUpdateQty = async (itemId: string, newQty: number) => {
-        if (newQty <= 0) return;
+    const handleDeletePdf = async (urlToDelete: string) => {
+        setIsUploading(true);
         try {
-            const { error } = await supabase.from('supplier_order_items').update({ quantity: newQty }).eq('id', itemId);
-            if (error) throw error;
-            setItems(items.map(i => i.id === itemId ? {...i, quantity: newQty} : i));
+            const newUrls = currentPdfUrl ? currentPdfUrl.split(',').filter(Boolean).filter(u => u !== urlToDelete) : [];
+            const newPdfUrl = newUrls.join(',');
+
+            const { error: updateErr } = await supabase
+                .from('supplier_orders')
+                .update({ pdf_url: newPdfUrl })
+                .eq('id', order.id);
+            
+            if (updateErr) throw updateErr;
+            setCurrentPdfUrl(newPdfUrl);
             setHasChanges(true);
-        } catch (e: any) { alert(e.message); }
+        } catch (e: any) {
+            alert("Error al eliminar PDF: " + e.message);
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
+    const handleUpdateQty = async (itemId: string, val: string) => {
+        const newQty = val === '' ? 0 : parseInt(val);
+        if (val !== '' && isNaN(newQty)) return;
+        
+        setItems(items.map(i => i.id === itemId ? {...i, quantity: newQty} : i));
+        setHasChanges(true);
+
+        if (newQty > 0) {
+            try {
+                const { error } = await supabase.from('supplier_order_items').update({ quantity: newQty }).eq('id', itemId);
+                if (error) throw error;
+            } catch (e: any) { alert(e.message); }
+        }
     };
 
     const handleRemoveItem = async (itemId: string) => {
@@ -913,7 +952,7 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
         setIsSearching(true);
         try {
             const tokens = trimmed.split(/\s+/).filter(t => t.length > 0);
-            let query = supabase.from('master_products').select('codart, desart, units_per_box').neq('familia', 'ELIMINADOS');
+            let query = supabase.from('master_products').select('codart, desart, units_per_box, stock_llerena, stock_ideal').neq('familia', 'ELIMINADOS');
             tokens.forEach(token => {
                 query = query.ilike('desart', `%${token}%`);
             });
@@ -1067,50 +1106,52 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
 
                     {/* Sección de PDF */}
                     <div className="space-y-2">
-                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Comprobante PDF</label>
-                        {currentPdfUrl ? (
-                            <div className="p-4 bg-blue-600 rounded-2xl text-white flex items-center justify-between shadow-lg shadow-blue-900/20">
-                                <div className="flex items-center gap-3">
-                                    <FileText size={24} />
-                                    <div>
-                                        <p className="text-[10px] font-black uppercase opacity-80 leading-none">Comprobante Adjunto</p>
-                                        <p className="text-xs font-bold mt-1">Archivo de orden de compra</p>
+                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Comprobantes PDF</label>
+                        {currentPdfUrl && currentPdfUrl.split(',').filter(Boolean).length > 0 && (
+                            <div className="space-y-2">
+                                {currentPdfUrl.split(',').filter(Boolean).map((url, idx) => (
+                                    <div key={idx} className="p-4 bg-blue-600 rounded-2xl text-white flex items-center justify-between shadow-lg shadow-blue-900/20">
+                                        <div className="flex items-center gap-3">
+                                            <FileText size={24} />
+                                            <div>
+                                                <p className="text-[10px] font-black uppercase opacity-80 leading-none">Comprobante Adjunto {idx + 1}</p>
+                                                <p className="text-xs font-bold mt-1">Archivo de orden de compra</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <a 
+                                                href={url} 
+                                                target="_blank" 
+                                                rel="noreferrer" 
+                                                className="px-4 py-2 bg-white text-blue-600 rounded-xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-blue-50 transition-colors"
+                                            >
+                                                <ExternalLink size={14} /> Abrir
+                                            </a>
+                                            <button 
+                                                onClick={() => handleDeletePdf(url)}
+                                                className="px-4 py-2 bg-red-500 text-white rounded-xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-red-400 transition-colors"
+                                            >
+                                                <Trash2 size={14} /> Eliminar
+                                            </button>
+                                        </div>
                                     </div>
-                                </div>
-                                <div className="flex gap-2">
-                                    <a 
-                                        href={currentPdfUrl} 
-                                        target="_blank" 
-                                        rel="noreferrer" 
-                                        className="px-4 py-2 bg-white text-blue-600 rounded-xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-blue-50 transition-colors"
-                                    >
-                                        <ExternalLink size={14} /> Abrir
-                                    </a>
-                                    <button 
-                                        onClick={() => fileInputRef.current?.click()}
-                                        disabled={isUploading}
-                                        className="px-4 py-2 bg-blue-500 text-white rounded-xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-blue-400 transition-colors"
-                                    >
-                                        {isUploading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} Cambiar
-                                    </button>
-                                </div>
+                                ))}
                             </div>
-                        ) : (
-                            <button 
-                                onClick={() => fileInputRef.current?.click()}
-                                disabled={isUploading}
-                                className="w-full p-4 border-2 border-dashed border-surfaceHighlight rounded-2xl flex flex-col items-center justify-center gap-2 hover:border-primary/50 hover:bg-primary/5 transition-all group"
-                            >
-                                {isUploading ? (
-                                    <Loader2 size={24} className="animate-spin text-primary" />
-                                ) : (
-                                    <>
-                                        <FileUp size={24} className="text-muted group-hover:text-primary transition-colors" />
-                                        <p className="text-[10px] font-black text-muted uppercase group-hover:text-primary transition-colors">Adjuntar Comprobante PDF</p>
-                                    </>
-                                )}
-                            </button>
                         )}
+                        <button 
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={isUploading}
+                            className="w-full p-4 border-2 border-dashed border-surfaceHighlight rounded-2xl flex flex-col items-center justify-center gap-2 hover:border-primary/50 hover:bg-primary/5 transition-all group"
+                        >
+                            {isUploading ? (
+                                <Loader2 size={24} className="animate-spin text-primary" />
+                            ) : (
+                                <>
+                                    <FileUp size={24} className="text-muted group-hover:text-primary transition-colors" />
+                                    <p className="text-[10px] font-black text-muted uppercase group-hover:text-primary transition-colors">Adjuntar Comprobante PDF</p>
+                                </>
+                            )}
+                        </button>
                         <input 
                             ref={fileInputRef}
                             type="file" 
@@ -1118,67 +1159,6 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
                             className="hidden" 
                             onChange={handleUploadPdf} 
                         />
-                    </div>
-
-                    <div className="border border-surfaceHighlight rounded-2xl overflow-hidden bg-surface">
-                        <table className="w-full text-left">
-                            <thead className="bg-background/50 text-[10px] text-muted uppercase font-black tracking-widest border-b border-surfaceHighlight">
-                                <tr>
-                                    <th className="p-4">Artículo</th>
-                                    <th className="p-4 text-center">Cantidad Total</th>
-                                    {tab !== 'confirmado' && <th className="p-4 text-center w-24"></th>}
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-surfaceHighlight">
-                                {items.map(item => {
-                                    // Calculamos bultos solo para visualización
-                                    const upb = item.units_per_box || 6;
-                                    const boxes = Math.floor(item.quantity / upb);
-                                    const loose = item.quantity % upb;
-
-                                    return (
-                                        <tr key={item.id}>
-                                            <td className="p-4">
-                                                <p className="text-xs font-black text-text uppercase">{item.desart || 'Cargando...'}</p>
-                                                <p className="text-[9px] font-mono text-muted">#{item.codart} — Empaque: {upb} un.</p>
-                                            </td>
-                                            <td className="p-4">
-                                                <div className="flex flex-col items-center justify-center gap-1">
-                                                    {tab !== 'confirmado' ? (
-                                                        <input 
-                                                            type="number" 
-                                                            value={item.quantity} 
-                                                            onChange={e => handleUpdateQty(item.id, parseInt(e.target.value)||1)}
-                                                            className="w-16 bg-background border border-surfaceHighlight rounded-lg p-1.5 text-center font-black text-xs outline-none focus:border-primary" 
-                                                        />
-                                                    ) : (
-                                                        <span className="font-black text-text">{item.quantity} un.</span>
-                                                    )}
-                                                    <span className="text-[9px] font-bold text-primary uppercase italic">
-                                                        ({boxes} CJ {loose > 0 ? `+ ${loose}` : ''})
-                                                    </span>
-                                                </div>
-                                            </td>
-                                            {tab !== 'confirmado' && (
-                                                <td className="p-4 text-center">
-                                                    {deletingItemId === item.id ? (
-                                                        <div className="flex items-center justify-center gap-2 animate-in zoom-in">
-                                                            <button onClick={() => handleRemoveItem(item.id)} className="bg-red-500 text-white p-1.5 rounded-lg hover:bg-red-600 transition-colors" title="Confirmar"><CheckCircle2 size={14}/></button>
-                                                            <button onClick={() => setDeletingItemId(null)} className="bg-surfaceHighlight text-text p-1.5 rounded-lg hover:bg-surfaceHighlight/80 transition-colors" title="Cancelar"><X size={14}/></button>
-                                                        </div>
-                                                    ) : (
-                                                        <button onClick={() => setDeletingItemId(item.id)} className="text-muted hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
-                                                    )}
-                                                </td>
-                                            )}
-                                        </tr>
-                                    );
-                                })}
-                                {items.length === 0 && (
-                                    <tr><td colSpan={3} className="p-10 text-center text-muted italic text-xs uppercase">Sin artículos registrados</td></tr>
-                                )}
-                            </tbody>
-                        </table>
                     </div>
 
                     {/* Add Product Section */}
@@ -1202,7 +1182,9 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
                                 </div>
                                 {searchResults.length > 0 && (
                                     <div className="absolute top-full left-0 w-full bg-surface border border-primary/30 rounded-2xl shadow-2xl mt-1 z-50 overflow-hidden">
-                                        {searchResults.map((p, idx) => (
+                                        {searchResults.map((p, idx) => {
+                                            const suggested = (p.stock_ideal || 0) - (p.stock_llerena || 0);
+                                            return (
                                             <button 
                                                 key={p.codart} 
                                                 onClick={() => handleSelectFromSearch(p)} 
@@ -1210,15 +1192,21 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
                                                 className={`w-full p-4 text-left border-b border-surfaceHighlight last:border-none flex justify-between items-center group transition-colors ${selectedIndex === idx ? 'bg-primary/10' : 'hover:bg-primary/5'}`}
                                             >
                                                 <div className="flex flex-col">
-                                                    <span className={`text-xs font-black uppercase ${selectedIndex === idx ? 'text-primary' : 'text-text'}`}>{p.desart}</span>
-                                                    <div className="flex items-center gap-2">
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <span className={`text-xs font-black uppercase ${selectedIndex === idx ? 'text-primary' : 'text-text'}`}>{p.desart}</span>
+                                                        {suggested > 0 && (
+                                                            <span className="text-[9px] font-black text-orange-500 bg-orange-500/10 px-1.5 py-0.5 rounded uppercase whitespace-nowrap">Sug: {suggested} un.</span>
+                                                        )}
+                                                        <span className="text-[9px] font-black text-blue-500 bg-blue-500/10 px-1.5 py-0.5 rounded uppercase whitespace-nowrap">Sto: {p.stock_llerena || 0} un.</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-2 mt-1">
                                                         <span className="text-[9px] font-mono text-muted">#{p.codart}</span>
                                                         <span className="text-[9px] font-bold text-primary/60 uppercase italic">Empaque: {p.units_per_box || 6} un.</span>
                                                     </div>
                                                 </div>
-                                                {selectedIndex === idx && <Plus size={14} className="text-primary animate-in zoom-in" />}
+                                                {selectedIndex === idx && <Plus size={14} className="text-primary animate-in zoom-in shrink-0" />}
                                             </button>
-                                        ))}
+                                        )})}
                                     </div>
                                 )}
                             </div>
@@ -1274,6 +1262,67 @@ const SupplierOrderDetailModal: React.FC<{ order: SupplierOrder, onClose: () => 
                             )}
                         </div>
                     )}
+
+                    <div className="border border-surfaceHighlight rounded-2xl overflow-hidden bg-surface">
+                        <table className="w-full text-left">
+                            <thead className="bg-background/50 text-[10px] text-muted uppercase font-black tracking-widest border-b border-surfaceHighlight">
+                                <tr>
+                                    <th className="p-4">Artículo</th>
+                                    <th className="p-4 text-center">Cantidad Total</th>
+                                    {tab !== 'confirmado' && <th className="p-4 text-center w-24"></th>}
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-surfaceHighlight">
+                                {items.map(item => {
+                                    // Calculamos bultos solo para visualización
+                                    const upb = item.units_per_box || 6;
+                                    const boxes = Math.floor(item.quantity / upb);
+                                    const loose = item.quantity % upb;
+
+                                    return (
+                                        <tr key={item.id}>
+                                            <td className="p-4">
+                                                <p className="text-xs font-black text-text uppercase">{item.desart || 'Cargando...'}</p>
+                                                <p className="text-[9px] font-mono text-muted">#{item.codart} — Empaque: {upb} un.</p>
+                                            </td>
+                                            <td className="p-4">
+                                                <div className="flex flex-col items-center justify-center gap-1">
+                                                    {tab !== 'confirmado' ? (
+                                                        <input 
+                                                            type="number" 
+                                                            value={item.quantity === 0 ? '' : item.quantity} 
+                                                            onChange={e => handleUpdateQty(item.id, e.target.value)}
+                                                            className="w-16 bg-background border border-surfaceHighlight rounded-lg p-1.5 text-center font-black text-xs outline-none focus:border-primary" 
+                                                        />
+                                                    ) : (
+                                                        <span className="font-black text-text">{item.quantity} un.</span>
+                                                    )}
+                                                    <span className="text-[9px] font-bold text-primary uppercase italic">
+                                                        ({boxes} CJ {loose > 0 ? `+ ${loose}` : ''})
+                                                    </span>
+                                                </div>
+                                            </td>
+                                            {tab !== 'confirmado' && (
+                                                <td className="p-4 text-center">
+                                                    {deletingItemId === item.id ? (
+                                                        <div className="flex items-center justify-center gap-2 animate-in zoom-in">
+                                                            <button onClick={() => handleRemoveItem(item.id)} className="bg-red-500 text-white p-1.5 rounded-lg hover:bg-red-600 transition-colors" title="Confirmar"><CheckCircle2 size={14}/></button>
+                                                            <button onClick={() => setDeletingItemId(null)} className="bg-surfaceHighlight text-text p-1.5 rounded-lg hover:bg-surfaceHighlight/80 transition-colors" title="Cancelar"><X size={14}/></button>
+                                                        </div>
+                                                    ) : (
+                                                        <button onClick={() => setDeletingItemId(item.id)} className="text-muted hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
+                                                    )}
+                                                </td>
+                                            )}
+                                        </tr>
+                                    );
+                                })}
+                                {items.length === 0 && (
+                                    <tr><td colSpan={3} className="p-10 text-center text-muted italic text-xs uppercase">Sin artículos registrados</td></tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
 
                 <div className="p-6 bg-surface border-t border-surfaceHighlight">

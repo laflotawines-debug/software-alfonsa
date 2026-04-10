@@ -174,7 +174,7 @@ export interface SupplierOrder {
     supplier_code: string;
     supplier_name?: string;
     estimated_arrival: string;
-    status: 'pendiente' | 'enviado' | 'confirmado';
+    status: 'pendiente' | 'confirmado';
     pdf_url?: string;
     created_at: string;
     created_by: string;
@@ -235,6 +235,7 @@ export interface ClientMaster {
     contacto?: string;
     activo?: boolean;
     classification_id?: string;
+    delivery_zone_id?: string;
 }
 
 export interface ClientCollection {

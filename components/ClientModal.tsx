@@ -13,6 +13,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({ initialData, onClose, 
     const [isSaving, setIsSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [classifications, setClassifications] = useState<any[]>([]);
+    const [zones, setZones] = useState<any[]>([]);
     const [formData, setFormData] = useState({
         codigo: initialData?.codigo || '',
         nombre: initialData?.nombre || '',
@@ -24,19 +25,22 @@ export const ClientModal: React.FC<ClientModalProps> = ({ initialData, onClose, 
         price_list: initialData?.price_list || 2, // Default to List 2
         contacto: initialData?.contacto || '',
         activo: initialData?.activo !== false, // Default to true
-        classification_id: initialData?.classification_id || ''
+        classification_id: initialData?.classification_id || '',
+        delivery_zone_id: initialData?.delivery_zone_id || ''
     });
 
     const isEdit = !!initialData;
 
     useEffect(() => {
-        const fetchClassifications = async () => {
-            const { data, error } = await supabase.from('client_classifications').select('*').order('name');
-            if (!error && data) {
-                setClassifications(data);
-            }
+        const fetchData = async () => {
+            const [classRes, zonesRes] = await Promise.all([
+                supabase.from('client_classifications').select('*').order('name'),
+                supabase.from('delivery_zones').select('*').order('name')
+            ]);
+            if (!classRes.error && classRes.data) setClassifications(classRes.data);
+            if (!zonesRes.error && zonesRes.data) setZones(zonesRes.data);
         };
-        fetchClassifications();
+        fetchData();
     }, []);
 
     const handleSave = async (e: React.FormEvent) => {
@@ -57,7 +61,8 @@ export const ClientModal: React.FC<ClientModalProps> = ({ initialData, onClose, 
                 price_list: formData.price_list,
                 contacto: formData.contacto?.trim().toUpperCase() || null,
                 activo: formData.activo,
-                classification_id: formData.classification_id || null
+                classification_id: formData.classification_id || null,
+                delivery_zone_id: formData.delivery_zone_id || null
             };
 
             if (isEdit) {
@@ -109,42 +114,59 @@ export const ClientModal: React.FC<ClientModalProps> = ({ initialData, onClose, 
                         )}
 
                         <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-                            <div className="md:col-span-12 flex justify-between items-center">
-                                <div className="flex-1 max-w-xs">
-                                    <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1 mb-1 block">Clasificación</label>
-                                    <select
-                                        value={formData.classification_id}
-                                        onChange={(e) => setFormData({ ...formData, classification_id: e.target.value })}
-                                        className="w-full bg-background border border-surfaceHighlight rounded-xl py-2 px-3 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase"
-                                    >
-                                        <option value="">SIN CLASIFICAR</option>
-                                        {classifications.map(c => (
-                                            <option key={c.id} value={c.id}>{c.name}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <label className="flex items-center gap-3 cursor-pointer group select-none">
-                                    <span className={`text-xs font-black uppercase transition-colors ${formData.activo ? 'text-primary' : 'text-muted'}`}>
-                                        {formData.activo ? 'Cliente Activo' : 'Cliente Inactivo'}
-                                    </span>
-                                    <div className="relative w-12 h-7">
-                                        <input 
-                                            type="checkbox" 
-                                            checked={formData.activo} 
-                                            onChange={e => setFormData({...formData, activo: e.target.checked})} 
-                                            className="sr-only" 
-                                        />
-                                        <div className={`absolute inset-0 rounded-full transition-all shadow-inner ${formData.activo ? 'bg-primary' : 'bg-surfaceHighlight'}`}></div>
-                                        <div className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow-md transition-all ${formData.activo ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                            <div className="md:col-span-12 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-6">
+                                <div className="w-full sm:flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1 mb-1 block">Clasificación</label>
+                                        <select
+                                            value={formData.classification_id}
+                                            onChange={(e) => setFormData({ ...formData, classification_id: e.target.value })}
+                                            className="w-full bg-background border border-surfaceHighlight rounded-xl py-2.5 px-3 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase"
+                                        >
+                                            <option value="">SIN CLASIFICAR</option>
+                                            {classifications.map(c => (
+                                                <option key={c.id} value={c.id}>{c.name}</option>
+                                            ))}
+                                        </select>
                                     </div>
-                                </label>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1 mb-1 block">Zona de Entrega</label>
+                                        <select
+                                            value={formData.delivery_zone_id}
+                                            onChange={(e) => setFormData({ ...formData, delivery_zone_id: e.target.value })}
+                                            className="w-full bg-background border border-surfaceHighlight rounded-xl py-2.5 px-3 text-sm font-bold text-text outline-none focus:border-primary shadow-inner uppercase"
+                                        >
+                                            <option value="">SIN ZONA</option>
+                                            {zones.map(z => (
+                                                <option key={z.id} value={z.id}>{z.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+                                <div className="w-full sm:w-auto flex justify-between sm:justify-end items-center sm:pb-1">
+                                    <label className="flex items-center gap-3 cursor-pointer group select-none">
+                                        <span className={`text-[10px] font-black uppercase transition-colors ${formData.activo ? 'text-primary' : 'text-muted'}`}>
+                                            {formData.activo ? 'Cliente Activo' : 'Cliente Inactivo'}
+                                        </span>
+                                        <div className="relative w-12 h-7">
+                                            <input 
+                                                type="checkbox" 
+                                                checked={formData.activo} 
+                                                onChange={e => setFormData({...formData, activo: e.target.checked})} 
+                                                className="sr-only" 
+                                            />
+                                            <div className={`absolute inset-0 rounded-full transition-all shadow-inner ${formData.activo ? 'bg-primary' : 'bg-surfaceHighlight'}`}></div>
+                                            <div className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow-md transition-all ${formData.activo ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                                        </div>
+                                    </label>
+                                </div>
                             </div>
 
                             <div className="md:col-span-12 space-y-2">
                                 <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Lista de Precios Predeterminada</label>
-                                <div className="flex gap-4 p-4 bg-surfaceHighlight/30 rounded-2xl border border-surfaceHighlight overflow-x-auto">
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 bg-surfaceHighlight/30 rounded-2xl border border-surfaceHighlight">
                                     {[1, 2, 3, 4].map((listNum) => (
-                                        <label key={listNum} className={`flex-1 min-w-[80px] flex items-center justify-center gap-2 p-3 rounded-xl border cursor-pointer transition-all ${formData.price_list === listNum ? 'bg-primary/10 border-primary text-primary shadow-sm' : 'bg-background border-surfaceHighlight text-muted hover:border-primary/30'}`}>
+                                        <label key={listNum} className={`flex items-center justify-center gap-2 p-3 rounded-xl border cursor-pointer transition-all ${formData.price_list === listNum ? 'bg-primary/10 border-primary text-primary shadow-sm' : 'bg-background border-surfaceHighlight text-muted hover:border-primary/30'}`}>
                                             <input 
                                                 type="radio" 
                                                 name="price_list" 
@@ -153,7 +175,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({ initialData, onClose, 
                                                 onChange={() => setFormData({...formData, price_list: listNum})} 
                                                 className="hidden" 
                                             />
-                                            <span className="text-xs font-black uppercase">Lista {listNum}</span>
+                                            <span className="text-[10px] font-black uppercase">Lista {listNum}</span>
                                             {formData.price_list === listNum && <CheckCircle2 size={14} />}
                                         </label>
                                     ))}

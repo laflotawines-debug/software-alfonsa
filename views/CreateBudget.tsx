@@ -227,7 +227,15 @@ export const CreateBudget: React.FC<CreateBudgetProps> = ({ onNavigate, onCreate
     setShowClientDropdown(false);
     fetchSavedBudgets(client.codigo);
     
-    // Auto-select zone based on location string match if possible
+    // Auto-select zone based on client's delivery_zone_id or location string match
+    if (client.delivery_zone_id) {
+        const exactZone = availableZones.find(z => z.id === client.delivery_zone_id);
+        if (exactZone) {
+            setSelectedZone(exactZone.name);
+            return;
+        }
+    }
+
     const loc = (client.localidad || '').toLowerCase();
     const matchedZone = availableZones.find(z => loc.includes(z.name.toLowerCase()));
     if (matchedZone) {

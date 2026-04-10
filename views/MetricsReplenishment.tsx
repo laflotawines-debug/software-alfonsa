@@ -45,6 +45,27 @@ export const MetricsReplenishment: React.FC = () => {
         }
     };
 
+    const handleUpdateStock = async (codart: string, field: 'stock_minimo' | 'stock_ideal', value: string) => {
+        const numValue = value === '' ? 0 : parseInt(value, 10);
+        if (value !== '' && isNaN(numValue)) return;
+
+        setItems(prev => prev.map(item => 
+            item.codart === codart ? { ...item, [field]: numValue } : item
+        ));
+
+        try {
+            const { error } = await supabase
+                .from('master_products')
+                .update({ [field]: numValue })
+                .eq('codart', codart);
+            
+            if (error) throw error;
+        } catch (e: any) {
+            console.error("Error updating stock:", e);
+            alert("Error al actualizar el stock: " + e.message);
+        }
+    };
+
     const processedItems = useMemo(() => {
         const processed = items.map(item => {
             const current = item.stock_llerena || 0;
@@ -221,13 +242,13 @@ export const MetricsReplenishment: React.FC = () => {
                     <table className="w-full text-left">
                         <thead className="bg-background/50 text-[10px] text-muted uppercase font-black tracking-widest border-b border-surfaceHighlight">
                             <tr>
-                                <th className="p-4 pl-6">Artículo</th>
-                                <th className="p-4">Proveedor</th>
-                                <th className="p-4 text-center">Stock Actual</th>
-                                <th className="p-4 text-center">Stock Mínimo</th>
-                                <th className="p-4 text-center">Stock Ideal</th>
-                                <th className="p-4 text-center">Sugerido</th>
-                                <th className="p-4 pr-6 text-center">Estado</th>
+                                <th className="p-2 md:p-4 pl-4 md:pl-6">Artículo</th>
+                                <th className="p-2 md:p-4 hidden md:table-cell">Proveedor</th>
+                                <th className="p-2 md:p-4 text-center">Stock Actual</th>
+                                <th className="p-2 md:p-4 text-center hidden sm:table-cell">Stock Mínimo</th>
+                                <th className="p-2 md:p-4 text-center hidden sm:table-cell">Stock Ideal</th>
+                                <th className="p-2 md:p-4 text-center">Sugerido</th>
+                                <th className="p-2 md:p-4 pr-4 md:pr-6 text-center">Estado</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-surfaceHighlight">
@@ -238,18 +259,32 @@ export const MetricsReplenishment: React.FC = () => {
                             ) : (
                                 paginatedItems.map((item, idx) => (
                                     <tr key={idx} className="hover:bg-background/50 transition-colors">
-                                        <td className="p-4 pl-6">
+                                        <td className="p-2 md:p-4 pl-4 md:pl-6">
                                             <div className="flex flex-col">
-                                                <span className="font-bold text-sm text-text uppercase">{item.desart}</span>
-                                                <span className="text-xs text-muted">{item.codart}</span>
+                                                <span className="font-bold text-xs md:text-sm text-text uppercase line-clamp-2">{item.desart}</span>
+                                                <span className="text-[10px] md:text-xs text-muted">{item.codart}</span>
                                             </div>
                                         </td>
-                                        <td className="p-4 text-left text-xs text-muted font-medium uppercase">{item.nomprov || '-'}</td>
-                                        <td className="p-4 text-center font-mono text-sm font-bold text-text">{item.current}</td>
-                                        <td className="p-4 text-center font-mono text-sm text-muted">{item.min}</td>
-                                        <td className="p-4 text-center font-mono text-sm text-muted">{item.ideal}</td>
-                                        <td className="p-4 text-center font-mono text-sm font-black text-primary">{item.suggested}</td>
-                                        <td className="p-4 pr-6 text-center">
+                                        <td className="p-2 md:p-4 text-left text-xs text-muted font-medium uppercase hidden md:table-cell">{item.nomprov || '-'}</td>
+                                        <td className="p-2 md:p-4 text-center font-mono text-xs md:text-sm font-bold text-text">{item.current}</td>
+                                        <td className="p-2 md:p-4 text-center hidden sm:table-cell">
+                                            <input 
+                                                type="number" 
+                                                value={item.min === 0 ? '' : item.min} 
+                                                onChange={e => handleUpdateStock(item.codart, 'stock_minimo', e.target.value)}
+                                                className="w-16 bg-background border border-surfaceHighlight rounded-lg p-1.5 text-center font-mono text-xs md:text-sm text-muted outline-none focus:border-primary"
+                                            />
+                                        </td>
+                                        <td className="p-2 md:p-4 text-center hidden sm:table-cell">
+                                            <input 
+                                                type="number" 
+                                                value={item.ideal === 0 ? '' : item.ideal} 
+                                                onChange={e => handleUpdateStock(item.codart, 'stock_ideal', e.target.value)}
+                                                className="w-16 bg-background border border-surfaceHighlight rounded-lg p-1.5 text-center font-mono text-xs md:text-sm text-muted outline-none focus:border-primary"
+                                            />
+                                        </td>
+                                        <td className="p-2 md:p-4 text-center font-mono text-xs md:text-sm font-black text-primary">{item.suggested}</td>
+                                        <td className="p-2 md:p-4 pr-4 md:pr-6 text-center">
                                             {item.status === 'normal' && (
                                                 <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-full bg-green-500/10 text-green-600 font-bold text-[10px] uppercase border border-green-500/20">
                                                     Normal
@@ -275,8 +310,8 @@ export const MetricsReplenishment: React.FC = () => {
 
                 {/* PAGINATION */}
                 {!isLoading && totalPages > 1 && (
-                    <div className="flex items-center justify-between px-6 py-4 border-t border-surfaceHighlight bg-background/30 rounded-b-3xl">
-                        <span className="text-sm font-medium text-muted">
+                    <div className="flex flex-col sm:flex-row items-center justify-between px-4 md:px-6 py-4 border-t border-surfaceHighlight bg-background/30 rounded-b-3xl gap-4">
+                        <span className="text-xs md:text-sm font-medium text-muted text-center sm:text-left">
                             Mostrando {(currentPage - 1) * ITEMS_PER_PAGE + 1} a {Math.min(currentPage * ITEMS_PER_PAGE, filteredItems.length)} de {filteredItems.length} artículos
                         </span>
                         <div className="flex items-center gap-2">
@@ -287,7 +322,7 @@ export const MetricsReplenishment: React.FC = () => {
                             >
                                 <ChevronLeft size={20} />
                             </button>
-                            <span className="text-sm font-bold text-text px-4">
+                            <span className="text-xs md:text-sm font-bold text-text px-2 md:px-4">
                                 Página {currentPage} de {totalPages}
                             </span>
                             <button

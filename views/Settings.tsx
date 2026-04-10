@@ -228,9 +228,6 @@ export const Settings: React.FC<SettingsProps> = ({ currentUser, onUpdateProfile
             const keysToSync: any[] = [];
             
             SYSTEM_NAV_STRUCTURE.forEach(item => {
-                if (item.permission && item.permission !== 'tools.sql_editor') {
-                    keysToSync.push({ key: item.permission, module: item.module, label: item.label });
-                }
                 if (item.subItems) {
                     item.subItems.forEach(sub => {
                         if (sub.permission && sub.permission !== 'tools.sql_editor') {

@@ -348,7 +348,7 @@ export const AccountStatements: React.FC<{ currentUser: User }> = ({ currentUser
                     if (error) throw error;
                     
                     alert(`Se importaron ${movementsToInsert.length} saldos iniciales correctamente.`);
-                    fetchClientsWithBalances();
+                    fetchAllClientsAndBalances();
                 } else {
                     alert("No se encontraron datos válidos para importar.");
                 }

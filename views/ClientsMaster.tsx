@@ -37,6 +37,7 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
     const [searchTerm, setSearchTerm] = useState('');
     const [showInactive, setShowInactive] = useState(false); // New state for filtering active/inactive
     const [classificationFilter, setClassificationFilter] = useState<string>('TODAS'); // New state for classification filter
+    const [zoneFilter, setZoneFilter] = useState<string>('TODAS'); // New state for zone filter
     
     // Modales y Estados
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -49,6 +50,7 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
     // Estado para Eliminación
     const [clientToDelete, setClientToDelete] = useState<ClientMaster | null>(null);
     const [classifications, setClassifications] = useState<any[]>([]);
+    const [zones, setZones] = useState<any[]>([]);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -76,15 +78,43 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
                 }
             }
 
+            if (zoneFilter !== 'TODAS') {
+                if (zoneFilter === 'SIN_ZONA') {
+                    query = query.is('delivery_zone_id', null);
+                } else {
+                    query = query.eq('delivery_zone_id', zoneFilter);
+                }
+            }
+
             const { data, error } = await query;
 
-            if (error) throw error;
-            setClients(data || []);
-            
-            const { data: classData, error: classError } = await supabase.from('client_classifications').select('*');
-            if (!classError && classData) {
-                setClassifications(classData);
+            if (error) {
+                if (error.message.includes('delivery_zone_id')) {
+                    console.warn("delivery_zone_id column missing, skipping zone filter");
+                    // Fallback without zone filter
+                    let fallbackQuery = supabase.from('clients_master').select('*').order('nombre', { ascending: true });
+                    if (showInactive) fallbackQuery = fallbackQuery.eq('activo', false);
+                    else fallbackQuery = fallbackQuery.neq('activo', false);
+                    
+                    if (classificationFilter !== 'TODAS') {
+                        if (classificationFilter === 'SIN_CLASIFICAR') fallbackQuery = fallbackQuery.is('classification_id', null);
+                        else fallbackQuery = fallbackQuery.eq('classification_id', classificationFilter);
+                    }
+                    const { data: fbData } = await fallbackQuery;
+                    setClients(fbData || []);
+                } else {
+                    throw error;
+                }
+            } else {
+                setClients(data || []);
             }
+            
+            const [classData, zonesData] = await Promise.all([
+                supabase.from('client_classifications').select('*'),
+                supabase.from('delivery_zones').select('*')
+            ]);
+            if (!classData.error && classData.data) setClassifications(classData.data);
+            if (!zonesData.error && zonesData.data) setZones(zonesData.data);
         } catch (err: any) {
             console.error("Error cargando clientes:", err);
         } finally {
@@ -94,7 +124,7 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
 
     useEffect(() => {
         fetchData();
-    }, [showInactive, classificationFilter]);
+    }, [showInactive, classificationFilter, zoneFilter]);
 
     // --- LÓGICA DE ELIMINACIÓN ---
     const executeDelete = async () => {
@@ -393,6 +423,19 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
                         ))}
                     </select>
                 </div>
+                <div className="w-full md:w-48 relative">
+                    <select 
+                        value={zoneFilter} 
+                        onChange={(e) => setZoneFilter(e.target.value)} 
+                        className="w-full bg-background border border-surfaceHighlight rounded-xl py-3.5 px-4 text-sm font-black text-muted outline-none cursor-pointer appearance-none uppercase"
+                    >
+                        <option value="TODAS">Todas las zonas</option>
+                        <option value="SIN_ZONA">Sin zona</option>
+                        {zones.map(z => (
+                            <option key={z.id} value={z.id}>{z.name}</option>
+                        ))}
+                    </select>
+                </div>
                 <div className="relative flex-1 w-full">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={18} />
                     <input 
@@ -450,6 +493,11 @@ export const ClientsMaster: React.FC<ClientsMasterProps> = ({ currentUser }) => 
                                                 {c.classification_id && (
                                                     <span className="text-[9px] font-black text-white bg-primary/80 px-1.5 py-0.5 rounded uppercase tracking-wider">
                                                         {classifications.find(cl => cl.id === c.classification_id)?.name || ''}
+                                                    </span>
+                                                )}
+                                                {c.delivery_zone_id && (
+                                                    <span className="text-[9px] font-black text-white bg-orange-500/80 px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                                        {zones.find(z => z.id === c.delivery_zone_id)?.name || ''}
                                                     </span>
                                                 )}
                                             </div>
