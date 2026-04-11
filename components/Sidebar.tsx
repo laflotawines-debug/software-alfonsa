@@ -96,7 +96,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, curre
     return { ...item, subItems: allowedSubItems };
   }).filter(item => {
     if (item.subItems) return item.subItems.length > 0;
-    return false;
+    return true;
   });
 
   return (
